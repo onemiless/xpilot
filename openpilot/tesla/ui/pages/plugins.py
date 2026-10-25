@@ -9,13 +9,14 @@ from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.button import Button, ButtonStyle
 from openpilot.system.ui.widgets.list_view import ITEM_PADDING, ButtonAction, ListItem, TextAction, text_item, toggle_item
+from openpilot.system.ui.widgets.scroller_tici import Scroller
 from openpilot.tesla.manifest import CATEGORIES
 from openpilot.tesla.plugins import FAULTS_PARAM, LOAD_ERRORS, is_enabled, resolve
 from openpilot.tesla.ui.offroad import StoreJobs, market_sections, plugin_status, switch_plugin
 from openpilot.tesla.ui.pages.base import ListPage, SettingRow, params
 
 LEFT_W = 440
-CAT_H = 96  # ponytail: 7 category buttons fit above Refresh; scroll the left column once more categories are in use
+CAT_H = 96
 GAP = 10
 
 
@@ -128,6 +129,9 @@ class PluginsPage(Widget):
       self.sections.append((title, page))
     self.selected = max(0, min(self.selected, len(self.sections) - 1))
     self.buttons = [Button(title, lambda i=i: self._select(i), font_size=44) for i, (title, _) in enumerate(self.sections)]
+    for b in self.buttons:
+      b.set_rect(rl.Rectangle(0, 0, LEFT_W, CAT_H))
+    self.categories = Scroller(self.buttons, spacing=GAP, pad_end=False)  # scrolls when the categories outgrow the column
     self._shown = None
     self._select(self.selected)
 
@@ -160,10 +164,7 @@ class PluginsPage(Widget):
       self._build()
 
   def _render(self, rect: rl.Rectangle):
-    y = rect.y + GAP
-    for b in self.buttons:
-      b.render(rl.Rectangle(rect.x, y, LEFT_W, CAT_H))
-      y += CAT_H + GAP
+    self.categories.render(rl.Rectangle(rect.x, rect.y + GAP, LEFT_W, rect.height - CAT_H - 3 * GAP))
     self.refresh_button.render(rl.Rectangle(rect.x, rect.y + rect.height - CAT_H - GAP, LEFT_W, CAT_H))
     if not self.sections:
       return
