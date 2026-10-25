@@ -22,7 +22,7 @@ import types
 
 from openpilot.cereal.services import SERVICE_LIST
 from openpilot.common.swaglog import cloudlog
-from openpilot.tesla import manifest as mf
+from openpilot.tesla import manifest as mf, panda_rules
 from openpilot.tesla.plugin import Plugin
 from openpilot.tesla.plugin_params import ParamsView
 
@@ -131,7 +131,7 @@ def log_snapshot(params) -> None:
   snapshot = {"system_commit": get_build_metadata().openpilot.git_commit,
               "plugins": [{"id": p.NAME, "version": p.MANIFEST.version, "sha256": p.SHA256} for p in active(params)]}
   if "XpilotPandaRules" in mf.compiled_param_keys() and (rules := params.get("XpilotPandaRules")) is not None:
-    snapshot["rule_table_crc32"] = rules["crc32"]
+    snapshot["rule_table_crc32"] = int.from_bytes(rules[-4:], "little")
   cloudlog.event("xpilot.drive_snapshot", **snapshot)
 
 
@@ -140,6 +140,8 @@ def record_fault(name: str, where: str, exc: Exception) -> None:
   try:
     from openpilot.common.params import Params
     params = Params()
+    if where not in ("card.__init__", "card.setup", "card.rules") and any(p.NAME == name and p.MANIFEST.rules for p in PLUGINS):
+      params.put_bool("XpilotPandaRulesFault", True, block=True)
     faults = params.get(FAULTS_PARAM) or {}
     faults[name] = f"{where}: {exc!r}"[:200]
     params.put(FAULTS_PARAM, faults)
@@ -152,6 +154,7 @@ class CarPlugins:
 
   def __init__(self, CP, params):
     self.plugins = []
+    self.params = params
     self._gate = None
     if CP.brand != "tesla":
       return
@@ -176,6 +179,17 @@ class CarPlugins:
 
   def setup(self, CP_SP) -> None:
     self._each("setup", CP_SP)
+    rules = []
+    for p in list(self.plugins):
+      try:
+        own = p.MANIFEST.rules
+        panda_rules.encode_rules(rules + own)
+      except ValueError as e:
+        self.plugins.remove(p)
+        record_fault(p.NAME, "card.rules", e)
+        continue
+      rules += own
+    self.params.put("XpilotPandaRules", panda_rules.param(panda_rules.encode_rules(rules)), block=True)
 
   def _sends(self, hook: str, *args) -> list:
     """Like _each, but every CanData must match one of the plugin's can.tx claims, else the plugin is dropped."""

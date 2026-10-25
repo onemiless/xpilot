@@ -13,7 +13,7 @@ plugin.json:
                 | {"key", "label"} (toggle)]
   params       {"Key": {"type", "default", "flags", "note"}} rendered into common/plugin_params.inc by gen_params.py
   requires     optional hooks/msg names, rule_abi and native platform required from HOST_CAPS
-  safety       {profile: name} or an exact legacy safety.json entry; resolved to header, param_bit, tx and profile
+  rules        list of template_clone.v1 rules (docs/design/xpilot-panda-rules.md)
   platform     null (pure Python) or {"machine": "aarch64", "python": "cpython-312"} for plugins with prebuilt binaries;
                such a plugin installs and loads only where host_platform() matches
 """
@@ -104,7 +104,7 @@ class Manifest:
   settings: tuple[Setting, ...] = ()
   params: dict = field(default_factory=dict)
   platform: dict | None = None
-  safety: dict | None = None
+  rules: list = field(default_factory=list)
   requires: dict = field(default_factory=dict)
 
 
@@ -115,7 +115,7 @@ def _setting(d: dict) -> Setting:
 
 
 def safety_profiles() -> dict:
-  """Panda capabilities compiled into this system's firmware."""
+  """Legacy generator fixture only; runtime manifests use rules."""
   return json.loads(SAFETY_JSON.read_text())
 
 
@@ -143,33 +143,20 @@ def parse(path: Path) -> Manifest:
   claims = d.get("claims", [])
   if not isinstance(claims, list) or not all(isinstance(c, str) and _CLAIM_RE.fullmatch(c) for c in claims):
     raise ValueError(f"bad claims {claims!r}")
-  safety = None
   if "safety" in d:
-    safety = d["safety"]
-    if not isinstance(safety, dict):
-      raise ValueError("safety must be an object")
-    profiles = safety_profiles()
-    if "profile" in safety:
-      if set(safety) != {"profile"}:
-        raise ValueError("safety profile cannot have extra keys")
-      profile = safety["profile"]
-      if not isinstance(profile, str) or profile not in profiles:
-        raise ValueError(f"unknown safety profile {profile!r}")
-    else:
-      matches = [name for name, spec in profiles.items() if spec == safety]
-      if len(matches) != 1:
-        raise ValueError("legacy safety must match exactly one profile in safety.json")
-      profile = matches[0]
-    safety = {**profiles[profile], "profile": profile}
-  tx = {c[7:] for c in claims if c.startswith("can.tx:")}
-  if tx != set(safety["tx"] if safety is not None else []):
-    raise ValueError("can.tx must match safety profile tx")
+    raise ValueError("safety is no longer supported; publish a new plugin version with rules")
+  from openpilot.tesla.panda_rules import encode_rules
+  rules = d.get("rules", [])
+  encode_rules(rules)
+  if can_tx(claims) != {(r["tx_address"], r["tx_bus"]) for r in rules}:
+    raise ValueError("can.tx must match rule TX addresses")
+
   try:
     return Manifest(id=d["id"], name=str(d.get("name") or d["id"]), version=str(d.get("version", "0")), api=d["api"],
                     category=d["category"], use=d["use"], entry=d["entry"], description=str(d.get("description", "")),
                     author=str(d.get("author", "")), priority=int(d.get("priority", 100)), enable_param=d.get("enable_param"),
                     claims=tuple(claims), settings=tuple(_setting(s) for s in d.get("settings", [])), params=dict(d.get("params", {})),
-                    platform=plat, safety=safety, requires=d.get("requires", {}))
+                    platform=plat, rules=rules, requires=d.get("requires", {}))
   except (KeyError, TypeError, ValueError) as e:
     raise ValueError(f"bad field: {e!r}") from None
 
@@ -228,7 +215,7 @@ def platform_ok(plat: dict | None) -> bool:
   return plat is None or all(plat.get(k) == v for k, v in host.items())
 
 
-RULE_ABI = None  # G1 must prove the firmware rule engine before advertising ABI 1.
+RULE_ABI = 1
 HOST_CAPS = {
   "hooks": ("__init__", "setup", "observe_can", "publish_state", "control_sends", "service_params", "processes",
             "role_processes", "alert_source", "lane_change_policy", "lat_correction", "lat_controller", "long_planner",
@@ -272,6 +259,7 @@ def check_staged(root, params=None) -> None:
   code = """
 import json, runpy, sys
 from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]).parents[2]))
 m = runpy.run_path(sys.argv[1])
 found, errors = m['load_all'](Path(sys.argv[2]))
 for manifest in found:

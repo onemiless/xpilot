@@ -6,29 +6,13 @@ import zlib
 
 from opendbc.safety.tests.libsafety import libsafety_py as lib
 
+from openpilot.tesla.panda_rules import MAGIC as MAGIC, OWNED as OWNED, field, rule, table as _table, record
+
 ROOT = Path(__file__).resolve().parents[4]
-MAGIC = 0x31525058
-OWNED = (0x118, 0x145, 0x155, 0x257, 0x27D, 0x286, 0x2B9, 0x311, 0x370, 0x3DF, 0x488)
 
 
-def field(offset, width, lo, hi, exempt=()):
-  return struct.pack('<4B10I', offset, width, len(exempt), 0, lo, hi, *exempt, *([0] * (8 - len(exempt))))
-
-
-def rule(addr, length, copy, const=(0,) * 8, value=(0,) * 8, fields=(), tuples=(),
-         predicate=(bytes(8), bytes(8)), ttl=1_500_000, interval=250_000,
-         session=1, count=50, idle=3_000_000, span=0, counter=(0, 0, 0), checksum=(0, 0)):
-  r = bytearray(84)
-  struct.pack_into('<HBBII4BII2BHII', r, 0, 84 + 44 * len(fields) + 36 * len(tuples), 1,
-                   len(fields), addr, addr, 1, 1, length, length, ttl, interval, session, len(tuples), count, idle, span)
-  r[36:43] = bytes((*counter, *checksum, *checksum))
-  r[44:60] = b''.join(predicate)
-  r[60:84] = bytes((*copy, *const, *value))
-  for f in fields:
-    r.extend(f)
-  for mask, vals in tuples:
-    r.extend(struct.pack('<B3x8I', mask, *vals, *([0] * (8 - len(vals)))))
-  return bytes(r)
+def table(rules=None):
+  return _table(RULES if rules is None else rules)
 
 
 AUTO = rule(0x3C2, 8, (255, 255, 255, 192, 255, 255, 255, 255),
@@ -49,17 +33,8 @@ RULES = (AUTO, AMBIENT, NAV)
 ADDRS = (0x3C2, 0x679, 0x3E9)
 
 
-def table(rules=RULES):
-  body = b''.join(rules)
-  return struct.pack('<IHHHBBI', MAGIC, 1, 16, 16 + len(body), len(rules), 0, 0) + body
-
-
 def packet(addr, data, bus=1):
   return lib.make_CANPacket(addr, bus, data)
-
-
-def record(upload, offset, data, flags=0):
-  return struct.pack('<4H', upload, offset, len(data), flags) + data + bytes(56 - len(data))
 
 
 @functools.cache

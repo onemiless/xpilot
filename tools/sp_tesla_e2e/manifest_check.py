@@ -23,6 +23,7 @@ Failure cases listed before implementation:
 - M15 a plugin tile show conflicts with its declared use
 - M16 requires accepts malformed fields, unknown hooks/messages/native ABI, or an unavailable rule ABI
 - M17 HOST_CAPS hooks drift from Plugin methods, or optional requires breaks API 1 plugins
+- M18 ABI 1 is not advertised after the runtime engine lands
 """
 import json
 from pathlib import Path
@@ -73,12 +74,12 @@ def capability_checks() -> list[str]:
   if not hasattr(mf, "compatible"):
     return ["M16 missing compatible", "M17 missing HOST_CAPS"]
   hooks = {name for name, value in vars(Plugin).items() if callable(value) or isinstance(value, classmethod)}
-  if set(mf.HOST_CAPS["hooks"]) != hooks or mf.RULE_ABI is not None or mf.HOST_CAPS["rule_abi"] is not None:
-    errors.append("M17 hook inventory or premature rule ABI")
+  if set(mf.HOST_CAPS["hooks"]) != hooks or mf.RULE_ABI != 1 or mf.HOST_CAPS["rule_abi"] != 1:
+    errors.append("M18 hook inventory or missing rule ABI 1")
   m = mf.load_all()[0][0]
   for requires, ok, reason in (({}, True, ""), ({"hooks": ["setup"]}, True, ""),
       ({"hooks": ["teleport"]}, False, "teleport"), ({"msg": ["demo.hint"]}, True, ""),
-      ({"rule_abi": 1}, False, "rule_abi"), ({"native": mf.host_platform()}, True, ""),
+      ({"rule_abi": 2}, False, "rule_abi"), ({"native": mf.host_platform()}, True, ""),
       ({"native": {"machine": "sparc", "python": "cpython-27"}}, False, "native"),
       ([], False, "requires"), (None, False, "requires"), ({"hooks": "setup"}, False, "hooks"),
       ({"hooks": [1]}, False, "hooks"), ({"msg": ["bad kind"]}, False, "msg"),

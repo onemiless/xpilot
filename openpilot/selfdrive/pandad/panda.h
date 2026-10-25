@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <ctime>
 #include <functional>
@@ -44,7 +45,7 @@ struct can_frame {
 
 
 class Panda {
-private:
+protected:
   std::unique_ptr<PandaCommsHandle> handle;
 
 public:
@@ -61,14 +62,14 @@ public:
 
   // Panda functionality
   cereal::PandaState::PandaType get_hw_type();
-  void set_safety_model(cereal::CarParams::SafetyModel safety_model, uint16_t safety_param=0U);
+  void set_safety_model(cereal::CarParams::SafetyModel safety_model, uint16_t safety_param=0U, unsigned int timeout=TIMEOUT);
   void set_alternative_experience(uint16_t alternative_experience, uint16_t safety_param_sp=0U);
   std::string serial_read(int port_number = 0);
   void set_uart_baud(int uart, int rate);
   void set_fan_speed(uint16_t fan_speed);
   uint16_t get_fan_speed();
   void set_ir_pwr(uint16_t ir_pwr);
-  std::optional<health_t> get_state();
+  std::optional<health_t> get_state(unsigned int timeout=TIMEOUT);
   std::optional<can_health_t> get_can_state(uint16_t can_number);
   void set_loopback(bool loopback);
   std::optional<std::vector<uint8_t>> get_firmware_version();
@@ -84,6 +85,8 @@ public:
   void can_send(const capnp::List<cereal::CanData>::Reader &can_data_list);
   bool can_receive(std::vector<can_frame>& out_vec);
   void can_reset_communications();
+  std::vector<uint8_t> rules_control(uint8_t request, uint16_t param1=0, uint16_t param2=0);
+  bool rules_write(std::array<uint8_t, 64> &record);
 
 protected:
   // for unit tests

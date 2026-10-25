@@ -173,7 +173,7 @@ class Car:
 
     can_strs = messaging.drain_sock_raw(self.can_sock, wait_for_one=True)
     can_list = can_capnp_to_list(can_strs)
-    if plugin_sends := self.plugins.observe_can(can_list):
+    if (plugin_sends := self.plugins.observe_can(can_list)) and self.plugins.core_alive():
       self.can_callbacks[1](plugin_sends)
 
     # Update carState from CAN

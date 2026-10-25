@@ -226,7 +226,9 @@ static bool check_crc(const uint8_t *data, uint32_t len) {
 
 int PandaSpiHandle::spi_transfer_retry(uint8_t endpoint, uint8_t *tx_data, uint16_t tx_len, uint8_t *rx_data, uint16_t max_rx_len, unsigned int timeout) {
   // timeout of 0 means forever
-  const double deadline = (timeout == 0) ? INFINITY : millis_since_boot() + std::max(timeout, SPI_MIN_TIMEOUT);
+  bool rules = endpoint == 2 || (endpoint == 0 && tx_len >= 1 && tx_data[0] >= 0xa0 && tx_data[0] <= 0xa4) ||
+               (endpoint == 0 && tx_len >= 1 && tx_data[0] == 0xd2 && timeout == 5);
+  const double deadline = (timeout == 0) ? INFINITY : millis_since_boot() + (rules ? timeout : std::max(timeout, SPI_MIN_TIMEOUT));
 
   // the id stays the same when we send the request again, so the panda never runs it twice
   uint32_t id = random_id();
@@ -234,7 +236,7 @@ int PandaSpiHandle::spi_transfer_retry(uint8_t endpoint, uint8_t *tx_data, uint1
   int nack_count = 0;
   while (true) {
     ret = spi_transfer(endpoint, id, tx_data, tx_len, rx_data, max_rx_len, deadline);
-    if (ret >= 0 || !connected) {
+    if (ret >= 0 || !connected || millis_since_boot() >= deadline) {
       break;
     }
 

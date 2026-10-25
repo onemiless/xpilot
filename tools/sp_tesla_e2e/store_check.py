@@ -19,21 +19,14 @@ Failure cases listed before implementation:
 - S15 a plugin for this platform is refused
 - S16 a plugin that breaks the code layout rules (manifest.layout_problems, e.g. one file over MAX_LINES) is installed
 - S17 the UI looks for an installed plugin's ui.py under openpilot.tesla.plugins instead of xpilot_ext
-- S18 a plugin whose can.tx claims or safety block differ from the firmware's safety.json is installed, or a matching
-      one (store auto_speed) is refused
+- S18 can.tx and runtime rules disagree or a valid rule plugin is refused
 - S19 first-boot defaults are not installed, or the marker is set on an unreachable index (no retry)
 - S20 the second replace fails and the old version is lost, changed or no longer discoverable
 - S21 the second replace and restore fail, and the old backup is deleted or its path is missing from the error
 - S22 install or uninstall onroad does not return "park first", changes the installed files, or shows UI success
-- S23 another plugin id using safety profile auto_speed is refused, not discovered, or loses param_bit 0x4000
-- S24 an unknown safety profile is installed
-- S25 a profile with extra keys (param_bit, tx or header overrides) is installed
-- S26 can.tx differs from the profile, has no safety block, or safety has no matching can.tx claims
-- S27 a legacy safety dict differing in one value is installed
-- S28 an exact legacy safety dict is refused or is not resolved to its profile
-- S29 two enabled plugins using the same profile both own its exclusive can.tx claim
-- S30 a non-dict safety block is installed
-- S31 invalid safety on disk is discovered instead of skipped with a reason
+- S23-S28/S30 retired profile/param_bit cases; S40-S41 cover the replacement rule model.
+- S29 two enabled plugins owning the same rule address both win its exclusive can.tx claim
+- S31 invalid rules on disk are discovered instead of skipped with a reason
 - S32 uninstall removes the only installed claimant of a required role or changes its files on refusal
 - S33 uninstall refuses a replacement when a built-in or another installed claimant remains
 - S34 the host Params stub accepts a key absent from params_keys.h and plugin_params.inc
@@ -42,6 +35,8 @@ Failure cases listed before implementation:
 - S37 tile/use mismatch installs instead of preserving the old version
 - S38 incompatible requires installs or replaces a working version
 - S39 incompatible requires loads instead of being skipped with its reason
+- S40 legacy safety.profile installs instead of being rejected with a clear reason
+- S41 invalid runtime rules install or replace a working plugin
 """
 import gzip
 import hashlib
@@ -88,11 +83,13 @@ try:
   import openpilot.common.params  # noqa: F401
 except Exception:
   sys.modules["openpilot.common.params"] = types.SimpleNamespace(Params=CoreParams, UnknownKeyName=KeyError)
+sys.modules["openpilot.common.params"].Params = CoreParams
 from openpilot.common.swaglog import cloudlog  # noqa: E402
 for _level in ("error", "exception", "warning", "info"):
   setattr(cloudlog, _level, lambda *a, **k: None)
 
 from openpilot.tesla import manifest as mf, store  # noqa: E402
+from tools.sp_tesla_e2e.panda_rules_check import sample_rule
 from openpilot.tesla.plugin_params import ParamsView  # noqa: E402
 
 
@@ -162,30 +159,19 @@ def main() -> int:
   publish("ext_link", archive("ext_link", good_files("ext_link"), raw=[link]))
   publish("sp_models", archive("sp_models", good_files("sp_models")))
   publish("ext_dup", archive("ext_dup", good_files("ext_dup", params={"IsMetric": {"type": "BOOL"}})))
-  declared = json.loads((ROOT / "opendbc_repo/opendbc/safety/plugins/safety.json").read_text())
-  safe = declared["auto_speed"]
-  tx = [f"can.tx:{t}" for t in safe["tx"]]
-  publish("auto_speed", archive("auto_speed", good_files("auto_speed", claims=tx, safety=safe)))
-  profile = {"profile": "auto_speed"}
-  files = good_files("ext_tx", claims=tx, safety=profile, priority=10)
-  files["plugin.py"] += '\n  def setup(self, CP_SP):\n    CP_SP.safetyParam |= int(self.MANIFEST.safety["param_bit"], 0)\n'
-  publish("ext_tx", archive("ext_tx", files))
-  publish("ambient_light", archive("ambient_light", good_files("ambient_light", claims=tx, safety=safe)))
+  safe = [sample_rule()]
+  tx = ['can.tx:0x600:1']
+  for pid in ('auto_speed', 'ambient_light', 'ext_tx'):
+    publish(pid, archive(pid, good_files(pid, claims=tx, rules=safe, priority=10 if pid == 'ext_tx' else 100)))
   bad_safety = {
-    "unknown_profile": ("S24", {"claims": tx, "safety": {"profile": "missing"}}),
-    "extra_bit": ("S25", {"claims": tx, "safety": {**profile, "param_bit": safe["param_bit"]}}),
-    "extra_tx": ("S25", {"claims": tx, "safety": {**profile, "tx": safe["tx"]}}),
-    "extra_header": ("S25", {"claims": tx, "safety": {**profile, "header": safe["header"]}}),
-    "wrong_tx": ("S26", {"claims": ["can.tx:0x679:1"], "safety": profile}),
-    "no_claims": ("S26", {"safety": profile}),
-    "no_safety": ("S26", {"claims": tx}),
-    "legacy_bit": ("S27", {"claims": tx, "safety": {**safe, "param_bit": "0x2000"}}),
-    "legacy_header": ("S27", {"claims": tx, "safety": {**safe, "header": "ambient_light.h"}}),
-    "legacy_tx": ("S27", {"claims": tx, "safety": {**safe, "tx": ["0x679:1"]}}),
-    "empty_safety": ("S27", {"safety": {}}),
+    'old_profile': ('S40', dict(safety={'profile': 'auto_speed'}, claims=tx)),
+    'old_legacy': ('S40', dict(safety={}, claims=tx)),
+    'wrong_tx': ('S41', dict(rules=safe, claims=['can.tx:0x601:1'])),
+    'owned': ('S41', dict(rules=[{**safe[0], 'tx_address': 0x488}], claims=['can.tx:0x488:1'])),
+    'bus': ('S41', dict(rules=[{**safe[0], 'tx_bus': 0}], claims=tx)),
+    'no_rules': ('S41', dict(claims=tx)),
+    'too_many': ('S41', dict(rules=[{**safe[0], 'tx_address': 0x600+i} for i in range(9)])),
   }
-  for name, value in (("null", None), ("list", []), ("string", "auto_speed"), ("number", 1), ("bool", False)):
-    bad_safety[f"safety_{name}"] = ("S30", {"safety": value})
   for pid, (_, over) in bad_safety.items():
     publish(pid, archive(pid, good_files(pid, **over)))
   publish("speed_card", archive("speed_card", good_files("speed_card")))
@@ -230,7 +216,7 @@ def main() -> int:
       errors.append(f"{code} {pid} installed")
   if (TMP / "evil.txt").exists() or (TMP / "installed" / "evil.txt").exists():
     errors.append("S2 file written outside the plugin directory")
-  for pid, code in (("auto_speed", "S28"), ("ambient_light", "S28"), ("ext_tx", "S23")):
+  for pid, code in (("auto_speed", "S18"), ("ambient_light", "S18"), ("ext_tx", "S18")):
     if (r := install(pid)) is not None:
       errors.append(f"{code} declared safety plugin {pid} refused: {r}")
   for pid, (code, _) in bad_safety.items():
@@ -264,7 +250,7 @@ def main() -> int:
     after = {p.name: p.read_bytes() for p in use_target.iterdir() if p.is_file()}
     if not error or after != before_use:
       errors.append(f"{code} use={use!r} show={show!r}: error={error!r}, preserved={after == before_use}")
-  incompatible = {"need_hook": {"hooks": ["teleport"]}, "need_rules": {"rule_abi": 1},
+  incompatible = {"need_hook": {"hooks": ["teleport"]}, "need_rules": {"rule_abi": 2},
                   "need_native": {"native": {"machine": "sparc", "python": "cpython-27"}}, "bad_requires": []}
   for pid, requires in incompatible.items():
     publish("ext_ok", archive("ext_ok", good_files("ext_ok", requires=requires)), version="4.0.0")
@@ -305,10 +291,10 @@ def main() -> int:
   for pid in bad_safety:
     if pid in names or not plugins.LOAD_ERRORS.get(pid):
       errors.append(f"S31 {pid} not skipped with a reason")
-  for pid, code in (("ext_tx", "S23"), ("auto_speed", "S28"), ("ambient_light", "S28")):
+  for pid, code in (("ext_tx", "S18"), ("auto_speed", "S18"), ("ambient_light", "S18")):
     cls = next((c for c in plugins.PLUGINS if c.NAME == pid), None)
-    if cls is None or cls.MANIFEST.safety != {**safe, **profile}:
-      errors.append(f"{code} {pid} not discovered with resolved safety")
+    if cls is None or cls.MANIFEST.rules != safe:
+      errors.append(f"{code} {pid} not discovered with runtime rules")
   ext = next((c for c in plugins.PLUGINS if c.NAME == "ext_ok"), None)
   if ext is None:
     errors.append(f"S6 installed plugin not discovered: {names} {plugins.LOAD_ERRORS}")
@@ -329,8 +315,8 @@ def main() -> int:
   host = plugins.CarPlugins(types.SimpleNamespace(brand="tesla"), core)
   cp_sp = types.SimpleNamespace(safetyParam=0)
   host.setup(cp_sp)
-  if cp_sp.safetyParam != 0x4000:
-    errors.append(f"S23 setup param_bit {cp_sp.safetyParam:#x}")
+  if cp_sp.safetyParam != 0:
+    errors.append(f"S18 setup changed base safetyParam {cp_sp.safetyParam:#x}")
   if {p.NAME for p in host.plugins} & {"ext_tx", "auto_speed", "ambient_light"} != {"ext_tx"}:
     errors.append("S29 card built multiple profile claimants")
   try:

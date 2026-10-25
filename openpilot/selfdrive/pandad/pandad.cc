@@ -409,8 +409,9 @@ void pandad_run(Panda *panda) {
       engaged_mads = process_mads_heartbeat(&sm);
       always_offroad = panda_safety.getOffroadMode();
       process_panda_state(panda, &pm, engaged, engaged_mads, is_onroad, spoofing_started, always_offroad);
-      panda_safety.configureSafetyMode(is_onroad);
     }
+
+    panda_safety.configureSafetyMode(is_onroad);
 
     // Send out peripheralState at 2Hz
     if (rk.frame() % 50 == 0) {

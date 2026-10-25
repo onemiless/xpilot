@@ -1,24 +1,21 @@
 #!/usr/bin/env python3
-"""Failure modes of gen_safety.py (declarations in opendbc/safety/plugins/safety.json):
-- A duplicate bit, undeclared header, missing header, header not named <id>.h, tx differing from the header .msg, or a built-in plugin
-  can.tx claim missing from safety.json is accepted.
-- A stale registry passes --check, regeneration is not deterministic, or invalid input overwrites the registry.
-- G1 a built-in plugin with another id using a safety profile is rejected or changes registry.h
-- G2 an unknown profile, profile with extra keys, mismatched/missing can.tx, or non-dict safety is accepted
-- G3 an exact legacy safety dict is rejected, or a differing/ambiguous legacy dict is accepted
-- G4 uint16 safetyParam bits overflow Int16, change on wire round-trip, or mutate the source dataclass
-- G5 safetyParam outside 0..0xFFFF is accepted or rejected without a clear ValueError
-- G6 safety replay reads signed CarParamsSP.safetyParam without recovering the uint16 bits
-The store side (installed plugins must match safety.json) is store_check S18; the plugins' own use of their
-param_bit is tested in the plugin repository. Real files in a disposable miniature repository.
+"""Runtime rule manifests; G1-G3 profile/generator cases retired by X-33.
+Failure cases listed before implementation:
+- G4 uint16 safetyParam encoding changes on wire or mutates the dataclass (G14).
+- G5 out-of-range safetyParam is accepted.
+- G6 replay does not recover unsigned safetyParam.
+- G7 safety.profile or any legacy safety field is accepted.
+- G8 a mode-owned TX address is accepted.
+- G9 a table above 8 rules or 4096 bytes is accepted.
+- G10 can.tx claims differ from rule TX addresses.
+- G11 malformed type/ABI, bus, fields or rule container is accepted.
+- G12 incomplete/overlapping TX bit coverage is accepted.
 """
 
 import argparse
 import ast
 import json
 from pathlib import Path
-import shutil
-import subprocess
 import sys
 import tempfile
 
@@ -28,10 +25,6 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'opendbc_repo')]
 from openpilot.cereal import custom
 from openpilot.selfdrive.car.helpers import convert_to_capnp
 from opendbc.car import structs
-
-SCRIPT = Path('openpilot/tesla/plugins/gen_safety.py')
-HEADERS = Path('opendbc_repo/opendbc/safety/plugins')
-
 
 def main():
   records = []
@@ -58,83 +51,40 @@ def main():
     else:
       raise AssertionError(f'G5 accepted {value}')
     records.append({'label': f'G5-{value}', 'exit_code': 0, 'expected': 0, 'reason': None, 'output': 'ValueError'})
+  from copy import deepcopy
+  from openpilot.tesla import manifest as mf, panda_rules
+  from tools.sp_tesla_e2e.panda_rules_check import sample_rule
   with tempfile.TemporaryDirectory() as tmp:
-    root = Path(tmp)
-    shutil.copytree(ROOT / HEADERS, root / HEADERS)
-    (root / SCRIPT).parent.mkdir(parents=True)
-    shutil.copyfile(ROOT / SCRIPT, root / SCRIPT)
-    shutil.copyfile(ROOT / 'openpilot/__init__.py', root / 'openpilot/__init__.py')
-    shutil.copyfile(ROOT / 'openpilot/tesla/manifest.py', root / 'openpilot/tesla/manifest.py')
-    declared_path = root / HEADERS / 'safety.json'
-    declared = json.loads(declared_path.read_text())
-    registry = root / HEADERS / 'registry.h'
-
-    def run(label, expected=0, check=False, reason=None):
-      proc = subprocess.run([sys.executable, str(root / SCRIPT), *(['--check'] if check else [])], capture_output=True, text=True)
-      records.append({'label': label, 'exit_code': proc.returncode, 'expected': expected, 'reason': reason,
-                      'output': proc.stdout + proc.stderr})
-
-    run('generate')
-    original = registry.read_bytes()
-    run('current-check', check=True)
-    registry.write_bytes(original + b'\n')
-    run('stale-check', 1, check=True)
-    run('regenerate')
-    assert registry.read_bytes() == original
-    builtin = root / 'openpilot/tesla/plugins/x/plugin.json'
-    builtin.parent.mkdir()
-    manifest = {'id': 'x', 'api': 1, 'category': 'tools', 'use': 'onroad', 'entry': 'plugin:X'}
-    for label in ('duplicate-bit', 'missing-header', 'tx-differs-from-header', 'builtin-claim-undeclared'):
-      data = json.loads(json.dumps(declared))
-      if label == 'duplicate-bit':
-        data['ambient_light']['param_bit'] = data['auto_speed']['param_bit']
-      elif label == 'missing-header':
-        data['ambient_light']['header'] = 'missing.h'
-      elif label == 'tx-differs-from-header':
-        data['ambient_light']['tx'] = ['0x67A:1']
-      else:
-        builtin.write_text(json.dumps({**manifest, 'claims': ['can.tx:0x123:0']}))
-      declared_path.write_text(json.dumps(data))
-      run(label, 1)
-      assert registry.read_bytes() == original, label
-    builtin.unlink()
-    declared_path.write_text(json.dumps(declared))
-    safe, profile = declared['auto_speed'], {'profile': 'auto_speed'}
-    claims = [f'can.tx:{t}' for t in safe['tx']]
-    cases = [
-      ('G1-profile-other-id', {'claims': claims, 'safety': profile}, 0),
-      ('G2-unknown-profile', {'claims': claims, 'safety': {'profile': 'missing'}}, 1),
-      ('G2-extra-bit', {'claims': claims, 'safety': {**profile, 'param_bit': safe['param_bit']}}, 1),
-      ('G2-extra-header', {'claims': claims, 'safety': {**profile, 'header': safe['header']}}, 1),
-      ('G2-extra-tx', {'claims': claims, 'safety': {**profile, 'tx': safe['tx']}}, 1),
-      ('G2-wrong-tx', {'claims': ['can.tx:0x679:1'], 'safety': profile}, 1),
-      ('G2-no-claims', {'safety': profile}, 1),
-      ('G2-no-safety', {'claims': claims}, 1),
-      ('G3-legacy-other-id', {'claims': claims, 'safety': safe}, 0),
-      ('G3-legacy-differs', {'claims': claims, 'safety': {**safe, 'param_bit': '0x2000'}}, 1),
-      ('G3-empty-legacy', {'safety': {}}, 1),
-    ]
-    for name, value in (('null', None), ('list', []), ('string', 'auto_speed'), ('number', 1), ('bool', False)):
-      cases.append((f'G2-safety-{name}', {'safety': value}, 1))
-    for label, over, expected in cases:
-      builtin.write_text(json.dumps({**manifest, **over}))
-      run(label, expected, check=True)
-      assert registry.read_bytes() == original, label
-    declared_path.write_text(json.dumps({**declared, 'alias': safe}))
-    builtin.write_text(json.dumps({**manifest, 'claims': claims, 'safety': safe}))
-    run('G3-ambiguous-legacy', 1, check=True, reason='legacy safety must match exactly one profile')
-    assert registry.read_bytes() == original
-    builtin.unlink()
-    declared_path.write_text(json.dumps(declared))
-    (root / HEADERS / 'orphan.h').write_text('#pragma once\n')
-    run('undeclared-header', 1)
-    assert registry.read_bytes() == original
-    (root / HEADERS / 'orphan.h').unlink()
-    (root / HEADERS / 'ambient_light.h').rename(root / HEADERS / 'ambient.h')
-    declared['ambient_light']['header'] = 'ambient.h'
-    declared_path.write_text(json.dumps(declared))
-    run('header-not-id', 1)
-    assert registry.read_bytes() == original
+    path = Path(tmp) / 'fixture' / 'plugin.json'
+    path.parent.mkdir()
+    base = dict(id='fixture', api=1, category='tools', use='both', entry='plugin:P')
+    valid = sample_rule()
+    cases = [('valid', dict(rules=[valid], claims=['can.tx:0x600:1']), None),
+             ('G7', dict(safety={'profile': 'auto_speed'}), 'safety'),
+             ('G7-legacy', dict(safety={}), 'safety'),
+             ('G8', dict(rules=[{**valid, 'tx_address': 0x488}], claims=['can.tx:0x488:1']), 'mode-owned'),
+             ('G9-count', dict(rules=[{**valid, 'tx_address': 0x600+i} for i in range(9)], claims=[f'can.tx:{0x600+i:#x}:1' for i in range(9)]), '8'),
+             ('G10', dict(rules=[valid], claims=['can.tx:0x601:1']), 'can.tx'),
+             ('G11-type', dict(rules=[{**valid, 'type': 'unknown'}]), 'type'),
+             ('G11-bus', dict(rules=[{**valid, 'tx_bus': 0}]), 'bus'),
+             ('G11-list', dict(rules={}), 'rules'),
+             ('G11-abi', dict(rules=[{**valid, 'abi': 2}]), 'field'),
+             ('G12-coverage', dict(rules=[{**valid, 'copy_mask': [0]*8}]), 'coverage')]
+    large = deepcopy(valid)
+    large['fields'] = [dict(bit_offset=i*8, width=8, min=0, max=255, exempt_values=[]) for i in range(8)]
+    large['copy_mask'] = [0]*8
+    large['legal_tuples'] = [dict(field_mask=255, values=[i]*8) for i in range(8)]
+    cases += [('G9-bytes', dict(rules=[{**large, 'tx_address': 0x600+i} for i in range(6)], claims=[f'can.tx:{0x600+i:#x}:1' for i in range(6)]), '4096')]
+    for label, over, reason in cases:
+      path.write_text(json.dumps({**base, **over}))
+      try:
+        m = mf.parse(path)
+        assert reason is None, f'{label} accepted'
+        blob = panda_rules.encode_rules(m.rules)
+        assert blob[10] == 1
+      except ValueError as e:
+        assert reason is not None and reason in str(e), f'{label}: {e}'
+      records.append(dict(label=label, exit_code=0, expected=0, reason=None, output='validated'))
 
   print(json.dumps(records, indent=2))
   failed = [r for r in records if r['exit_code'] != r['expected'] or (r['reason'] and r['reason'] not in r['output'])]

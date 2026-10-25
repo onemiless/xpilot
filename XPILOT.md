@@ -104,13 +104,14 @@ panda/board/xpilot_rules.h   app EP2 loader
 | `claims` | 要用的资源，见下表；没声明的一律被拒绝 |
 | `settings` | 设置项：只有 key 和 label 是开关；带 `range: [最小, 最大, 步长, 单位, 除数]` 或 `choices: [[标签, 值], ...]` 是选择项 |
 | `params` | 参数声明，格式见 `gen_params.py`；改完运行 `python3 openpilot/tesla/plugins/gen_params.py` |
+| `rules` | `template_clone.v1` 规则列表，字段与限制见第 6 节合同；can.tx 必须精确匹配。旧 `safety` 字段一律拒绝 |
 | `requires` | 可选能力需求：`{"hooks": ["setup"], "msg": ["lanes.hint"], "rule_abi": 1, "native": {"machine": "aarch64", "python": "cpython-312"}}`；每项可省略 |
 
 清单有错（id 不对、类别未知、use 缺失或无效、api 不匹配、资源格式错、JSON 坏了）或代码导入失败的插件会被跳过，在 Plugins 页顶部显示 "Failed: <id>"，不影响其他插件。
 
 磁贴声明须与 `use` 一致：`onroad` 不能有 `show="offroad"`，`offroad` 不能有 `show="onroad"`，`show="always"` 必须配 `both`。`manifest.tile_problems()` 是清单检查、商店安装和插件仓库检查共用的源码校验；安装拒绝不一致的包且保留旧版本。`use` 不授予或门控任何运行钩子。
 
-能力预检统一调用 `manifest.compatible(manifest, HOST_CAPS)`，`api` 仍是 1，没写 `requires` 的旧插件继续有效。`hooks` 是 `Plugin` 方法名；`msg` 当前用 `*` 表示支持所有合法 kind 的 JSON 传输，不承诺 payload schema 或多发布者 broker。`native` 必须等于现有 `host_platform()` 的 machine/Python tag，旧 `platform` 字段也继续检查。未知能力、格式错误或不匹配都带原因拒绝安装、启用或加载；发现失败写进 `LOAD_ERRORS`，启用失败不改任何开关或故障标记。`RULE_ABI` 和 `HOST_CAPS["rule_abi"]` 当前为 `None`，G1 固件规则引擎交付并验证前拒绝要求 ABI 1 的插件。
+能力预检统一调用 `manifest.compatible(manifest, HOST_CAPS)`，`api` 仍是 1，没写 `requires` 的旧插件继续有效。`hooks` 是 `Plugin` 方法名；`msg` 当前用 `*` 表示支持所有合法 kind 的 JSON 传输，不承诺 payload schema 或多发布者 broker。`native` 必须等于现有 `host_platform()` 的 machine/Python tag，旧 `platform` 字段也继续检查。未知能力、格式错误或不匹配都带原因拒绝安装、启用或加载；发现失败写进 `LOAD_ERRORS`，启用失败不改任何开关或故障标记。`RULE_ABI` 和 `HOST_CAPS["rule_abi"]` 为 `1`；要求其他规则 ABI 的插件带原因拒绝。旧 `safety.profile` 版本必须换成携带 `rules` 的新版，不作翻译。
 
 系统 updater 在 finalized 树置为可激活之前，用该树自己的清单解析器和 `HOST_CAPS` 检查已安装插件，不导入插件代码。不相容列表（含原因）写入文件参数 `XpilotUpdateIncompatiblePlugins`（`/data/xpilot_plugins/.params/`，沿用 `ParamsView`），停车页逐项提示；不阻断系统更新。预检本身失败也提示，后续成功预检会清除旧提示。
 
@@ -334,7 +335,11 @@ Tesla 自有地址按地址独占，与 bus/length 无关（包括 0x488、0x2B9
 
 app 固件专用 CAPS/STATUS/BEGIN/COMMIT/CLEAR 及 EP2 64 字节记录见合同。主机必须先验证 CAPS 是 app，绝不向 bootstub EP2 写规则。BEGIN 立即撤销旧表，CRC/格式/上传失败后空表；只允许非 car mode 提交。启动和每次切入非 car mode 清表，每次设置模式重置模板和预算，切入 car mode 中止未完成上传。表为空或失败不改变基础 Tesla 接管条件。
 
-宿主衔接由 X-20261025-33 实现：card 编译已启用且裁决胜出的规则到 `XpilotPandaRules`；pandad 每循环只发一条 EP2 记录，保留心跳和总截止时间，在 0xDF/0xDC 前 COMMIT 并核对 STATUS CRC/count。失败 CLEAR、记录功能故障，基础模式仍正常 arming。没有规则也显式装载空表。插件不再分配 safetyParam 位；G14 固定位保留。旧 `safety.profile` 插件必须发布新版本替代，系统不提供翻译层；本固件提交不代表宿主迁移已落地。
+宿主衔接（X-20261025-33）：card 编译已启用且裁决胜出的规则到 `XpilotPandaRules`；pandad 每循环只发一条 EP2 记录，保留心跳和总截止时间，在 0xDF/0xDC 前 COMMIT 并核对 STATUS CRC/count。失败 CLEAR、记录功能故障，基础模式仍正常 arming。没有规则也显式装载空表。插件不再分配 safetyParam 位；G14 固定位保留。旧 `safety.profile` 插件必须发布新版本替代，系统不提供翻译层；主机实现和模型验证不代表设备已部署。
+
+`XpilotPandaRules` 是 BYTES：完整表紧接 4 字节 little-endian CRC32（只计算表，参数总长 20–4100）；没有 JSON 或额外长度前缀。唯一编码器为 `openpilot/tesla/panda_rules.py`，固件测试 fixture 也导入它。card 在 setup 后、CP/SP 发布前同步写入；没有规则也写空表。跨插件重复地址或总量超限，只丢弃当前插件并记录 `card.rules`，其他规则保留。旧 generator 读取入口只供旧 oracle 检查，生产发现、安装与编译均不读取 safety.json。
+
+功能故障参数 `XpilotPandaRulesFault`（BOOL）在 manager 启动和停车时清除。规则持有者运行期任一 hook 异常视作关键故障，同步置位；pandad 在上传期和接管后检查，CLEAR 整表并保持基础模式；CLEAR 读回失败先设 NO_OUTPUT 清表再恢复基础模式。本行程不重新授予规则；表变更只在回到非 car mode 后重载。初始化/setup/编译拒绝发生在表写入之前，只停用该插件。observe_can 的即时发送和控制发送都受 `core_alive` 门控。上传每个 100 Hz 循环最多一条 EP2 记录，心跳保持 10 Hz；总期限两秒，相关传输限时 5 ms。CAPS 失败绝不写 EP2；STATUS 要独立核对 state/error/CRC/length/count。
 
 生产固件只包含 `xpilot_rules.h` 引擎。`auto_speed.h`、`ambient_light.h`、`registry.h`、`gen_safety.py`、`safety.json` 暂留作测试 oracle/迁移参考，不再授予生产发送权限。X-33 落地、差分门通过后另行删除，不能在本任务删除。navassist oracle 固定为 Sniper-Eon/xpilot `ab3535b5a4acbf318c55005868d37ed19e2cf77d` 的测试 fixture，唯一故意差异是 cancel 会话豁免。
 
@@ -454,10 +459,11 @@ python3 tools/sp_tesla_e2e/static_imports.py                         # 有没有
 python3 tools/sp_tesla_e2e/tile_layout_check.py                       # 大屏磁贴：网格、排布、行驶避让、编辑操作、手势、重画判断、ASCII 文字、文字适配磁贴
 python3 tools/sp_tesla_e2e/plugin_host_check.py                       # 插件宿主：出错隔离、总开关、元数据、参数、目标车速、雷达/地图/外接 provider、pluginMsg
 python3 tools/sp_tesla_e2e/manifest_check.py                          # 插件清单、资源声明、冲突裁决、代码结构（5.3）、只放核心插件（M12）
-python3 tools/sp_tesla_e2e/safety_manifest_check.py                   # safety.json 和 registry.h、头文件一致（gen_safety.py --check）
+python3 tools/sp_tesla_e2e/safety_manifest_check.py                   # rules 清单、位覆盖、所有权、表大小及 G14 编码
 python3 tools/sp_tesla_e2e/phase2_check.py                            # 插件报警、变道策略、横向修正
 python3 tools/sp_tesla_e2e/phase3_check.py                            # 可替换的横向控制器和纵向规划
 python3 tools/sp_tesla_e2e/phase4_check.py                            # 可替换的接管和安全兜底：宿主底线、出错锁定、card 门控
+python3 tools/sp_tesla_e2e/panda_rules_check.py --output /tmp/panda-rules # C++ host → T32 真实 C loader；先 scons 构建 pandad/tests/test_panda_rules
 python3 tools/sp_tesla_e2e/store_check.py                             # 插件商店：下载、校验、安装、代码结构、参数（本机 HTTP 服务）
 python3 tools/sp_tesla_e2e/offroad_pages_check.py                     # 大屏停车页面：页面模块、参数名、插件行、商店行、视口、触摸映射
 python3 tools/sp_tesla_e2e/store_e2e.py --repo ~/xpilot-plugins       # 插件仓库端到端：索引 → 安装 → 发现 → 钩子生效

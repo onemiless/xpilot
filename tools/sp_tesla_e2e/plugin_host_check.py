@@ -54,6 +54,10 @@ Run from the repo root with the openpilot python env. Native-only modules (Param
 - P42 enabling an incompatible plugin writes switches, disables peers, or clears faults
 - P43 staged update uses running capabilities, omits incompatibilities/alerts, or blocks activation
 - P44 drive start omits system/plugin hashes or rule CRC, includes inactive plugins, or logs repeatedly
+- P45 duplicate TX address across winners drops and faults only the second plugin
+- P46 aggregate rule/count overflow drops and faults only the offending plugin
+- P47 no rules or a disabled plugin explicitly replaces a stale table with an empty table
+- P48 a critical rule-owner fault raises the rules feature fault for pandad revocation
 """
 import ast
 import json
@@ -78,6 +82,8 @@ except Exception:
 
 from openpilot.tesla import plugins  # noqa: E402
 from openpilot.tesla.plugin import Plugin  # noqa: E402
+
+RECORD_FAULT = plugins.record_fault
 
 KEY_RE = r'\{"(\w+)", \{[^,]+, (\w+)'
 CORE_KEYS = dict(re.findall(KEY_RE, (ROOT / "openpilot/common/params_keys.h").read_text()))
@@ -282,9 +288,42 @@ def main() -> int:
   errors += service_checks(plugins_mod)
   errors += required_role_checks(plugins_mod, real)
   errors += capability_checks(plugins_mod, real)
+  errors += rule_checks(plugins_mod)
 
   print(json.dumps({"plugins": [c.NAME for c in real], "artifacts": str(ARTIFACTS), "errors": errors}, indent=1))
   return 1 if errors else 0
+
+
+def rule_checks(plugins):
+  from dataclasses import replace
+  from openpilot.tesla import panda_rules
+  from tools.sp_tesla_e2e.panda_rules_check import sample_rule
+  class Params(FakeParams):
+    def put(self, key, value, block=False):
+      self.values[key] = value
+    put_bool = put
+  template = plugins.mf.load_all()[0][0]
+  def plugin(name, addresses, enable=None):
+    return type(name, (Plugin,), dict(NAME=name, ENABLE_PARAM=enable, CLAIMS=(),
+      MANIFEST=replace(template, id=name, rules=[sample_rule(a) for a in addresses])))
+  first, second = plugin('first', [0x600]), plugin('second', [0x600])
+  for code, classes, count, fault in [('P45', (first, second), 1, 'second'),
+      ('P46', (plugin('first', range(0x600, 0x608)), plugin('second', [0x608])), 8, 'second'),
+      ('P47', (), 0, None), ('P47-disabled', (plugin('off', [0x600], 'Off'),), 0, None)]:
+    params = Params({'XpilotPandaRules': b'stale'})
+    faults = []
+    with patch.object(plugins, 'PLUGINS', classes), patch.object(plugins, 'record_fault', side_effect=lambda n, w, e: faults.append(n)):
+      host = plugins.CarPlugins(CP, params)
+      host.setup(types.SimpleNamespace())
+    expected = panda_rules.param(panda_rules.table(tuple(panda_rules.encode_rule(sample_rule(0x600+i)) for i in range(count))))
+    assert params.get('XpilotPandaRules') == expected, code
+    assert faults == ([fault] if fault else []), code
+    assert fault not in [p.NAME for p in host.plugins], code
+  with patch.object(plugins, 'PLUGINS', (first,)), patch('openpilot.common.params.Params', return_value=params):
+    RECORD_FAULT('first', 'card.control_sends', RuntimeError('critical'))
+  assert params.get_bool('XpilotPandaRulesFault'), 'P48'
+  (ARTIFACTS / 'compiled-rules.bin').write_bytes(expected)
+  return []
 
 
 def capability_checks(plugins, real) -> list[str]:
@@ -316,6 +355,7 @@ def capability_checks(plugins, real) -> list[str]:
     path = stage / "openpilot/tesla/manifest.py"
     path.parent.mkdir(parents=True)
     # The staged host drops setup; the running host still provides it.
+    (path.parent / 'panda_rules.py').write_text((ROOT / 'openpilot/tesla/panda_rules.py').read_text())
     path.write_text((ROOT / "openpilot/tesla/manifest.py").read_text() + '\nHOST_CAPS["hooks"] = []\n')
     installed = mf.INSTALL_DIR / "needs_setup"
     installed.mkdir(parents=True)
@@ -362,8 +402,9 @@ def capability_checks(plugins, real) -> list[str]:
     active_plugin = real[0]
     off = type("Off", (Plugin,), {"NAME": "off", "ENABLE_PARAM": "OffKey"})
     loser = type("Loser", (Plugin,), {"NAME": "loser", "PRIORITY": 20000, "CLAIMS": active_plugin.CLAIMS})
-    p.put("XpilotPandaRules", {"crc32": 12345})
-    with patch.object(plugins, "PLUGINS", (active_plugin, off, loser)), patch.object(plugins.cloudlog, "event", side_effect=lambda name, **kw: events.append((name, kw))), \
+    p.put("XpilotPandaRules", b"table" + (12345).to_bytes(4, "little"))
+    with patch.object(plugins, "PLUGINS", (active_plugin, off, loser)), \
+         patch.object(plugins.cloudlog, "event", side_effect=lambda name, **kw: events.append((name, kw))), \
          patch.object(mf, "compiled_param_keys", return_value={"XpilotPandaRules"}):
       if snapshot_calls:
         exec(compile(ast.Expression(snapshot_calls[0]), "card.py", "eval"), {"log_snapshot": plugins.log_snapshot,

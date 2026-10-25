@@ -160,6 +160,79 @@ Errors (STATUS.error, sticky until BEGIN/CLEAR/successful mode change):
 8 COVERAGE, 9 OWNERSHIP. Any upload/validation error invalidates the whole table;
 car-mode mutation refusal preserves an already committed table but sets MODE.
 
+## Host manifest and Params (X-20261025-33)
+
+`rules` is a JSON list, default `[]`. Each entry has exactly these keys; all
+numeric values are JSON integers (booleans are refused). `type` is
+`"template_clone.v1"`; its suffix fixes ABI 1, with no separate per-rule ABI field.
+No `safety` field is accepted, including null or an old `safety.profile`.
+
+- `tx_address`, `rx_address`: numeric 29-bit addresses; `tx_bus`, `rx_bus`: 1.
+- `tx_length`, `rx_length`: equal, 1..8.
+- `template_ttl_us`, `min_interval_us`, `session`, `max_count`, `idle_reset_us`:
+  exactly the table semantics above. Session is numeric 1 IDLE or 2 WINDOW.
+- IDLE requires `max_span_us`; WINDOW requires `window_us` instead. Both map to
+  record offset 32; WINDOW requires `idle_reset_us=0`.
+- `counter`: `{kind, bit_offset, width}`; numeric kinds 0/1 as above.
+- `tx_checksum`, `rx_checksum`: `{kind, checksum_byte}`; numeric kinds 0/1.
+- `predicate_mask`, `predicate_value`, `copy_mask`, `constant_mask`,
+  `constant_value`: lists of exactly eight byte integers, zero beyond length.
+- `fields`: list of `{bit_offset, width, min, max, exempt_values}`.
+- `legal_tuples`: list of `{field_mask, values}`. `values` has exactly one entry
+  per field, zero for unselected fields; encoder pads remaining slots to eight.
+
+Manifest load checks complete TX coverage, masks, counters, checksums, field and
+session bounds as well as ownership/bus/type/size. Numeric `can.tx` address/bus
+pairs must equal the rules' TX pairs. `RULE_ABI`/`HOST_CAPS.rule_abi` are 1.
+The sole byte encoder is `openpilot/tesla/panda_rules.py`; T32 fixtures import it.
+No production host validation reads legacy safety.json/headers.
+
+`XpilotPandaRules` is BYTES: **complete table bytes followed immediately by a
+4-byte little-endian CRC32 of those table bytes**. Total param size is 20..4100;
+there is no extra length prefix or JSON envelope. Table header supplies length
+and count. CRC is not part of the firmware table; pandad sends it in the metadata
+record and COMMIT. Card writes this synchronously after setup and before CP/SP
+publication, even for zero rules. Manager/onroad transition clears the param;
+missing/malformed bytes cause a feature fault, never reuse of the previous table.
+The drive snapshot records the trailing CRC as an integer.
+
+Card compiles live, enabled claim winners in host order. Duplicate TX addresses
+(including differently spelled claims) or aggregate 8-rule/4096-byte overflow drop
+the offending plugin from card, record `card.rules` in `XpilotPluginFaults`, and
+retain preceding and subsequent valid plugins. Setup/init failures are excluded
+before compilation. There is no profile translation or plugin safetyParam bit.
+
+`XpilotPandaRulesFault` is BOOL, cleared on manager start and when offroad. Loader
+errors latch it for the drive. Runtime `record_fault` for any rule-owning plugin
+also sets it synchronously (all hook exceptions are treated as critical for rule
+ownership). Init/setup/compiler rejection occurs before the table exists and
+only faults that plugin. Pandad checks the fault during upload and after arming,
+CLEARs the whole table once, and leaves base safety configured. After a failed
+CLEAR response it sets NO_OUTPUT to invalidate the table before restoring base
+mode. No per-rule removal/reload occurs in a car mode. Returning offroad, or an
+observed reset into a non-car mode, permits a fresh upload; changed param bytes
+are otherwise deferred. Disabled plugins take effect at the next card startup.
+
+Pandad runs one loader step per 100 Hz loop; at most one 64-byte EP2 record is
+written per step, including metadata. Heartbeats retain the existing 10 Hz path.
+Overall upload deadline is 2000 ms; changing params during upload does not extend it. Rule controls, EP2 and loader health reads use
+5 ms transport timeouts; USB finite controls do not retry forever, and SPI rule
+requests do not inherit the old 100 ms minimum or unbounded NACK/silent retry.
+CAPS must match app magic, ABI, limits, record size and reserved bytes before
+CLEAR/BEGIN or any EP2 write. Bootstub/body have no valid app CAPS. On failure,
+CLEAR is attempted only after app capabilities were established on this connection,
+including when a changed param forces another CAPS check after a previous COMMIT. COMMIT is
+followed by an independent STATUS read matching state/error/CRC/length/count.
+`card.state_update` gates observe_can sends on the same `core_alive` as controls.
+
+Host proof: `safety_manifest_check.py` G7-G12, `manifest_check.py` M18,
+`plugin_host_check.py` P45-P48, `store_check.py` S40-S41, `phase4_check.py` C20.
+`panda_rules_check.py --output <dir>` drives the production C++ PandaSafety/Panda
+through a fake transport into the real T32 C loader, with H1-H9 fault injection.
+Build `scons openpilot/selfdrive/pandad/pandad
+openpilot/selfdrive/pandad/tests/test_panda_rules` first. Output includes table
+bytes, trace.jsonl, native.log, result.json and SHA-256 input identities; no device.
+
 ## Migration / proof boundary
 
 Production includes only the runtime engine. auto_speed.h, ambient_light.h,
