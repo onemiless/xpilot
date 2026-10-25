@@ -6,10 +6,15 @@
 - G1 a built-in plugin with another id using a safety profile is rejected or changes registry.h
 - G2 an unknown profile, profile with extra keys, mismatched/missing can.tx, or non-dict safety is accepted
 - G3 an exact legacy safety dict is rejected, or a differing/ambiguous legacy dict is accepted
+- G4 uint16 safetyParam bits overflow Int16, change on wire round-trip, or mutate the source dataclass
+- G5 safetyParam outside 0..0xFFFF is accepted or rejected without a clear ValueError
+- G6 safety replay reads signed CarParamsSP.safetyParam without recovering the uint16 bits
 The store side (installed plugins must match safety.json) is store_check S18; the plugins' own use of their
 param_bit is tested in the plugin repository. Real files in a disposable miniature repository.
 """
 
+import argparse
+import ast
 import json
 from pathlib import Path
 import shutil
@@ -18,12 +23,41 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(ROOT), str(ROOT / 'opendbc_repo')]
+
+from openpilot.cereal import custom
+from openpilot.selfdrive.car.helpers import convert_to_capnp
+from opendbc.car import structs
+
 SCRIPT = Path('openpilot/tesla/plugins/gen_safety.py')
 HEADERS = Path('opendbc_repo/opendbc/safety/plugins')
 
 
 def main():
   records = []
+  replay = ast.parse((ROOT / 'opendbc_repo/opendbc/safety/tests/safety_replay/replay_drive.py').read_text())
+  reader = next(n for n in ast.walk(replay) if isinstance(n, ast.If) and ast.unparse(n.test) == 'args.param_sp is None')
+  reader_code = compile(ast.Module(body=reader.body, type_ignores=[]), 'replay_drive.py', 'exec')
+  for value in (0x0000, 0x2000 | 0x4000, 0x8000, 0x8001, 0xE001, 0xFFFF):
+    source = structs.CarParamsSP(safetyParam=value)
+    wire = convert_to_capnp(source).to_bytes()
+    with custom.CarParamsSP.from_bytes(wire) as decoded:
+      assert decoded.safetyParam == (value if value < 0x8000 else value - 0x10000), f'G4 wire {value:#06x}'
+      assert decoded.safetyParam & 0xFFFF == value, f'G4 round-trip {value:#06x}'
+      assert source.safetyParam == value, f'G4 mutated source {value:#06x}'
+      args = argparse.Namespace(param_sp=None)
+      exec(reader_code, {'CP_SP': decoded, 'args': args})
+      assert args.param_sp == value, f'G6 replay {value:#06x}: {args.param_sp}'
+      records.append({'label': f'G4/G6-{value:#06x}', 'exit_code': 0, 'expected': 0, 'reason': None,
+                      'output': f'wire={decoded.safetyParam}, replay={args.param_sp}'})
+  for value in (-1, 0x10000):
+    try:
+      convert_to_capnp(structs.CarParamsSP(safetyParam=value))
+    except ValueError as e:
+      assert 'safetyParam' in str(e) and '0..0xFFFF' in str(e), f'G5 unclear error: {e}'
+    else:
+      raise AssertionError(f'G5 accepted {value}')
+    records.append({'label': f'G5-{value}', 'exit_code': 0, 'expected': 0, 'reason': None, 'output': 'ValueError'})
   with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
     shutil.copytree(ROOT / HEADERS, root / HEADERS)

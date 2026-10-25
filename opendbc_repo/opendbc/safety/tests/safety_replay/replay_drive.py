@@ -170,7 +170,7 @@ if __name__ == "__main__":
     if args.alternative_experience is None:
       args.alternative_experience = CP.alternativeExperience
     if args.param_sp is None:
-      _param_sp = CP_SP.safetyParam if hasattr(CP_SP, 'safetyParam') else 0
+      _param_sp = (CP_SP.safetyParam & 0xFFFF) if hasattr(CP_SP, 'safetyParam') else 0
       args.param_sp = _param_sp
 
   print(f"replaying {args.route_or_segment_name[0]} with safety mode {args.mode}, param {args.param}, alternative experience {args.alternative_experience}, " +
