@@ -524,6 +524,7 @@ def switch_ui_checks(plugin, p, offroad) -> list[str]:
     exec(compile(ast.fix_missing_locations(tree), path, "exec"), env)
     ui = env[name]()
     ui.items, ui.rows, ui.errors = [(plugin, types.SimpleNamespace(action_item=toggle), status)], [(plugin, toggle)], {}
+    ui.jobs = types.SimpleNamespace(busy=False)
     getattr(ui, callback)(plugin, False)
     shown = status[""] if name == "Switches" else statuses[-1]
     if state[-1] is not True or shown != f"required role {plugin.CLAIMS[0]}":

@@ -44,20 +44,21 @@ class InfoRow(ListItem):
 class Switches:
   """Plugin switch rows: [status] after the title, offroad-only, conflicts switched off."""
 
-  def __init__(self):
+  def __init__(self, jobs):
+    self.jobs = jobs
     self.items = []
     self.errors = {}
 
   def make(self, plugin, description: str, on_tap=None) -> InfoRow:
     status = {"": ""}
     action = toggle_item("", initial_state=is_enabled(plugin, ui_state.params), callback=lambda v: self.switch(plugin, v),
-                         enabled=lambda: ui_state.is_offroad() and plugin.ENABLE_PARAM is not None).action_item
+                         enabled=lambda: ui_state.is_offroad() and not self.jobs.busy and plugin.ENABLE_PARAM is not None).action_item
     item = InfoRow(lambda: f"{plugin.TITLE}  [{status['']}]" if status[""] else plugin.TITLE, description, action, on_tap)
     self.items.append((plugin, item, status))
     return item
 
   def switch(self, plugin, value: bool) -> None:
-    self.errors = {plugin.NAME: switch_plugin(plugin, value, params()) if ui_state.is_offroad() else "park first"}
+    self.errors = {plugin.NAME: switch_plugin(plugin, value, params(), jobs=self.jobs) if ui_state.is_offroad() else "park first"}
     self.refresh()
 
   def refresh(self) -> None:
@@ -74,7 +75,7 @@ class PluginPage(ListPage):
   def __init__(self, plugin, jobs: StoreJobs):
     super().__init__()
     m = plugin.MANIFEST
-    self.switches = Switches()
+    self.switches = Switches(jobs)
     self.add(self.switches.make(plugin, plugin.DESCRIPTION))
     self.rows = [SettingRow(s) for s in plugin.SETTINGS]
     self.add(*[r.item for r in self.rows])
@@ -118,7 +119,7 @@ class PluginsPage(Widget):
   def _build(self) -> None:
     """Rows from PLUGINS and the latest index; rebuilt after each fetch."""
     jobs = self.jobs
-    self.switches = Switches()
+    self.switches = Switches(jobs)
     self.sections: list[tuple[str, ListPage]] = []
     if LOAD_ERRORS:
       page = ListPage()

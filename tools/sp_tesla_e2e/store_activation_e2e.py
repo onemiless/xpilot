@@ -9,11 +9,17 @@ Failure scenarios fixed before implementation:
 - toggle/reboot/rename writes fail (including after a write) and lose original bytes, absent keys or backup;
 - import probing hot-loads into the running host, or simulated restart fails to register/gate the new process;
 - missing/broken/stale/version-mismatched state is called ready, or a missing/broken plugin removes sp_models.
+- FIX round 1: SIGKILL after package renames, each toggle or before DoReboot leaves partial state; startup discovers it;
+- one failed rollback prevents other files/toggles/reboot restoration, or retry consumes its only backups;
+- parameter names collide with old/candidate paths; orphan staging persists; completed installs get rolled back;
+- busy store jobs allow either UI switch callback to mutate params, or store rows read runtime state each frame;
+- a refusal is accepted for an unrelated error instead of reaching the claimed guard.
 
 Run: python3 tools/sp_tesla_e2e/store_activation_e2e.py --output /tmp/s2-evidence
 All Params and plugin storage are isolated; no device, real Params, model execution or actual reboot.
 """
 import argparse
+import ast
 import hashlib
 import http.server
 import importlib
@@ -21,10 +27,12 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import threading
 import time
+import types
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -154,6 +162,15 @@ def main():
         error = store.install(entry, activate=True, offroad=lambda: core.get_bool("IsOffroad"))
     after_params = {**core.values, "IsOffroad": params["IsOffroad"]}
     assert error, "accepted failed transaction"
+    reasons = {"hash": "sha256 mismatch", "API mismatch": "api 999", "ABI mismatch": "requires native",
+               "protected toggle": "own BOOL", "losing priority": "selected plugin loses an exclusive claim",
+               "entry import failure": "missing host ABI", "entry not Plugin": "not a Plugin subclass",
+               "local model unavailable": "local model not ready", "no local preparation": "prepare_install",
+               "required": "required role role:engagement.state", "new": "broken", "file write": "injected parameter rename failure",
+               "factory": "missing process ABI", "download": "park first", "toggle": "injected toggle write failure",
+               "restart": "park first", "reboot write": "injected reboot write failure",
+               "reboot write after commit": "injected reboot write failure"}
+    assert reasons[name] in error, f"{name} did not reach its guard: {error}"
     assert tree(mf.INSTALL_DIR) == before, "original files/toggles not restored"
     assert after_params == params, f"core parameters changed: {core.values}"
     return {"error": error, "before": before, "after": tree(mf.INSTALL_DIR), "params": after_params}
@@ -284,6 +301,240 @@ def main():
     return seen
   record("plugin-written atomic status", states)
 
+  def row_polling():
+    jobs = StoreJobs(lambda: True)
+    entry = serve(publish())
+    jobs.installed = {PID: entry.version}
+    with patch("openpilot.tesla.ui.offroad.time.monotonic", return_value=100) as clock, \
+         patch.object(store, "plugin_state", return_value="Local ready") as read:
+      for _ in range(60):
+        assert "Local ready" in jobs.row_value(entry)
+      assert read.call_count == 1, f"{read.call_count} reads in one second"
+      clock.return_value = 101
+      jobs.row_value(entry)
+      assert read.call_count == 2
+    return "60 row evaluations -> one status read; next second -> second read"
+  record("store row polls at 1 Hz", row_polling)
+
+  def busy_switches():
+    reset()
+    rival = next(p for p in plugins.PLUGINS if p.NAME == "s2_rival")
+    from openpilot.tesla.ui import offroad
+    jobs = StoreJobs(lambda: True)
+    entered, release = threading.Event(), threading.Event()
+    def hold():
+      entered.set()
+      assert release.wait(10)
+    jobs.run(hold)
+    assert entered.wait(10)
+    before = tree(mf.INSTALL_DIR)
+    try:
+      for path, name, methods, callback in (("pages/plugins.py", "Switches", ("switch", "refresh"), "switch"),
+                                           ("plugins_page.py", "CategoryPage", ("_switch", "show_event"), "_switch")):
+        parsed = ast.parse((ROOT / "openpilot/tesla/ui" / path).read_text())
+        cls = next(n for n in parsed.body if isinstance(n, ast.ClassDef) and n.name == name)
+        cls.bases = [ast.Name(id="Base", ctx=ast.Load())]
+        cls.body = [n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in methods]
+        parsed.body = [cls]
+        env = {"Base": type("Base", (), {"show_event": lambda self: None}),
+               "ui_state": types.SimpleNamespace(is_offroad=lambda: True, params=core), "params": lambda: ParamsView(core),
+               **{n: getattr(plugins, n) for n in ("view", "is_enabled", "resolve", "FAULTS_PARAM")},
+               "switch_plugin": offroad.switch_plugin, "plugin_status": offroad.plugin_status}
+        exec(compile(ast.fix_missing_locations(parsed), path, "exec"), env)
+        ui = env[name]()
+        ui.items, ui.rows, ui.errors, ui.jobs = [], [], {}, jobs
+        getattr(ui, callback)(rival, False)
+        assert ui.errors[rival.NAME] == "store busy", ui.errors
+        assert tree(mf.INSTALL_DIR) == before
+    finally:
+      release.set()
+      while jobs.busy:
+        time.sleep(0.01)
+    assert offroad.switch_plugin(rival, False, ParamsView(core), jobs=jobs) is None
+    return "both real UI callbacks refused writes while worker busy; idle switch works"
+  record("busy store blocks both UI switches", busy_switches)
+
+  # Persistent, isolated core Params survive the killed installer and fresh startup interpreter.
+  (support / "fixture_params.py").write_text('''import json, os
+from pathlib import Path
+class Params:
+  def __init__(self): self.path = Path(os.environ['XP_TEST_CORE'])
+  def get(self, key, **kw): return json.loads(self.path.read_text()).get(key)
+  def get_bool(self, key, **kw): return bool(self.get(key))
+  def put_bool(self, key, value, **kw):
+    data = json.loads(self.path.read_text()); data[key] = value
+    self.path.write_text(json.dumps(data))
+  def remove(self, key):
+    data = json.loads(self.path.read_text()); data.pop(key, None)
+    self.path.write_text(json.dumps(data))
+''')
+  (support / "sitecustomize.py").write_text("import sys, types\nfrom fixture_params import Params\n" +
+                                         "sys.modules['openpilot.common.params'] = types.SimpleNamespace(Params=Params, UnknownKeyName=KeyError)\n")
+  kill_code = '''
+import json, os, signal, sys
+from pathlib import Path
+from openpilot.common.params import Params
+from openpilot.tesla import store, manifest as mf
+from openpilot.tesla.plugin_params import ParamsView
+entry = store.IndexEntry(**json.loads(Path(sys.argv[1]).read_text()))
+point = sys.argv[2]
+replace, put, reboot, sync = os.replace, ParamsView.put_bool, Params.put_bool, os.fsync
+synced = set()
+def kill(): os.kill(os.getpid(), signal.SIGKILL)
+def fsync(fd):
+  sync(fd)
+  synced.add(os.fstat(fd).st_ino)
+def swap(src, dst):
+  if Path(src) == mf.INSTALL_DIR / entry.id:
+    staging = Path(dst).parent
+    for p in (staging / 'journal.json', staging, mf.INSTALL_DIR):
+      assert p.stat().st_ino in synced, f'not durable before first mutation: {p}'
+  replace(src, dst)
+  if (point == 'journal published' and Path(dst).name == 'journal.json' or
+      point == 'old rename' and Path(src) == mf.INSTALL_DIR / entry.id or
+      point == 'new rename' and Path(dst) == mf.INSTALL_DIR / entry.id): kill()
+def toggle(view, key, value, **kw):
+  put(view, key, value, **kw)
+  if point == 'first toggle' and key == 'Exts2_rivalOn': kill()
+  if point == 'second toggle' and key == 'ExtS2New': kill()
+def request(self, key, value, **kw):
+  if point == 'before reboot' and key == 'DoReboot': kill()
+  reboot(self, key, value, **kw)
+  if point == 'after reboot' and key == 'DoReboot': kill()
+os.replace, ParamsView.put_bool, Params.put_bool, os.fsync = swap, toggle, request, fsync
+error = store.install(entry, activate=sys.argv[3] == 'True', offroad=lambda: True)
+raise AssertionError(f'kill point not reached: {point}: {error}')
+'''
+  for point, existing, activate in (("journal published", True, True), ("old rename", True, True), ("new rename", True, True), ("first toggle", True, True),
+                                     ("second toggle", True, True), ("before reboot", True, True),
+                                     ("after reboot", True, True), ("new rename", False, True), ("new rename", True, False)):
+    def crash(point=point, existing=existing, activate=activate):
+      before, values = reset(existing)
+      core_file = output / "core-params.json"
+      core_file.write_text(json.dumps(values))
+      entry = serve(publish())
+      entry_file = output / "entry.json"
+      entry_file.write_text(json.dumps(entry.__dict__))
+      env = {**os.environ, "XP_TEST_CORE": str(core_file), "PYTHONDONTWRITEBYTECODE": "1"}
+      killed = subprocess.run([sys.executable, "-c", kill_code, str(entry_file), point, str(activate)],
+                              cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
+      assert killed.returncode == -signal.SIGKILL, killed.stderr
+      journals = list(mf.INSTALL_DIR.glob(".staging-*/journal.json"))
+      assert len(journals) == 1, "missing durable rollback journal"
+      interrupted = tree(mf.INSTALL_DIR)
+      (mf.INSTALL_DIR / ".staging-orphan").mkdir()
+      (mf.INSTALL_DIR / ".staging-orphan" / "partial").write_text("interrupted download")
+      recovered = subprocess.run([sys.executable, "-c", "from openpilot.tesla.store import recover; recover(); " +
+                                  "from openpilot.tesla import plugins; print([p.NAME for p in plugins.PLUGINS])"],
+                                 cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
+      assert recovered.returncode == 0, recovered.stderr
+      assert tree(mf.INSTALL_DIR) == before, "startup did not restore byte-identical package/toggles or remove orphan staging"
+      assert json.loads(core_file.read_text()) == values, "startup changed core Params"
+      return {"checkpoint": point, "exit_code": killed.returncode, "before": before,
+              "interrupted": interrupted, "after": tree(mf.INSTALL_DIR), "discovery": recovered.stdout.strip()}
+    record(f"SIGKILL: {point}, existing={existing}, activate={activate}", crash)
+
+  def independent_restore():
+    before, values = reset()
+    core.put_bool("DoReboot", False)
+    values["DoReboot"] = False
+    entry = serve(publish())
+    replacing, put = os.replace, core.put_bool
+    rolling_back = False
+    attempts = []
+    def fail(src, dst):
+      if rolling_back:
+        attempts.append(str(dst))
+        if Path(src).name == "old" or Path(dst).name == "Exts2_rivalOn":
+          raise OSError("restore blocked: " + Path(dst).name)
+      replacing(src, dst)
+    def request(key, value, **kw):
+      nonlocal rolling_back
+      put(key, value, **kw)
+      if key == "DoReboot" and value:
+        rolling_back = True
+        raise OSError("request failed after write")
+    with patch("openpilot.common.params.Params", lambda: core), patch.object(os, "replace", fail), patch.object(core, "put_bool", request):
+      error = store.install(entry, activate=True)
+    assert "restore blocked: " + PID in error and "restore blocked: Exts2_rivalOn" in error, error
+    assert core.get("DoReboot") is False, "file failure skipped reboot restore"
+    assert not (mf.INSTALL_DIR / ".params" / NEW_KEY).exists(), "earlier failure skipped another toggle"
+    assert list(mf.INSTALL_DIR.glob(".staging-*/journal.json")), "failed rollback lost its retry journal"
+    with patch("openpilot.common.params.Params", lambda: core):
+      store.recover()
+    assert tree(mf.INSTALL_DIR) == before and core.values == values, "retry lost or consumed an original backup"
+    return {"error": error, "independent_restore_attempts": attempts}
+  record("independent rollback and startup retry", independent_restore)
+
+  for key in ("old", PID):
+    def collision(key=key):
+      reset()
+      path = mf.INSTALL_DIR / ".params" / key
+      path.write_bytes(b"0\n")
+      before, values = tree(mf.INSTALL_DIR), dict(core.values)
+      files = publish()
+      m = json.loads(files["plugin.json"])
+      m["enable_param"], m["params"][key] = key, m["params"].pop(NEW_KEY)
+      files["plugin.json"] = json.dumps(m)
+      entry = serve(files)
+      def request(name, value, **kw):
+        if name == "DoReboot":
+          staging = next(mf.INSTALL_DIR.glob(".staging-*"))
+          assert (staging / "params" / key).read_bytes() == b"0\n", "backup namespace collision"
+          raise OSError("injected reboot failure")
+      with patch("openpilot.common.params.Params", lambda: core), patch.object(core, "put_bool", request):
+        error = store.install(entry, activate=True)
+      assert "injected reboot failure" in error, error
+      assert tree(mf.INSTALL_DIR) == before and core.values == values
+      return "raw toggle bytes restored; backup under params/" + key
+    record("backup name collision: " + key, collision)
+
+  def startup_order():
+    manager = ast.parse((ROOT / "openpilot/system/manager/manager.py").read_text())
+    recovery = next(i for i, n in enumerate(manager.body) if isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
+                    and isinstance(n.value.func, ast.Name) and n.value.func.id == "recover")
+    discovery = next(i for i, n in enumerate(manager.body) if isinstance(n, ast.ImportFrom)
+                     and n.module == "openpilot.system.manager.process_config")
+    assert recovery < discovery, "manager imports/discovers plugins before recovery"
+    return "startup recovery precedes process_config -> fork_processes -> plugin discovery"
+  record("manager recovers before plugin discovery", startup_order)
+
+  def commit_cleanup():
+    reset()
+    core_file = output / "core-params.json"
+    core_file.write_text(json.dumps(core.values))
+    entry_file = output / "entry.json"
+    entry_file.write_text(json.dumps(serve(publish()).__dict__))
+    code = '''
+import json, os, shutil, signal, sys
+from pathlib import Path
+from openpilot.tesla import store, manifest as mf
+remove = shutil.rmtree
+def cleanup(path, **kw):
+  if Path(path).parent == mf.INSTALL_DIR and Path(path).name.startswith('.staging-') and not (Path(path) / 'journal.json').exists():
+    os.kill(os.getpid(), signal.SIGKILL)
+  remove(path, **kw)
+shutil.rmtree = cleanup
+error = store.install(store.IndexEntry(**json.loads(Path(sys.argv[1]).read_text())), activate=True)
+raise AssertionError(f'commit cleanup not reached: {error}')
+'''
+    env = {**os.environ, "XP_TEST_CORE": str(core_file), "PYTHONDONTWRITEBYTECODE": "1"}
+    killed = subprocess.run([sys.executable, "-c", code, str(entry_file)], cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
+    assert killed.returncode == -signal.SIGKILL, killed.stderr
+    staging = next(mf.INSTALL_DIR.glob(".staging-*"))
+    assert (staging / "old").exists() and not (staging / "journal.json").exists()
+    before = {k: v for k, v in tree(mf.INSTALL_DIR).items() if not k.startswith(staging.name + "/")}
+    values = core_file.read_bytes()
+    recovered = subprocess.run([sys.executable, "-c", "from openpilot.tesla.store import recover; recover()"],
+                               cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
+    assert recovered.returncode == 0, recovered.stderr
+    assert tree(mf.INSTALL_DIR) == before and core_file.read_bytes() == values, "committed install rolled back"
+    assert store.installed_versions()[PID] == "2.0.0"
+    return "SIGKILL after durable journal deletion: startup removes only orphan backups, preserving committed package/toggles/reboot"
+  record("committed install survives cleanup SIGKILL", commit_cleanup)
+
+  reset()
+  ParamsView(core).put_bool("Exts2_rivalOn", False)
   for label in ("absent", "import failure"):
     def fallback(label=label):
       if label == "absent":

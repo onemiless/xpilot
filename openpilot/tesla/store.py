@@ -27,6 +27,7 @@ import tempfile
 import time
 import urllib.request
 
+from openpilot.common.utils import atomic_write
 from openpilot.tesla import manifest as mf
 from openpilot.tesla.plugin_params import ParamsView, STORE_TYPES
 
@@ -144,6 +145,97 @@ def plugin_state(pid: str, version: str) -> str:
   return "Installed"
 
 
+def _sync(path: Path) -> None:
+  fd = os.open(path, os.O_RDONLY)
+  try:
+    os.fsync(fd)
+  finally:
+    os.close(fd)
+
+
+def _write_journal(staging: Path, doc: dict) -> None:
+  with atomic_write(str(staging / "journal.json"), overwrite=True) as f:
+    json.dump(doc, f)
+    f.flush()
+    os.fsync(f.fileno())
+  _sync(staging)
+  _sync(mf.INSTALL_DIR)
+
+
+def _finish(staging: Path) -> None:
+  # Journal removal is the commit point; keep undo data until its deletion is durable.
+  journal = staging / "journal.json"
+  undo = json.loads(journal.read_text()) if journal.exists() else None
+  journal.unlink(missing_ok=True)
+  try:
+    _sync(staging)
+  except OSError:
+    if undo is not None:
+      _write_journal(staging, undo)
+    raise
+  shutil.rmtree(staging, ignore_errors=True)
+
+
+def _rollback(staging: Path, params) -> list[str]:
+  doc = json.loads((staging / "journal.json").read_text())
+  pid = doc["id"]
+  if not isinstance(pid, str) or not pid or pid.startswith(".") or Path(pid).name != pid or type(doc["old"]) is not bool or \
+      any(not k.isidentifier() or k in mf.compiled_param_keys() or type(v) is not bool for k, v in doc["params"].items()) or \
+      ("reboot" in doc and doc["reboot"] is not None and type(doc["reboot"]) is not bool):
+    raise ValueError("invalid store journal")
+  target, old = mf.INSTALL_DIR / pid, staging / "old"
+  errors = []
+  try:
+    if old.exists() or not doc["old"]:
+      if target.exists():
+        shutil.rmtree(target)
+      if old.exists():
+        os.replace(old, target)
+    _sync(mf.INSTALL_DIR)
+    _sync(staging)
+  except Exception as e:
+    errors.append(f"files: {e}")
+  for key, existed in doc["params"].items():
+    try:
+      path = mf.INSTALL_DIR / ".params" / key
+      if existed:
+        with atomic_write(str(path), "wb", overwrite=True) as f:
+          f.write((staging / "params" / key).read_bytes())
+          f.flush()
+          os.fsync(f.fileno())
+      else:
+        path.unlink(missing_ok=True)
+      if path.parent.exists():
+        _sync(path.parent)
+    except Exception as e:
+      errors.append(f"{key}: {e}")
+  if "reboot" in doc:
+    try:
+      if doc["reboot"] is None:
+        params.remove("DoReboot")
+      else:
+        params.put_bool("DoReboot", doc["reboot"], block=True)
+    except Exception as e:
+      errors.append(f"DoReboot: {e}")
+  return errors
+
+
+def recover() -> None:
+  """Manager startup, before plugin discovery. Incomplete installs roll back; completed/orphan staging is garbage."""
+  errors = []
+  for staging in sorted(mf.INSTALL_DIR.glob(".staging-*")):
+    try:
+      if (staging / "journal.json").exists():
+        from openpilot.common.params import Params
+        if failed := _rollback(staging, Params()):
+          raise OSError("; ".join(failed))
+      _finish(staging)
+    except Exception as e:
+      errors.append(f"{staging}: {e}")
+  if errors:
+    raise RuntimeError("store recovery failed: " + "; ".join(errors))
+
+
 def install(entry: IndexEntry, *, activate: bool = False, offroad=None) -> str | None:
   """None on success, else the reason. The previous version stays in place on any failure.
   If restoration also fails, retain the backup and return its path."""
@@ -159,33 +251,53 @@ def install(entry: IndexEntry, *, activate: bool = False, offroad=None) -> str |
   staging = Path(tempfile.mkdtemp(prefix=f".staging-{entry.id}-", dir=mf.INSTALL_DIR))
   keep_backup = False
   target, old = mf.INSTALL_DIR / entry.id, staging / "old"
-  swapped, reboot_touched = False, False
-  saved_params = {}
   try:
     data = _get(entry.url, MAX_ARCHIVE)
     if hashlib.sha256(data).hexdigest() != entry.sha256.lower():
       raise ValueError("sha256 mismatch")
-    staged = staging / entry.id
-    staged.mkdir()
+    staged = staging / "new" / entry.id
+    staged.mkdir(parents=True)
     _extract(data, entry.id, staged)
     _validate(staged, entry)
+    journal = {"id": entry.id, "old": target.exists(), "params": {}}
     if activate:
       before = mf.load_all(mf.PLUGINS_DIR)[0] + mf.load_all(mf.INSTALL_DIR)[0]
       view = ParamsView(params)
       enabled = {o.id for o in before if o.enable_param is None or view.get_bool(o.enable_param)}
       active, _ = mf.resolve([(o.id, o.priority, o.claims) for o in before], enabled)
       before_claims = {c for o in before if o.id in active for c in o.claims}
+      m = mf.parse(staged / "plugin.json")
+      if m.enable_param is not None and m.params.get(m.enable_param, {}).get("type") != "BOOL":
+        raise ValueError("enable_param must name the package's own BOOL")
+      manifests = [o for o in before if o.id != m.id] + [m]
+      conflicts = mf.conflicting(m.id, [(o.id, o.priority, o.claims) for o in manifests])
+      (staging / "params").mkdir()
+      for o in manifests:
+        if o.enable_param is None or o.id not in {m.id, *conflicts}:
+          continue
+        key = o.enable_param
+        if key in mf.compiled_param_keys() or o.params.get(key, {}).get("type") != "BOOL":
+          raise ValueError(f"activation toggle {key!r} must be a plugin BOOL")
+        path = mf.INSTALL_DIR / ".params" / key
+        journal["params"][key] = path.exists()
+        if path.exists():
+          shutil.copy2(path, staging / "params" / key)
+      journal["reboot"] = params.get("DoReboot")
+    for path in sorted(staging.rglob("*"), reverse=True):
+      _sync(path)
+    _write_journal(staging, journal)
     if not parked():
       raise ValueError("park first")
     if target.exists():
       os.replace(target, old)
+      _sync(mf.INSTALL_DIR)
+      _sync(staging)
     os.replace(staged, target)
-    swapped = True
+    _sync(staged.parent)
+    _sync(mf.INSTALL_DIR)
     if activate:
       from openpilot.tesla.ui.offroad import REQUIRED_ROLES, switch_changes
       m = mf.parse(target / "plugin.json")
-      if m.enable_param is not None and m.params.get(m.enable_param, {}).get("type") != "BOOL":
-        raise ValueError("enable_param must name the package's own BOOL")
       # Probe in a fresh interpreter: importing a new package must not replace the running host's modules.
       code = """
 import sys
@@ -221,38 +333,26 @@ for proc in cls.processes():
       for role in REQUIRED_ROLES:
         if role in before_claims and role not in after_claims:
           raise ValueError(f"required role {role}")
-      for key in changes:
-        if key in mf.compiled_param_keys() or view._specs.get(key, {}).get("type") != "BOOL":
-          raise ValueError(f"activation toggle {key!r} must be a plugin BOOL")
-        path = mf.INSTALL_DIR / ".params" / key
-        backup = staging / key
-        if path.exists():
-          shutil.copy2(path, backup)
-        saved_params[path] = backup if path.exists() else None
-      previous_reboot = params.get("DoReboot")
       for key, value in changes.items():
         view.put_bool(key, value, block=True)
       if not parked():
         raise ValueError("park first")
-      reboot_touched = True
       params.put_bool("DoReboot", True, block=True)
+      if (mf.INSTALL_DIR / ".params").exists():
+        _sync(mf.INSTALL_DIR / ".params")
+    for path in sorted(target.rglob("*"), reverse=True):
+      _sync(path)
+    _sync(target)
+    _sync(mf.INSTALL_DIR)
+    _sync(staging)
+    _finish(staging)
     return None
   except Exception as e:
     try:
-      if swapped:
-        os.replace(target, staged)
-      if old.exists():
-        os.replace(old, target)
-      for path, backup in saved_params.items():
-        if backup is None:
-          path.unlink(missing_ok=True)
-        else:
-          os.replace(backup, path)
-      if reboot_touched:
-        if previous_reboot is None:
-          params.remove("DoReboot")
-        else:
-          params.put_bool("DoReboot", previous_reboot, block=True)
+      if (staging / "journal.json").exists():
+        if errors := _rollback(staging, params):
+          raise OSError("; ".join(errors))
+        _finish(staging)
     except Exception as restore_error:
       keep_backup = True
       return f"{e}; restore failed: {restore_error}; backup: {old}; transaction: {staging}"

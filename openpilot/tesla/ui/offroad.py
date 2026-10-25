@@ -125,9 +125,11 @@ def switch_changes(name, value, items, enabled) -> tuple[dict[str, bool], str | 
   return changes, None
 
 
-def switch_plugin(plugin, value: bool, params) -> str | None:
+def switch_plugin(plugin, value: bool, params, jobs=None) -> str | None:
   """Switch a plugin; switching on switches off every plugin sharing an exclusive claim. Clears its fault mark.
   None on success, else the required-role refusal. params = plugins.view(...); callers check offroad."""
+  if jobs is not None and jobs.busy:
+    return "store busy"
   if value:
     ok, reason = mf.compatible(plugin.MANIFEST, mf.HOST_CAPS)
     if not ok:
@@ -181,6 +183,7 @@ class StoreJobs:
     self.entries: list[store.IndexEntry] = []
     self.installed: dict[str, str] = store.installed_versions()
     self.dirty = False  # set after a fetch; the UI thread rebuilds its rows and clears it
+    self.states = {}
 
   def run(self, job, wait: bool = False) -> None:
     if self.busy:
@@ -198,6 +201,7 @@ class StoreJobs:
       self.status = f"error: {e}"[:60]
     finally:
       self.installed = store.installed_versions()
+      self.states.clear()
       self.busy = False
 
   def fetch(self) -> None:
@@ -246,5 +250,10 @@ class StoreJobs:
     if not entry.installable:
       return f"needs api {entry.api}" if have is None else f"v{have} installed"
     if have == entry.version:
-      return f"v{have} {store.plugin_state(entry.id, have)}"
+      key = (entry.id, have)
+      cached = self.states.get(key)
+      now = time.monotonic()
+      if cached is None or now - cached[0] >= 1:
+        cached = self.states[key] = (now, store.plugin_state(entry.id, have))
+      return f"v{have} {cached[1]}"
     return f"v{have} -> v{entry.version}" if have else f"v{entry.version}"

@@ -355,9 +355,10 @@ def main() -> int:
     replace = store.os.replace
 
     def fail_replace(src, dst):
-      calls.append((Path(src), Path(dst)))
-      if len(calls) in failures:
-        raise OSError(f"injected replace failure {len(calls)}")
+      if Path(src) == target or Path(dst) == target:
+        calls.append((Path(src), Path(dst)))
+        if len(calls) in failures:
+          raise OSError(f"injected replace failure {len(calls)}")
       replace(src, dst)
 
     with patch.object(store.os, "replace", fail_replace):

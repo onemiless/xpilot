@@ -20,14 +20,15 @@ def _details(plugin) -> str:
 
 
 class CategoryPage(SettingsList):
-  def __init__(self, plugins):
+  def __init__(self, plugins, jobs):
     super().__init__()
+    self.jobs = jobs
     self.rows = []
     self.errors = {}
     for plugin in plugins:
       toggle = BigToggle(plugin.TITLE, initial_state=is_enabled(plugin, ui_state.params),
                          toggle_callback=lambda value, p=plugin: self._switch(p, value), description=_details(plugin))
-      toggle.set_enabled(lambda p=plugin: ui_state.is_offroad() and p.ENABLE_PARAM is not None)
+      toggle.set_enabled(lambda p=plugin: ui_state.is_offroad() and not self.jobs.busy and p.ENABLE_PARAM is not None)
       self._scroller.add_widget(toggle)
       self.rows.append((plugin, toggle))
       if plugin.SETTINGS:
@@ -38,7 +39,7 @@ class CategoryPage(SettingsList):
     self.show_event()
 
   def _switch(self, plugin, value) -> None:
-    self.errors = {plugin.NAME: switch_plugin(plugin, value, view(ui_state.params)) if ui_state.is_offroad() else "park first"}
+    self.errors = {plugin.NAME: switch_plugin(plugin, value, view(ui_state.params), jobs=self.jobs) if ui_state.is_offroad() else "park first"}
     self.show_event()
 
   def show_event(self):
@@ -66,7 +67,7 @@ class PluginsPage(SettingsList):
       plugins = [p for p in PLUGINS if p.CATEGORY == category]
       if not plugins:
         continue
-      page = CategoryPage(plugins)
+      page = CategoryPage(plugins, store_page._jobs)
       button = BigButton(title)
       button.set_click_callback(lambda pg=page: (pg.show_event(), gui_app.push_widget(pg)))
       self._scroller.add_widget(button)
