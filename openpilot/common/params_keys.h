@@ -154,6 +154,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
 
     // xpilot: device and plugin settings (plugins: openpilot/tesla/plugins, rules: XPILOT.md)
     {"MapProvider", {PERSISTENT | BACKUP, STRING, "osm"}},
+    {"XpilotPandaRules", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, BYTES}},
+    {"XpilotPandaRulesFault", {CLEAR_ON_MANAGER_START, BOOL}},
     {"XpilotPluginFaults", {CLEAR_ON_MANAGER_START, JSON}},  // plugin name -> where it failed; shown on the Plugins page
 
     // --- sunnypilot params --- //

@@ -20,10 +20,23 @@ class PandaSafety {
 public:
   PandaSafety(Panda *panda) : panda_(panda) {}
   void configureSafetyMode(bool is_onroad);
+  void updateRules();
   bool getOffroadMode();
 
 private:
   void updateMultiplexingMode();
+  bool loadRules();
+  void rulesFault();
+  enum class RulesStep { CAPS, CLEAR, BEGIN, METADATA, DATA, COMMIT, STATUS, DONE };
+  RulesStep rules_step_ = RulesStep::CAPS;
+  std::string rules_;
+  uint16_t upload_id_ = 0;
+  size_t rules_offset_ = 0;
+  double rules_deadline_ = 0;
+  bool rules_caps_ = false;
+  bool rules_revoked_ = false;
+  bool was_onroad_ = false;
+  std::vector<std::string> car_params_;
   std::vector<std::string> fetchCarParams();
   void setSafetyMode(const std::vector<std::string> &params_string);
 

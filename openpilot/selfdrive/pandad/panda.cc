@@ -19,8 +19,12 @@ Panda::Panda(std::string serial) {
     handle = std::make_unique<PandaUsbHandle>(serial);
     LOGW("connected to %s over USB", serial.c_str());
   } catch (const std::exception &) {
+#ifdef __linux__
     handle = std::make_unique<PandaSpiHandle>(serial);
     LOGW("connected to %s over SPI", serial.c_str());
+#else
+    throw;
+#endif
   }
 
   hw_type = get_hw_type();
@@ -42,13 +46,28 @@ std::string Panda::hw_serial() {
 std::vector<std::string> Panda::list() {
   auto serials = PandaUsbHandle::list();
   if (Hardware::get_device_type() == cereal::InitData::DeviceType::TICI) return serials;
+#ifdef __linux__
   auto internal = PandaSpiHandle::list();
   internal.insert(internal.end(), serials.begin(), serials.end());
   return internal;
+#else
+  return serials;
+#endif
 }
 
-void Panda::set_safety_model(cereal::CarParams::SafetyModel safety_model, uint16_t safety_param) {
-  handle->control_write(0xdc, (uint16_t)safety_model, safety_param);
+std::vector<uint8_t> Panda::rules_control(uint8_t request, uint16_t param1, uint16_t param2) {
+  std::vector<uint8_t> response(request == 0xa0 ? 16 : 24);
+  int n = handle->control_read(request, param1, param2, response.data(), response.size(), 5);
+  if (n != response.size()) return {};
+  return response;
+}
+
+bool Panda::rules_write(std::array<uint8_t, 64> &record) {
+  return handle->bulk_write(2, record.data(), record.size(), 5) == record.size();
+}
+
+void Panda::set_safety_model(cereal::CarParams::SafetyModel safety_model, uint16_t safety_param, unsigned int timeout) {
+  handle->control_write(0xdc, (uint16_t)safety_model, safety_param, timeout);
 }
 
 void Panda::set_alternative_experience(uint16_t alternative_experience, uint16_t safety_param_sp) {
@@ -95,10 +114,10 @@ void Panda::set_ir_pwr(uint16_t ir_pwr) {
   handle->control_write(0xb0, ir_pwr, 0);
 }
 
-std::optional<health_t> Panda::get_state() {
+std::optional<health_t> Panda::get_state(unsigned int timeout) {
   health_t health {0};
-  int err = handle->control_read(0xd2, 0, 0, (unsigned char*)&health, sizeof(health));
-  return err >= 0 ? std::make_optional(health) : std::nullopt;
+  int err = handle->control_read(0xd2, 0, 0, (unsigned char*)&health, sizeof(health), timeout);
+  return err == sizeof(health) ? std::make_optional(health) : std::nullopt;
 }
 
 std::optional<can_health_t> Panda::get_can_state(uint16_t can_number) {

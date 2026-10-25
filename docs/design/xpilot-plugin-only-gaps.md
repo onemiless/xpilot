@@ -16,6 +16,12 @@
 
 用户已定：规则随插件发布、运行时加载到 Panda，**不签名**；安装/启用者负责。固件只解释预定义规则类型；Tesla mode 已拥有的 0x488、0x2B9 等必须通过原 mode TX 检查，规则只能再收紧。首次加入规则引擎可升级固件。本文据此取代 D 中“每个插件新增 C header/profile”的发布方案，保留其交接底线（D:`docs/design/xpilot-mixed-control-plugin.md:106-113`）。配对认证属于网络输入边界，与规则不签名是两回事。
 
+## X-20261025-33 状态更新（主机，无设备）
+
+G1 host 已接通：清单 `rules` ABI 1 → card 编译 active winners → 二进制 `XpilotPandaRules` → pandad app CAPS 预检/非 car mode 分步 EP2 装载 → COMMIT/STATUS 摘要核对。失败清表并置 `XpilotPandaRulesFault`，基础模式照常配置；旧 safety.profile 拒绝，没有翻译或插件 param_bit。T32 固件格式沿用 [`xpilot-panda-rules.md`](xpilot-panda-rules.md)。商店插件重发属于 X-34，尚未包含于此系统改动。
+
+G12 本次触及的边界已实现：规则持有者运行期关键故障撤销整张 Panda 表；observe_can 发送受 core_alive 门控。P45-P48、C20、H1-H14 提供主机检查和真实 C loader 模型 trace。下文 G12 的 plan_filter 单调收紧/恰好一次发布及其他 G3/G5 边界仍未关闭；不将这次局部撤权称作全局 floor 完成。未连接设备、未刷写，设备 active commit 未知。下表保留原审计固定版本证据，不代表当前源码仍处于原状态。
+
 ## 草稿校正：硬阻塞与基础建设分开
 
 | 草稿 | 审计结论 |

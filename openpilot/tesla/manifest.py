@@ -12,7 +12,8 @@ plugin.json:
   settings     [{"key", "label", "range": [min, max, step, unit, divisor]} | {"key", "label", "choices": [[label, value]]}
                 | {"key", "label"} (toggle)]
   params       {"Key": {"type", "default", "flags", "note"}} rendered into common/plugin_params.inc by gen_params.py
-  safety       {profile: name} or an exact legacy safety.json entry; resolved to header, param_bit, tx and profile
+  requires     optional hooks/msg names, rule_abi and native platform required from HOST_CAPS
+  rules        list of template_clone.v1 rules (docs/design/xpilot-panda-rules.md)
   platform     null (pure Python) or {"machine": "aarch64", "python": "cpython-312"} for plugins with prebuilt binaries;
                such a plugin installs and loads only where host_platform() matches
 """
@@ -23,6 +24,7 @@ import os
 from pathlib import Path
 import platform as _platform
 import re
+import subprocess
 import sys
 
 API_VERSION = 1
@@ -102,7 +104,8 @@ class Manifest:
   settings: tuple[Setting, ...] = ()
   params: dict = field(default_factory=dict)
   platform: dict | None = None
-  safety: dict | None = None
+  rules: list = field(default_factory=list)
+  requires: dict = field(default_factory=dict)
 
 
 def _setting(d: dict) -> Setting:
@@ -112,7 +115,7 @@ def _setting(d: dict) -> Setting:
 
 
 def safety_profiles() -> dict:
-  """Panda capabilities compiled into this system's firmware."""
+  """Legacy generator fixture only; runtime manifests use rules."""
   return json.loads(SAFETY_JSON.read_text())
 
 
@@ -140,33 +143,20 @@ def parse(path: Path) -> Manifest:
   claims = d.get("claims", [])
   if not isinstance(claims, list) or not all(isinstance(c, str) and _CLAIM_RE.fullmatch(c) for c in claims):
     raise ValueError(f"bad claims {claims!r}")
-  safety = None
   if "safety" in d:
-    safety = d["safety"]
-    if not isinstance(safety, dict):
-      raise ValueError("safety must be an object")
-    profiles = safety_profiles()
-    if "profile" in safety:
-      if set(safety) != {"profile"}:
-        raise ValueError("safety profile cannot have extra keys")
-      profile = safety["profile"]
-      if not isinstance(profile, str) or profile not in profiles:
-        raise ValueError(f"unknown safety profile {profile!r}")
-    else:
-      matches = [name for name, spec in profiles.items() if spec == safety]
-      if len(matches) != 1:
-        raise ValueError("legacy safety must match exactly one profile in safety.json")
-      profile = matches[0]
-    safety = {**profiles[profile], "profile": profile}
-  tx = {c[7:] for c in claims if c.startswith("can.tx:")}
-  if tx != set(safety["tx"] if safety is not None else []):
-    raise ValueError("can.tx must match safety profile tx")
+    raise ValueError("safety is no longer supported; publish a new plugin version with rules")
+  from openpilot.tesla.panda_rules import encode_rules
+  rules = d.get("rules", [])
+  encode_rules(rules)
+  if can_tx(claims) != {(r["tx_address"], r["tx_bus"]) for r in rules}:
+    raise ValueError("can.tx must match rule TX addresses")
+
   try:
     return Manifest(id=d["id"], name=str(d.get("name") or d["id"]), version=str(d.get("version", "0")), api=d["api"],
                     category=d["category"], use=d["use"], entry=d["entry"], description=str(d.get("description", "")),
                     author=str(d.get("author", "")), priority=int(d.get("priority", 100)), enable_param=d.get("enable_param"),
                     claims=tuple(claims), settings=tuple(_setting(s) for s in d.get("settings", [])), params=dict(d.get("params", {})),
-                    platform=plat, safety=safety)
+                    platform=plat, rules=rules, requires=d.get("requires", {}))
   except (KeyError, TypeError, ValueError) as e:
     raise ValueError(f"bad field: {e!r}") from None
 
@@ -223,6 +213,68 @@ def host_platform() -> dict[str, str]:
 def platform_ok(plat: dict | None) -> bool:
   host = host_platform()
   return plat is None or all(plat.get(k) == v for k, v in host.items())
+
+
+RULE_ABI = 1
+HOST_CAPS = {
+  "hooks": ("__init__", "setup", "observe_can", "publish_state", "control_sends", "service_params", "processes",
+            "role_processes", "alert_source", "lane_change_policy", "lat_correction", "lat_controller", "long_planner",
+            "long_target", "plan_filter", "engagement", "safety_fallback", "radar_interface", "external_provider"),
+  "msg": ("*",),  # pluginMsg transports every valid kind; no payload schema or multi-publisher broker implied.
+  "rule_abi": RULE_ABI,
+  "native": host_platform(),
+}
+UPDATE_COMPAT_PARAM = "XpilotUpdateIncompatiblePlugins"
+UPDATE_SPECS = {UPDATE_COMPAT_PARAM: {"type": "JSON"}}
+
+
+def compatible(manifest, caps) -> tuple[bool, str]:
+  """One capability gate for install, enable, discovery and staged updates."""
+  if manifest.api != API_VERSION:
+    return False, f"api {manifest.api!r}, host supports {API_VERSION}"
+  if manifest.platform is not None and not all(manifest.platform.get(k) == v for k, v in caps["native"].items()):
+    return False, f"built for {manifest.platform}, this device is {caps['native']}"
+  requires = manifest.requires
+  if not isinstance(requires, dict) or set(requires) - {"hooks", "msg", "rule_abi", "native"}:
+    return False, "bad requires: expected hooks/msg/rule_abi/native object"
+  for key in ("hooks", "msg"):
+    names = requires.get(key, [])
+    if not isinstance(names, list) or not all(isinstance(n, str) and re.fullmatch(r"[a-z_][a-z0-9_.]*", n) for n in names):
+      return False, f"bad requires.{key}: expected names"
+    for name in names:
+      if name not in caps[key] and not (key == "msg" and "*" in caps[key]):
+        return False, f"requires {key} {name!r}"
+  if "rule_abi" in requires:
+    abi = requires["rule_abi"]
+    if type(abi) is not int or abi < 1 or abi != caps["rule_abi"]:
+      return False, f"requires rule_abi {abi!r}, host supports {caps['rule_abi']!r}"
+  if "native" in requires and requires["native"] != caps["native"]:
+    return False, f"requires native {requires['native']!r}, host supports {caps['native']}"
+  return True, ""
+
+
+def check_staged(root, params=None) -> None:
+  """Warn using the staged host's parser/caps, without importing plugins or blocking activation."""
+  from openpilot.tesla.plugin_params import ParamsView
+  code = """
+import json, runpy, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]).parents[2]))
+m = runpy.run_path(sys.argv[1])
+found, errors = m['load_all'](Path(sys.argv[2]))
+for manifest in found:
+  ok, reason = m['compatible'](manifest, m['HOST_CAPS'])
+  if not ok:
+    errors[manifest.id] = reason
+print(json.dumps(errors))
+"""
+  try:
+    result = subprocess.run([sys.executable, "-c", code, str(Path(root) / "openpilot/tesla/manifest.py"), str(INSTALL_DIR)],
+                            capture_output=True, text=True, timeout=15, check=True)
+    errors = json.loads(result.stdout)
+  except (OSError, subprocess.SubprocessError, ValueError) as e:
+    errors = {"precheck": f"staged plugin precheck failed: {e}"}
+  ParamsView(params, UPDATE_SPECS).put(UPDATE_COMPAT_PARAM, errors)
 
 
 MAX_LINES, MAX_ENTRY_LINES = 400, 150  # per .py file / the entry module, which only wires hooks to the plugin's own modules

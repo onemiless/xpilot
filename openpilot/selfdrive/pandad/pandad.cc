@@ -412,6 +412,8 @@ void pandad_run(Panda *panda) {
       panda_safety.configureSafetyMode(is_onroad);
     }
 
+    panda_safety.updateRules();
+
     // Send out peripheralState at 2Hz
     if (rk.frame() % 50 == 0) {
       send_peripheral_state(panda, &pm);

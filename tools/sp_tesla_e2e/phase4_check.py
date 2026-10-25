@@ -36,7 +36,9 @@ Failure cases listed before implementation:
 - C18 CardGate is inactive with default owners, sends before first selfdriveState, or fails to recover on publish
 - C19 selfdrived sets state_machine.state to enabled through the wrapper for replay, then an update without ENABLE
       differs from bare SP instead of staying enabled; resetting state leaves stale enabled_prev
+- C20 observe_can sends continue when core_alive is false.
 """
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -538,6 +540,20 @@ def main() -> int:
   subscriber.alive["selfdriveState"] = False
   if gate.alive():
     errors.append("C18 gate did not close on selfdrived timeout")
+
+  tree = ast.parse((ROOT / 'openpilot/selfdrive/car/card.py').read_text())
+  state = next(n for c in tree.body if isinstance(c, ast.ClassDef) and c.name == 'Car'
+               for n in c.body if isinstance(n, ast.FunctionDef) and n.name == 'state_update')
+  end = next(i for i, n in enumerate(state.body) if isinstance(n, ast.Assign) and any(isinstance(t, ast.Tuple) for t in n.targets))
+  prefix = ast.Module(body=state.body[1:end], type_ignores=[])
+  for alive in (False, True):
+    sent = []
+    card_instance = types.SimpleNamespace(can_sock=None, plugins=types.SimpleNamespace(observe_can=lambda c: [1], core_alive=lambda: alive),
+                                can_callbacks=(None, sent.append))
+    exec(compile(prefix, 'card.py', 'exec'), dict(self=card_instance, messaging=types.SimpleNamespace(drain_sock_raw=lambda *a, **kw: []),
+                                                can_capnp_to_list=lambda c: c))
+    if bool(sent) != alive:
+      errors.append(f'C20 observe_can core_alive={alive}: sent={sent}')
 
   print(json.dumps({"errors": errors, "sp_frames": len(traces),
                     "trace_sha256": hashlib.sha256(json.dumps(traces, sort_keys=True).encode()).hexdigest(),

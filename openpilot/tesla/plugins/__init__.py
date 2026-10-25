@@ -11,6 +11,7 @@
 - Fault isolation: a plugin that raises in any hook is logged, recorded in Params XpilotPluginFaults (shown on the
   Plugins page) and dropped for the rest of the process; the other plugins and SP carry on.
 """
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -21,7 +22,7 @@ import types
 
 from openpilot.cereal.services import SERVICE_LIST
 from openpilot.common.swaglog import cloudlog
-from openpilot.tesla import manifest as mf
+from openpilot.tesla import manifest as mf, panda_rules
 from openpilot.tesla.plugin import Plugin
 from openpilot.tesla.plugin_params import ParamsView
 
@@ -58,9 +59,6 @@ def _discover() -> tuple[tuple, dict[str, str], dict[str, dict]]:
     if clash:
       errors[m.id] = f"installed plugin clashes with an existing id or param: {clash}"
       continue
-    if not mf.platform_ok(m.platform):
-      errors[m.id] = f"built for {m.platform}, this device is {mf.host_platform()}"
-      continue
     manifests.append(m)
     specs.update(m.params)
   order = list(mf.CATEGORIES)
@@ -68,8 +66,18 @@ def _discover() -> tuple[tuple, dict[str, str], dict[str, dict]]:
   installed_ids = {m.id for m in installed}
   classes = []
   for m in manifests:
+    ok, reason = mf.compatible(m, mf.HOST_CAPS)
+    if not ok:
+      errors[m.id] = reason
+      continue
     module, name = m.entry.split(":")
     try:
+      root = (mf.INSTALL_DIR if m.id in installed_ids and m not in builtin else mf.PLUGINS_DIR) / m.id
+      digest = hashlib.sha256()
+      for path in sorted(root.rglob("*")):
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
+          data = path.read_bytes()
+          digest.update(path.relative_to(root).as_posix().encode() + b"\0" + len(data).to_bytes(8, "big") + data)
       mod = _import_installed(m, module) if m.id in installed_ids and m not in builtin else \
             importlib.import_module(f"{__name__}.{m.id}.{module}")
       cls = getattr(mod, name)
@@ -83,6 +91,7 @@ def _discover() -> tuple[tuple, dict[str, str], dict[str, dict]]:
       continue
     cls.NAME, cls.TITLE, cls.DESCRIPTION, cls.CATEGORY = m.id, m.name, m.description, m.category
     cls.PRIORITY, cls.ENABLE_PARAM, cls.CLAIMS, cls.SETTINGS, cls.MANIFEST = m.priority, m.enable_param, m.claims, m.settings, m
+    cls.SHA256 = digest.hexdigest()
     classes.append(cls)
   return tuple(classes), errors, specs
 
@@ -116,11 +125,23 @@ def resolve(params) -> tuple[set[str], dict[str, str]]:
   return mf.resolve([(c.NAME, c.PRIORITY, c.CLAIMS) for c in PLUGINS], {c.NAME for c in PLUGINS if is_enabled(c, params)})
 
 
+def log_snapshot(params) -> None:
+  """card start: freeze the enabled winners and the compiled rule table identity for this drive."""
+  from openpilot.common.version import get_build_metadata
+  snapshot = {"system_commit": get_build_metadata().openpilot.git_commit,
+              "plugins": [{"id": p.NAME, "version": p.MANIFEST.version, "sha256": p.SHA256} for p in active(params)]}
+  if "XpilotPandaRules" in mf.compiled_param_keys() and (rules := params.get("XpilotPandaRules")) is not None:
+    snapshot["rule_table_crc32"] = int.from_bytes(rules[-4:], "little")
+  cloudlog.event("xpilot.drive_snapshot", **snapshot)
+
+
 def record_fault(name: str, where: str, exc: Exception) -> None:
   cloudlog.exception(f"xpilot plugin {name} failed in {where}, disabled")
   try:
     from openpilot.common.params import Params
     params = Params()
+    if where not in ("card.__init__", "card.setup", "card.rules") and any(p.NAME == name and p.MANIFEST.rules for p in PLUGINS):
+      params.put_bool("XpilotPandaRulesFault", True, block=True)
     faults = params.get(FAULTS_PARAM) or {}
     faults[name] = f"{where}: {exc!r}"[:200]
     params.put(FAULTS_PARAM, faults)
@@ -133,6 +154,7 @@ class CarPlugins:
 
   def __init__(self, CP, params):
     self.plugins = []
+    self.params = params
     self._gate = None
     if CP.brand != "tesla":
       return
@@ -157,6 +179,17 @@ class CarPlugins:
 
   def setup(self, CP_SP) -> None:
     self._each("setup", CP_SP)
+    rules = []
+    for p in list(self.plugins):
+      try:
+        own = p.MANIFEST.rules
+        panda_rules.encode_rules(rules + own)
+      except ValueError as e:
+        self.plugins.remove(p)
+        record_fault(p.NAME, "card.rules", e)
+        continue
+      rules += own
+    self.params.put("XpilotPandaRules", panda_rules.param(panda_rules.encode_rules(rules)), block=True)
 
   def _sends(self, hook: str, *args) -> list:
     """Like _each, but every CanData must match one of the plugin's can.tx claims, else the plugin is dropped."""

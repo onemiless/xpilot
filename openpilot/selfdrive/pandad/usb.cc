@@ -170,7 +170,7 @@ int PandaUsbHandle::control_write(uint8_t bRequest, uint16_t wValue, uint16_t wI
   do {
     err = libusb_control_transfer(dev_handle, bmRequestType, bRequest, wValue, wIndex, NULL, 0, timeout);
     if (err < 0) handle_usb_issue(err, __func__);
-  } while (err < 0 && connected);
+  } while (err < 0 && connected && timeout == TIMEOUT);
 
   return err;
 }
@@ -187,7 +187,7 @@ int PandaUsbHandle::control_read(uint8_t bRequest, uint16_t wValue, uint16_t wIn
   do {
     err = libusb_control_transfer(dev_handle, bmRequestType, bRequest, wValue, wIndex, data, wLength, timeout);
     if (err < 0) handle_usb_issue(err, __func__);
-  } while (err < 0 && connected);
+  } while (err < 0 && connected && timeout == TIMEOUT);
 
   return err;
 }
@@ -212,7 +212,7 @@ int PandaUsbHandle::bulk_write(unsigned char endpoint, unsigned char* data, int 
     } else if (err != 0 || length != transferred) {
       handle_usb_issue(err, __func__);
     }
-  } while (err != 0 && connected);
+  } while (err != 0 && connected && endpoint != 2);
 
   return transferred;
 }
