@@ -233,10 +233,16 @@ class ModelState(ModelStateBase):
     self.prev_desire[:] = 0
 
 
-def main(demo=False):
+def run_with_model_source(source, demo=False):
+  main(demo=demo, local_stock=True, model_source=source)
+
+
+def main(demo=False, *, local_stock=False, model_source=None):
+  if model_source is not None and not local_stock:
+    raise ValueError('optional model source requires local stock fallback')
   cloudlog.warning("modeld init")
 
-  CHESTNUT = chestnut_compiled() and (chestnut_present() or cable_connected())
+  CHESTNUT = not local_stock and chestnut_compiled() and (chestnut_present() or cable_connected())
   if CHESTNUT:
     from tinygrad.runtime.ops_amd import AMDDevice
     AMDDevice.wait_timeout_ms = 3000
@@ -420,6 +426,8 @@ def main(demo=False):
       'action_t': np.array([lat_action_t, long_action_t], dtype=np.float32),
     }
 
+    if model_source is not None:
+      model_source.send_frame(meta_main, meta_extra, transforms, inputs, model.prev_desire)
     mt1 = time.perf_counter()
     try:
       send_chestnut = (chestnut_state is not None and
@@ -441,6 +449,9 @@ def main(demo=False):
     model_execution_time = mt2 - mt1
 
     if model_output is not None:
+      selected_big = model.chestnut
+      if model_source is not None:
+        model_output, selected_big = model_source.pick(model_output)
       modelv2_send = messaging.new_message('modelV2')
       drivingdata_send = messaging.new_message('drivingModelData')
       posenet_send = messaging.new_message('cameraOdometry')
@@ -453,7 +464,7 @@ def main(demo=False):
       fill_model_msg(modelv2_send, model_output, action,
                      publish_state, meta_main.frame_id, meta_extra.frame_id, frame_id,
                      frame_drop_ratio, meta_main.timestamp_eof, model_execution_time, extrinsics_calibration_seen)
-      modelv2_send.modelV2.big = model.chestnut
+      modelv2_send.modelV2.big = selected_big
 
       desire_state = modelv2_send.modelV2.meta.desireState
       l_lane_change_prob = desire_state[log.Desire.laneChangeLeft]
