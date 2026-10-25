@@ -15,7 +15,7 @@ F13 trajectory/lead/pose/action jumps fail admission; whole-frame source, includ
 Round 1: adapter mutation cannot alter fallback; camera regression rewarms; early arrival
 is frame-only rejection; failed init and SIGKILL leave no mailbox leaks. Candidate lock,
 post-pick arrival and 200ms stall occur after Phone active. Burst frames/data are distinct.
-Bounded wait: no peer/lock/cold source never sleeps; engaged +35ms adopts after warm-up;
+Bounded wait: no peer/lock never sleeps; cold +35ms engages from a recent on-time old reply;
 +60ms falls back without locking; short gaps preserve warm-up, long gaps rewarm.
 Transient absent/old_frame/ipc_busy polls preserve progress; EOF+45ms bounds waiting
 and the timed 50ms camera replay must publish every frame before the next EOF.
@@ -180,10 +180,17 @@ def peer(path, conn):
       fcntl.lockf(fd, fcntl.LOCK_UN, SIZE, 0)
       continue
     scenario, epoch, now, expected_inputs = command
+    old = scenario.startswith('old_')
+    if old:
+      scenario = scenario.removeprefix('old_')
     meta = META.unpack(os.pread(fd, META.size, 0))
     assert meta[:2] == (b'XMS1', 1)
     session, frame, eof = meta[2], meta[3], meta[5]
     assert meta[4] == frame and meta[6] == eof
+    if old:
+      distance = 4 if scenario == 'far' else 1
+      frame -= distance
+      eof -= distance * 50_000_000
     assert meta[7:25] == tuple(np.eye(3, dtype=np.float32).ravel()) * 2
     assert len(meta[25:]) == 12
     np.testing.assert_allclose(meta[25:], expected_inputs, atol=1e-7, rtol=0)
@@ -296,6 +303,7 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
   sleep_ns = 0
   pick_clock_ns = 0
   pick_end = 0
+  fresh_before_pick = 0
   wall_start = time.monotonic()
   boot_start = nanos_since_boot()
 
@@ -446,6 +454,7 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
                      'reject_reason': source.reason if source else '', 'pick_ns': pick_ns,
                      'pick_clock_ns': pick_clock_ns, 'pick_end': pick_end,
                      'sleep_ns': sleep_ns, 'fresh': source.fresh if source else 0,
+                     'fresh_before_pick': fresh_before_pick,
                      'host_publish_ns': time.monotonic_ns() if paced else 0})
         scenario = scenarios[current - 1]
         if scenario == 'hold':
@@ -469,7 +478,8 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
     original_pick = source.pick
 
     def pick(local):
-      nonlocal pick_ns, sleep_ns, pick_clock_ns, pick_end
+      nonlocal pick_ns, sleep_ns, pick_clock_ns, pick_end, fresh_before_pick
+      fresh_before_pick = source.fresh
       sleep_ns = 0
       before = now()
       started = time.perf_counter_ns()
@@ -611,20 +621,26 @@ def main():
     assert records[13]['fresh'] == 1 and all(r['source'] == 'local' for r in records[13:18])
     assert records[18]['source'] == 'phone' and records[13]['sleep_ns'] == 0
 
-    # One timely reply engages the source; a cold delayed peer must remain zero-wait.
+    # The cold peer never supplies an early first reply; previous-frame traffic must engage it.
     for case, scenarios in (
+      ('cold_phone35', ['phone_35'] * 60),
+      ('cold_phone60', ['phone_60'] * 20),
       ('phone35', ['good'] + ['phone_35'] * 59),
       ('phone60', ['good'] * 10 + ['phone_60'] * 50),
       ('phone35_single_late', ['good'] + ['phone_35'] * 9 + ['phone_60'] + ['phone_35'] * 49),
       ('phone35_busy', ['good'] + ['phone_35_busy'] * 59),
-      ('cold_phone35', ['phone_35'] * 20),
       ('no_peer_timed', ['absent'] * 60),
     ):
       records, source = execute(case, scenarios, paced=True, realtime=True)
       assert not source.locked
-      if case in ('phone35', 'phone35_busy', 'phone35_single_late'):
-        normal = records[5:]
+      if case in ('cold_phone35', 'phone35', 'phone35_busy', 'phone35_single_late'):
+        normal = records[8:] if case == 'cold_phone35' else records[5:]
         assert sum(r['source'] == 'phone' for r in normal) / len(normal) >= .95, case
+        if case == 'cold_phone35':
+          assert records[0]['sleep_ns'] == 0 and records[1]['sleep_ns'] > 0
+          assert records[1]['fresh_before_pick'] == 0
+          assert next(r['frameId'] for r in records if r['source'] == 'phone') <= 8
+          assert records[1]['fresh'] == 1 and all(r['source'] == 'local' for r in records[:6])
         if case == 'phone35_single_late':
           assert records[10]['source'] == 'local' and records[11]['source'] == 'phone'
       elif case == 'phone60':
@@ -632,6 +648,15 @@ def main():
         assert all(r['sleep_ns'] == 0 for r in records[13:])
       else:
         assert all(r['source'] == 'local' and r['sleep_ns'] == 0 for r in records)
+    for case in ('magic', 'version', 'flags', 'session', 'epoch_zero', 'ipc_flags', 'future', 'nan', 'inf', 'zero'):
+      records, source = execute('old_' + case, ['old_' + case] + ['absent'] * 4, frame_offset=10)
+      assert source.locked and all(r['source'] == 'local' and r['sleep_ns'] == 0 for r in records), case
+    for case in ('late', 'early', 'far', 'unpaired'):
+      records, source = execute('old_' + case, ['old_' + case] + ['absent'] * 4, frame_offset=10)
+      assert not source.locked and all(r['source'] == 'local' and r['sleep_ns'] == 0 for r in records), case
+    records, _ = execute('old_epoch_cannot_engage', [('good', 2)] * 10 + [('old_good', 1)] * 5, frame_offset=10)
+    assert all(r['sleep_ns'] == 0 for r in records[10:])
+    assert records[-1]['reject_reason'] == 'old_epoch'
     records, _ = execute('stock_action_mean_sigma', ['good'] * 15, action_width=4)
     assert records[-1]['source'] == 'phone'
     records, _ = execute('stock_plan_action', ['good'] * 15, action_width=0)
@@ -812,17 +837,20 @@ class Candidate(Plugin):
               'deterministic_max_wait_ms': max(r['pick_clock_ns'] for r in rows if not r['host_publish_ns']) / 1e6,
               'cases': {case: {
                 'frames': len(selected),
-                'adoption_after_warmup': sum(r['source'] == 'phone' for r in selected[5:]) / len(selected[5:]),
+                'first_phone_frame': next((r['frameId'] for r in selected if r['source'] == 'phone'), None),
+                'adoption_from_frame': 9 if case == 'cold_phone35' else 6,
+                'adoption_after_warmup': sum(r['source'] == 'phone' for r in selected[8 if case == 'cold_phone35' else 5:])
+                                        / len(selected[8 if case == 'cold_phone35' else 5:]),
                 'max_sleep_ms': max(r['sleep_ns'] for r in selected) / 1e6,
                 'pick_ms': dict(zip(('p50', 'p95', 'max'),
                                     np.percentile([r['pick_ns'] / 1e6 for r in selected], [50, 95, 100]), strict=True)),
                 'max_pick_end_after_eof_ms': max(r['pick_end'] - r['EOF'] for r in selected) / 1e6,
                 'eof_to_publish_ms': dict(zip(('p50', 'p95', 'max'),
                                              np.percentile([(r['publish'] - r['EOF']) / 1e6 for r in selected], [50, 95, 100]), strict=True)),
-              } for case in ('phone35', 'phone60', 'phone35_single_late', 'phone35_busy', 'cold_phone35', 'no_peer_timed')
+              } for case in ('phone35', 'phone60', 'phone35_single_late', 'phone35_busy', 'cold_phone35', 'cold_phone60', 'no_peer_timed')
                 if (selected := [r for r in rows if r['case'] == case])}},
             'limits': ['synthetic inference/VisionIPC; deterministic BOOTTIME except timed phone cases',
-                       'cold delayed peer remains zero-wait until one timely reply; timed engaged cases seed one timely reply',
+                       'cold +35ms peer never supplies an early reply; synthetic protocol-valid traffic proves host liveness only',
                        'OS sleep scheduling can overshoot EOF+45ms; late replies are never adopted',
                        'no phone QNN, TCP/HEVC or device execution',
                        'real modeld postprocessing, Capnp/msgq and selfdrived.update_events; unrelated car/device inputs are healthy fixtures']}

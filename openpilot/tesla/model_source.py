@@ -55,7 +55,8 @@ class ModelSource:
       raise
     self.buffer[:] = bytes(SIZE)
     self.session = secrets.randbits(64)
-    self.epoch = self.last_frame = self.last_accepted = self.fresh = self.arrival_ns = 0
+    self.epoch = self.last_frame = self.fresh = self.arrival_ns = 0
+    self.last_accepted = self.last_seen = -ENGAGED_FRAMES - 1
     self.frame = self.eof = 0
     self.selected = self.locked = self.sent = False
     self.reason = 'absent'
@@ -82,7 +83,8 @@ class ModelSource:
 
   def send_frame(self, main, extra, transforms, inputs, prev_desire):
     if main.frame_id < self.frame:
-      self.epoch = self.last_frame = self.last_accepted = self.fresh = 0
+      self.epoch = self.last_frame = self.fresh = 0
+      self.last_accepted = self.last_seen = -ENGAGED_FRAMES - 1
     self.frame, self.eof = main.frame_id, main.timestamp_eof
     pulse = np.where(inputs['desire_pulse'] - prev_desire > .99, inputs['desire_pulse'], 0).copy()
     pulse[0] = 0
@@ -127,17 +129,17 @@ class ModelSource:
       return self._reject('arrival_before_eof')
     if eof > now or arrival > now:
       return self._reject('future_timestamp', True)
-    if frame < self.frame or (frame > self.frame and eof < self.eof):
-      return self._reject('old_frame')
-    if frame != self.frame or eof != self.eof:
+    old_frame = frame < self.frame or (frame > self.frame and eof < self.eof)
+    if not old_frame and (frame != self.frame or eof != self.eof):
       return self._reject('frame_eof', True)
-    if frame <= self.last_frame and epoch == self.epoch:
+    if not old_frame and frame <= self.last_frame and epoch == self.epoch:
       return self._reject('replay')
-    if now > eof + DEADLINE_NS or arrival > eof + DEADLINE_NS:
-      return self._reject('late')
+    if arrival > eof + DEADLINE_NS or (not old_frame and now > eof + DEADLINE_NS):
+      return self._reject('old_frame' if old_frame else 'late')
     new_epoch = epoch > self.epoch
     if new_epoch:
-      self.epoch, self.fresh, self.last_frame, self.last_accepted = epoch, 0, 0, 0
+      self.epoch, self.fresh, self.last_frame = epoch, 0, 0
+      self.last_accepted = self.last_seen = -ENGAGED_FRAMES - 1
       if paired != 3:
         return self._reject('need_dual_idr')
     if paired != 3:
@@ -150,6 +152,11 @@ class ModelSource:
     raw = np.frombuffer(data, dtype='<f4', count=2066, offset=ENVELOPE.size + REPLY.size).copy()
     if not np.isfinite(raw).all() or not np.any(raw):
       return self._reject('raw_values', True)
+    if old_frame:
+      if 0 < self.frame - frame <= ENGAGED_FRAMES and eof < self.eof:
+        # On-time old output proves liveness, never eligibility for the current frame.
+        self.last_seen = max(self.last_seen, frame)
+      return self._reject('old_frame')
     try:
       remote = self.decode(raw.copy())
       shapes = HEAD_SHAPES | ({'action': (1, 2)} if 'action' in remote else {})
@@ -177,10 +184,10 @@ class ModelSource:
     return remote
 
   def pick(self, local):
-    if self.frame - self.last_accepted > ENGAGED_FRAMES:
+    if self.frame - max(self.last_accepted, self.last_seen) > ENGAGED_FRAMES:
       self.fresh = 0
     remote = self._candidate(local)
-    while (not self.locked and self.fresh and 0 < self.frame - self.last_accepted <= ENGAGED_FRAMES
+    while (not self.locked and 0 < self.frame - max(self.last_accepted, self.last_seen) <= ENGAGED_FRAMES
            and self.reason in ('absent', 'old_frame', 'ipc_busy')):
       remaining = self.eof + DEADLINE_NS - nanos_since_boot()
       if remaining <= 0:
