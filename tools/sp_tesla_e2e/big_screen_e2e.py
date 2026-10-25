@@ -45,6 +45,11 @@ settings actions, store refresh/install, or reboot/reset/uninstall confirmation.
 21. Built-in HUD boxes cannot move/hide/persist, or production HUD drawing ignores their layout.
 22. Saved hidden/invalid entries hide steering/model/blindspot safety indications, or alerts enter the editor/are suppressed.
 23. Plugins page omits the declared use next to a plugin.
+24. A hideable HUD box lacks a high-contrast Hide/Show button with >=40 px text, a required box has a button,
+    or hidden/required boxes lack Hidden/Move only labels.
+25. A HUD button tap does not toggle/save/reload visibility, or a box-body tap changes visibility/saved layout.
+26. A drag starting on a HUD button moves/toggles/saves the box or view, or a body drag stops moving the box.
+27. HUD buttons overlap each other or leave the screen, including coincident boxes and view-edge positions.
 """
 import argparse
 from copy import deepcopy
@@ -241,6 +246,19 @@ def host_check(output):
     x, y, w, h = rect
     return x + w / 2, y + h / 2
 
+  def hud_body(name):
+    boxes = host._hud_boxes()
+    buttons = tiles.hud_buttons(boxes, host._drive_view())
+    x, y, w, h = boxes[name]
+    points = [center(boxes[name])] + [(x + dx, y + dy) for dy in range(12, int(h), 32) for dx in range(12, int(w), 32)]
+    for px, py in points:
+      if any(bx <= px < bx + bw and by <= py < by + bh for bx, by, bw, bh in buttons.values()):
+        continue
+      hit = next(n for n, (bx, by, bw, bh) in reversed(list(boxes.items())) if bx <= px < bx + bw and by <= py < by + bh)
+      if hit == name:
+        return px, py
+    raise AssertionError('HUD body is covered: ' + name)
+
   def color():
     e = host._entries[next(iter(host._placed))]
     image = rl.load_image_from_texture(e.texture.texture)
@@ -358,6 +376,65 @@ def host_check(output):
       check(set(boxes) == {'example', 'builtin:torque_bar', 'builtin:set_speed', 'builtin:steering_wheel',
                            'builtin:model_source', 'builtin:blind_spot_indicators'}, f'17 missing enabled HUD boxes: {boxes}')
       frame(name='drive-edit-hud-boxes')
+      buttons = tiles.hud_buttons(boxes, host._drive_view())
+      check(set(buttons) == set(boxes) - tiles.HUD_REQUIRED, '24 missing hideable/extra required button')
+      from tools.sp_tesla_e2e.tile_layout_check import overlap, inside
+      check(all(inside(r, (0, 0, *tiles.SCREEN)) for r in buttons.values()) and
+            all(not overlap(a, b) for i, a in enumerate(buttons.values()) for b in list(buttons.values())[i + 1:]),
+            '27 HUD buttons overlap/leave screen')
+      drawn_text, drawn_lines, fills = [], [], []
+      original_text, original_lines, original_fill = screen.text, screen.lines_in, rl.draw_rectangle_rec
+      def record_text(weight, label, x, y, size, color=rl.WHITE):
+        drawn_text.append((label, x, y, size, (color.r, color.g, color.b)))
+        original_text(weight, label, x, y, size, color)
+      def record_lines(rect, lines, *args, **kwargs):
+        drawn_lines.extend(lines)
+        original_lines(rect, lines, *args, **kwargs)
+      def record_fill(rect, color):
+        c = rl.Color(*color) if isinstance(color, tuple) else color
+        fills.append(((rect.x, rect.y, rect.width, rect.height), (c.r, c.g, c.b)))
+        original_fill(rect, color)
+      screen.text, screen.lines_in, rl.draw_rectangle_rec = record_text, record_lines, record_fill
+      try:
+        frame(name='drive-edit-hud-buttons')
+        for name, r in buttons.items():
+          check(any(label == 'Hide' and size >= 40 and inside((x, y, 1, size), r) and max(rgb) <= 32
+                    for label, x, y, size, rgb in drawn_text) and
+                any(np.allclose(r, rect, atol=.001) and rgb == (255, 255, 255) for rect, rgb in fills),
+                '24 missing/high-contrast/small Hide label: ' + name)
+        check(drawn_lines.count('Move only') == len(tiles.HUD_REQUIRED), '24 required box missing Move only')
+        for name in buttons:
+          before = deepcopy(host._hud)
+          saved_before = host._layout_params.get(tiles.LAYOUT_PARAM)
+          touch(hud_body(name))
+          check(host._hud == before and host._layout_params.get(tiles.LAYOUT_PARAM) == saved_before,
+                '25 body tap toggled/saved: ' + name)
+          r = tiles.hud_buttons(host._hud_boxes(), host._drive_view())[name]
+          view_before = host._view_position
+          drag(center(r), (center(r)[0] + 260, center(r)[1] + 100))
+          check(host._hud == before and host._view_position == view_before and host._hud_drag is None and
+                host._layout_params.get(tiles.LAYOUT_PARAM) == saved_before, '26 button drag moved/toggled/saved: ' + name)
+          touch(center(r))
+          check(host._hud.get(name, [0, 0, True])[2] is False, '25 Hide failed: ' + name)
+          saved_hidden = host._layout_params.get(tiles.LAYOUT_PARAM)
+          check(saved_hidden['drive']['hud'][name] == host._hud[name] and screen.BigScreenHost()._hud == host._hud,
+                '25 Hide not saved/reloaded: ' + name)
+          drawn_text.clear()
+          drawn_lines.clear()
+          fills.clear()
+          frame(name='drive-edit-one-hidden' if name == 'example' else None)
+          check('Hidden' in drawn_lines and any(label == 'Show' and size >= 40 for label, _, _, size, _ in drawn_text),
+                '24 hidden box missing Hidden/Show: ' + name)
+          check(any(np.allclose(host._hud_boxes()[name], rect, atol=.001) and rgb == (60, 62, 70) for rect, rgb in fills),
+                '24 hidden box not dimmed: ' + name)
+          touch(center(r))
+          check(host._hud[name][2] is True and screen.BigScreenHost()._hud == host._hud, '25 Show not saved/reloaded: ' + name)
+        cases.extend([{'id': 24, 'buttons': buttons, 'font_px': 40, 'required': sorted(tiles.HUD_REQUIRED)},
+                      {'id': 25, 'toggled_and_reloaded': list(buttons), 'body_taps_unchanged': True},
+                      {'id': 26, 'button_drags_unchanged': list(buttons), 'body_drag': 'case 17'},
+                      {'id': 27, 'buttons': buttons, 'geometry_cases': 'tile_layout_check T32'}])
+      finally:
+        screen.text, screen.lines_in, rl.draw_rectangle_rec = original_text, original_lines, original_fill
       original = boxes['example']
       drag(center(original), (center(original)[0] + 260, center(original)[1] + 90))
       raw = host._layout_params.get(tiles.LAYOUT_PARAM)
@@ -377,8 +454,8 @@ def host_check(output):
       state.started, state.engaged, state.status = False, False, 0
       host._edit, host._layout = True, 'drive'
       frame()
-      touch(center(host._hud_boxes()['example']))
-      check(host._hud['example'][2] is False, '17 HUD tap did not hide')
+      touch(center(tiles.hud_buttons(host._hud_boxes(), host._drive_view())['example']))
+      check(host._hud['example'][2] is False, '17 HUD button did not hide')
       frame(name='drive-edit-hidden-hud')
       state.started = True
       hud_draws.clear()
@@ -387,7 +464,7 @@ def host_check(output):
       state.started = False
       host._edit, host._layout = True, 'drive'
       frame()
-      touch(center(host._hud_boxes()['example']))
+      touch(center(tiles.hud_buttons(host._hud_boxes(), host._drive_view())['example']))
       drag(center(host._hud_boxes()['example']), (-10000, 10000))
       box = host._hud_boxes()['example']
       vx, vy, vw, vh = tiles.view(host._view_position)
@@ -494,13 +571,11 @@ def host_check(output):
     boxes = host._hud_boxes()
     check(expected <= set(boxes) and not any('alert' in name for name in boxes), '21/22 built-in boxes missing or alert editable')
     defaults = tiles.builtin_hud_boxes((0, 0, *tiles.MICI))
-    box = boxes['builtin:set_speed']
-    drag(center(box), (center(box)[0] + 320, center(box)[1]))
+    point = hud_body('builtin:set_speed')
+    drag(point, (point[0] + 320, point[1]))
     moved = list(host._hud['builtin:set_speed'])
-    # Torque box edges avoid the overlapping steering/model safety groups.
-    box = host._hud_boxes()['builtin:torque_bar']
-    touch((box[0] + box[2] / 2, box[1] + box[3] - 10))
-    check(not host._hud['builtin:torque_bar'][2], '21 torque bar tap did not hide')
+    touch(center(tiles.hud_buttons(host._hud_boxes(), host._drive_view())['builtin:torque_bar']))
+    check(not host._hud['builtin:torque_bar'][2], '21 torque bar button did not hide')
     for name in ('builtin:steering_wheel', 'builtin:model_source'):
       box = host._hud_boxes()[name]
       touch((box[0] + box[2] / 2, box[1] + box[3] / 2))

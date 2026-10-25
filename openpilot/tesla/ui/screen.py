@@ -31,7 +31,7 @@ from openpilot.tesla.ui.pages.base import ListPage
 from openpilot.tesla.ui.pages.device import DevicePage
 from openpilot.tesla.ui.pages.onboarding import OnboardingPage
 from openpilot.tesla.ui.plugin_ui import MAX_FAILURES, EnabledPlugins, HudOverlay, Overlays, ScreenOverlay, load
-from openpilot.tesla.ui.tile import Tile, lines_in
+from openpilot.tesla.ui.tile import Tile, lines_in, text, text_w
 from openpilot.tesla.ui.tiles import LAYOUT_PARAM, LAYOUT_SPEC, SCREEN, THEME_PARAM, THEMES
 
 DIM = rl.Color(150, 152, 162, 255)
@@ -460,7 +460,12 @@ class BigScreenHost:
         label = name.removeprefix("builtin:").replace("_", " ").title() if name.startswith("builtin:") else name
         width = min(w - 24, 360)
         lines_in(rl.Rectangle(x + (w - width) / 2, y + 12, width, h - 24),
-                 [label, "Move only" if name in tiles.HUD_REQUIRED else "Tap to hide" if visible else "Tap to show"], 32)
+                 [label, "Move only"] if name in tiles.HUD_REQUIRED else [label] if visible else [label, "Hidden"], 32)
+      for name, (x, y, w, h) in tiles.hud_buttons(boxes, self._drive_view()).items():
+        label = "Hide" if self._hud.get(name, [0, 0, True])[2] else "Show"
+        rl.draw_rectangle_rec(rl.Rectangle(x, y, w, h), rl.WHITE)
+        text(FontWeight.SEMI_BOLD, label, x + (w - text_w(FontWeight.SEMI_BOLD, label, 40)) / 2, y + (h - 40) / 2,
+             40, rl.Color(20, 20, 24, 255))
     cell = tiles.add_cell(placed, drive, self._view_position, edit=self._edit)
     if cell is not None:
       x, y, w, h = tiles.cell_rect(*cell)
@@ -514,6 +519,15 @@ class BigScreenHost:
       return
     if self._mode != "onroad" and self._edit and self._layout == "drive":
       boxes = self._hud_boxes()
+      if self._hud_drag is None:
+        for name, (bx, by, bw, bh) in tiles.hud_buttons(boxes, self._drive_view()).items():
+          if bx <= sx < bx + bw and by <= sy < by + bh:
+            if event == "tap":
+              vx, vy, vw, vh = self._drive_view()
+              hx, hy, _, _ = boxes[name]
+              self._hud[name] = [(hx - vx) / vw, (hy - vy) / vh, not self._hud.get(name, [0, 0, True])[2]]
+              self._save()
+            return
       name = self._hud_drag or next((name for name, (bx, by, bw, bh) in reversed(list(boxes.items()))
                                     if bx <= sx < bx + bw and by <= sy < by + bh), None)
       if name is not None:
@@ -522,11 +536,10 @@ class BigScreenHost:
         visible = name in tiles.HUD_REQUIRED or self._hud.get(name, [0, 0, True])[2]
         if event == "drag":
           self._hud_drag = name
-        elif event in ("drop", "tap"):
-          entry = [(bx - vx + (x - sx if event == "drop" else 0)) / vw,
-                   (by - vy + (y - sy if event == "drop" else 0)) / vh, visible]
+        elif event == "drop":
+          entry = [(bx - vx + x - sx) / vw, (by - vy + y - sy) / vh, visible]
           bx, by, _, _ = tiles.hud_rect(entry, boxes[name], (vx, vy, vw, vh))
-          self._hud[name] = [(bx - vx) / vw, (by - vy) / vh, True if name in tiles.HUD_REQUIRED else not visible if event == "tap" else visible]
+          self._hud[name] = [(bx - vx) / vw, (by - vy) / vh, visible]
           self._hud_drag = None
           self._save()
         return

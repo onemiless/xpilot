@@ -50,6 +50,8 @@ Failure cases listed before implementation:
 - T28 edit buttons are under 152 px high, overlap a tile/add cell/view, or leave the screen
 - T29 built-in HUD defaults/fractions are lost, invalid entries survive, or protected indicators can hide
 - T30 Black is missing or old Outline does not resolve to Black
+- T31 a hideable HUD box lacks a >=120x64 button, or a required box has one
+- T32 HUD buttons overlap each other, leave the view/screen, or miss the inside/above/below corner placement
 """
 import ast
 import itertools
@@ -514,11 +516,44 @@ def check_builtin_hud(errors):
       errors.append(f"T28 moved view/bar/tiles overlap: {pos}")
 
 
+def check_hud_buttons(errors):
+  if not hasattr(T, "hud_buttons"):
+    errors.extend(["T31 HUD buttons missing", "T32 HUD button placement missing"])
+    return
+  rng = random.Random(29)
+  for pos in itertools.product(range(3), range(2)):
+    view = T.view(pos)
+    vx, vy, vw, vh = view
+    layouts = [T.builtin_hud_boxes(view)]
+    layouts += [{"large": (vx + 200, vy + 200, 400, 240)},
+                {"small": (vx + 200, vy + 200, 80, 40)}, {"top": (vx, vy, 80, 40)}]
+    layouts += [{str(i): (vx + vw - 80, vy + vh - 40, 80, 40) for i in range(12)}]
+    for _ in range(100):
+      layouts.append({str(i): T.hud_rect([rng.random(), rng.random(), True],
+                     (vx, vy, rng.randint(40, 600), rng.randint(30, 300)), view) for i in range(12)})
+    for boxes in layouts:
+      buttons = T.hud_buttons(boxes, view)
+      if set(buttons) != set(boxes) - T.HUD_REQUIRED or any(w < 120 or h < 64 for _, _, w, h in buttons.values()):
+        errors.append(f"T31 missing/required/small HUD button: {buttons}")
+        return
+      if any(not inside(r, view) or not inside(r, (0, 0, *T.SCREEN)) for r in buttons.values()):
+        errors.append(f"T32 HUD button leaves view/screen: {buttons}")
+        return
+      if any(overlap(a, b) for a, b in itertools.combinations(buttons.values(), 2)):
+        errors.append(f"T32 HUD buttons overlap: {buttons}")
+        return
+    large = T.hud_buttons(layouts[1], view)["large"]
+    small = T.hud_buttons(layouts[2], view)["small"]
+    top = T.hud_buttons(layouts[3], view)["top"]
+    if not inside(large, layouts[1]["large"]) or small[1] + small[3] > vy + 200 or top[1] < vy + 40:
+      errors.append(f"T32 inside/above/below placement: {large}, {small}, {top}")
+
+
 def main() -> int:
   errors: list[str] = []
   for check in (check_grid, check_view, check_place, check_show, check_spec, check_layout, check_edit, check_hits, check_bar, check_gesture,
                 check_poll, check_fit, check_text, check_view_saved, check_view_moved, check_view_covered,
-                check_hud, check_explicit_show, check_view_exclusion, check_themes, check_builtin_hud):
+                check_hud, check_explicit_show, check_view_exclusion, check_themes, check_builtin_hud, check_hud_buttons):
     try:
       check(errors)
     except Exception as e:

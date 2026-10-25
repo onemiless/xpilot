@@ -94,6 +94,32 @@ def hud_rect(entry, default, view) -> tuple[float, float, float, float]:
 HUD_REQUIRED = {"builtin:steering_wheel", "builtin:model_source", "builtin:blind_spot_indicators"}
 
 
+def hud_buttons(boxes, view) -> dict:
+  """Hide/Show corners, nearest free position when HUD boxes overlap."""
+  vx, vy, vw, vh = view
+  bw, bh, gap = 144, 64, 8
+  out = {}
+  for name, (x, y, w, h) in boxes.items():
+    if name in HUD_REQUIRED:
+      continue
+    bx = min(max(x + w - bw - gap, vx), vx + vw - bw)
+    by = y + gap if w >= bw + 2 * gap and h >= bh + 2 * gap else y - bh - gap
+    if by < vy:
+      by = y + h + gap
+    by = min(by, vy + vh - bh)
+    xs = {bx, vx, vx + vw - bw}
+    ys = {by, vy, vy + vh - bh}
+    for px, py, pw, ph in out.values():
+      xs.update((px - bw - gap, px + pw + gap))
+      ys.update((py - bh - gap, py + ph + gap))
+    candidates = sorted(((cx, cy) for cx in xs for cy in ys if vx <= cx <= vx + vw - bw and vy <= cy <= vy + vh - bh),
+                        key=lambda p: (abs(p[0] - bx) + abs(p[1] - by), p[1], p[0]))
+    cx, cy = next((cx, cy) for cx, cy in candidates
+                  if all(cx + bw <= px or px + pw <= cx or cy + bh <= py or py + ph <= cy for px, py, pw, ph in out.values()))
+    out[name] = (cx, cy, bw, bh)
+  return out
+
+
 def builtin_hud_boxes(view) -> dict:
   """Current mici footprints; safety indications may move but never hide."""
   x, y, w, h = view
