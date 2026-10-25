@@ -1,4 +1,4 @@
-// H1-H9: tools/sp_tesla_e2e/panda_rules_check.py. Real app-loader model, fake transport only.
+// H1-H14: tools/sp_tesla_e2e/panda_rules_check.py. Real app-loader model, fake transport only.
 #include <dlfcn.h>
 #include <fstream>
 #include <thread>
@@ -30,12 +30,16 @@ struct FakeHandle : PandaCommsHandle {
   Firmware &fw;
   std::string failure;
   int writes = 0, clears = 0, heartbeats = 0;
+  int clear_failures = 0, fallback_failures = 0;
   std::vector<int> requests;
   explicit FakeHandle(Firmware &fw, std::string failure) : fw(fw), failure(failure) {}
   void cleanup() override {}
   int control_write(uint8_t req, uint16_t p1, uint16_t p2, unsigned int) override {
     requests.push_back(req);
-    if (req == 0xdc) return fw.mode(p1, p2);
+    if (req == 0xdc) {
+      if (p1 == 19 && fallback_failures-- > 0) return -1;
+      return fw.mode(p1, p2);
+    }
     if (req == 0xf3) ++heartbeats;
     return 0;
   }
@@ -48,7 +52,10 @@ struct FakeHandle : PandaCommsHandle {
       memcpy(data, &health, sizeof(health));
       return sizeof(health);
     }
-    if (req == 0xa4) ++clears;
+    if (req == 0xa4) {
+      ++clears;
+      if (clear_failures-- > 0) return -1;
+    }
     if (req == 0xa0 && (failure == "caps" || failure == "bootstub")) return -1;
     uint8_t response[64] = {};
     int n = fw.control(req, p1, p2, response);
@@ -79,6 +86,11 @@ struct TestPanda : Panda {
   explicit TestPanda(std::unique_ptr<PandaCommsHandle> comms) { handle = std::move(comms); }
 };
 
+void tick(PandaSafety &safety, int frame, bool onroad=true) {
+  if (frame % 10 == 0) safety.configureSafetyMode(onroad);
+  safety.updateRules();
+}
+
 void run(Firmware &fw, const std::string &out) {
   Params params;
   MessageBuilder cp, sp;
@@ -98,7 +110,9 @@ void run(Firmware &fw, const std::string &out) {
   params.putBool("FirmwareQueryDone", true);
   params.putBool("ControlsReady", true);
   std::ofstream trace(out + "/trace.jsonl");
+  std::ofstream(out + "/review-trace.jsonl").close();
   for (const std::string failure : {"", "host", "caps", "bootstub", "abi", "limits", "crc", "count", "length", "begin", "commit", "deadline", "short", "changed-caps", "churn", "param"}) {
+    if (const char *only = getenv("PANDA_RULES_CASE"); only && failure != only) continue;
     fw.mode(19, 0);
     bool success = failure.empty() || failure == "host";
     std::string blob = util::read_file(out + (failure == "host" ? "/rules.bin" : "/reference.bin"));
@@ -116,8 +130,8 @@ void run(Firmware &fw, const std::string &out) {
       }
       int before = h->writes;
       double start = millis_since_boot();
-      panda.send_heartbeat(false, false);
-      safety.configureSafetyMode(true);
+      if (i % 10 == 0) panda.send_heartbeat(false, false);
+      tick(safety, i);
       longest = std::max(longest, millis_since_boot() - start);
       REQUIRE(h->writes - before <= 1);
       if (failure == "changed-caps" && h->failure != "caps") {
@@ -136,7 +150,7 @@ void run(Firmware &fw, const std::string &out) {
     fw.control(0xa1, 0, 0, status);
     if (success) {
       REQUIRE(status[6] == 2 && status[14] == (failure == "host" ? 1 : 3));
-      REQUIRE(h->writes > 1 && h->heartbeats >= h->writes);
+      REQUIRE(h->writes > 1 && h->heartbeats >= (failure == "host" ? 1 : 2));
       REQUIRE(longest < 100);
       int before = h->writes;
       params.put("XpilotPandaRules", util::read_file(out + "/empty.bin"));
@@ -153,7 +167,7 @@ void run(Firmware &fw, const std::string &out) {
       REQUIRE(h->clears == clears);
       safety.configureSafetyMode(false);
       fw.mode(19, 0);
-      for (int i = 0; i < 20; ++i) safety.configureSafetyMode(true);
+      for (int i = 0; i < 20; ++i) tick(safety, i);
       fw.control(0xa1, 0, 0, status);
       REQUIRE(status[6] == 2 && status[14] == 0 && fw.get_mode() == 10);
     } else if (failure != "caps" && failure != "bootstub" && failure != "abi" && failure != "limits") {
@@ -164,6 +178,68 @@ void run(Firmware &fw, const std::string &out) {
   }
 }
 
+void review_case(Firmware &fw, const std::string &out, const std::string &name) {
+  Params params;
+  params.put("XpilotPandaRules", util::read_file(out + "/reference.bin"));
+  params.putBool("XpilotPandaRulesFault", false);
+  auto handle = std::make_unique<FakeHandle>(fw, "");
+  auto *h = handle.get();
+  TestPanda panda(std::move(handle));
+  if (name == "H10") params.putBool("XpilotPandaRulesFault", true);
+  PandaSafety safety(&panda);
+  if (name == "H10") {
+    safety.configureSafetyMode(false);
+    REQUIRE(params.getBool("XpilotPandaRulesFault"));
+  }
+  fw.mode(19, 0);
+  for (int i = 0; i < 120 && fw.get_mode() != 10; ++i) tick(safety, i);
+  REQUIRE(fw.get_mode() == 10);
+  int writes = h->writes;
+  if (name == "H10") {
+    REQUIRE(writes == 0 && params.getBool("XpilotPandaRulesFault"));
+    auto modes = std::count(h->requests.begin(), h->requests.end(), 0xdc);
+    for (int i = 0; i < 100; ++i) tick(safety, i);
+    REQUIRE(h->writes == 0 && params.getBool("XpilotPandaRulesFault"));
+    REQUIRE(std::count(h->requests.begin(), h->requests.end(), 0xdc) == modes);
+  } else if (name == "H11") {
+    h->clear_failures = 2;
+    h->fallback_failures = 2;
+    params.putBool("XpilotPandaRulesFault", true);
+    int clears = h->clears;
+    safety.configureSafetyMode(true);
+    REQUIRE(h->clears == clears + 1 && fw.get_mode() == 10);
+    safety.configureSafetyMode(true);
+    REQUIRE(h->clears == clears + 2 && fw.get_mode() == 10);
+    safety.configureSafetyMode(true);
+    REQUIRE(h->clears == clears + 3);
+    int verified = h->clears;
+    safety.configureSafetyMode(true);
+    REQUIRE(h->clears == verified && params.getBool("XpilotPandaRulesFault"));
+  } else if (name == "H12") {
+    fw.mode(0, 0);
+    auto before = h->requests.size();
+    for (int i = 0; i < 100; ++i) tick(safety, i);
+    REQUIRE(fw.get_mode() == 0 && h->writes == writes);
+    REQUIRE(std::find(h->requests.begin() + before, h->requests.end(), 0xdc) == h->requests.end());
+  } else if (name == "H13") {
+    auto before = std::count(h->requests.begin(), h->requests.end(), 0xd2);
+    for (int i = 0; i < 100; ++i) tick(safety, i);
+    REQUIRE(std::count(h->requests.begin(), h->requests.end(), 0xd2) == before);
+    params.putBool("XpilotPandaRulesFault", true);
+    int clears = h->clears;
+    for (int i = 1; i < 10; ++i) tick(safety, i);
+    REQUIRE(h->clears == clears);
+    tick(safety, 10);
+    REQUIRE(h->clears == clears + 1);
+  }
+  std::ofstream trace(out + "/review-trace.jsonl", std::ios::app);
+  trace << "{\"case\":\"" << name << "\",\"writes\":" << h->writes << ",\"clears\":" << h->clears << "}\n";
+}
+
 int main(int argc, char **argv) {
-  return run_native_test([&] { REQUIRE(argc == 3); Firmware fw(argv[1]); run(fw, argv[2]); });
+  return run_native_test([&] { REQUIRE(argc == 3); Firmware fw(argv[1]); run(fw, argv[2]); if (const char *name = getenv("PANDA_RULES_CASE"); name && name[0] == 'H') {
+      review_case(fw, argv[2], name);
+    } else {
+      for (const char *review : {"H10", "H11", "H12", "H13"}) review_case(fw, argv[2], review);
+    } });
 }

@@ -202,22 +202,32 @@ the offending plugin from card, record `card.rules` in `XpilotPluginFaults`, and
 retain preceding and subsequent valid plugins. Setup/init failures are excluded
 before compilation. There is no profile translation or plugin safetyParam bit.
 
-`XpilotPandaRulesFault` is BOOL, cleared on manager start and when offroad. Loader
-errors latch it for the drive. Runtime `record_fault` for any rule-owning plugin
-also sets it synchronously (all hook exceptions are treated as critical for rule
-ownership). Init/setup/compiler rejection occurs before the table exists and
-only faults that plugin. Pandad checks the fault during upload and after arming,
-CLEARs the whole table once, and leaves base safety configured. After a failed
-CLEAR response it sets NO_OUTPUT to invalidate the table before restoring base
-mode. No per-rule removal/reload occurs in a car mode. Returning offroad, or an
-observed reset into a non-car mode, permits a fresh upload; changed param bytes
-are otherwise deferred. Disabled plugins take effect at the next card startup.
+`XpilotPandaRulesFault` is BOOL, cleared on manager start or an observed
+onroad->offroad edge in the same pandad process. The initial false before
+receiving deviceState never clears a previous fault. Loader errors latch it for
+the drive. Runtime `record_fault` for any rule-owning plugin also sets it
+synchronously: every runtime hook exception remains critical for rule ownership.
+Init/setup/compiler rejection happens before the table exists and only faults
+that plugin. While latched, no table (including an empty table) is uploaded.
 
-Pandad runs one loader step per 100 Hz loop; at most one 64-byte EP2 record is
-written per step, including metadata. Heartbeats retain the existing 10 Hz path.
-Overall upload deadline is 2000 ms; changing params during upload does not extend it. Rule controls, EP2 and loader health reads use
-5 ms transport timeouts; USB finite controls do not retry forever, and SPI rule
-requests do not inherit the old 100 ms minimum or unbounded NACK/silent retry.
+Pandad revokes with CLEAR, then independently reads STATUS and verifies EMPTY,
+zero count/length/CRC. If that cannot be verified, it requests NO_OUTPUT and
+requires health readback in NO_OUTPUT. Only verified revocation sets the local
+revoked latch; otherwise the next 10 Hz check retries with bounded calls. Base
+arming still proceeds during the normal initial arming sequence. An already
+configured onroad Panda is never automatically re-armed or reloaded after SILENT,
+reset, or a NO_OUTPUT fallback; its mismatch stays visible to selfdrived.
+Reload only occurs in the next normal offroad->onroad arming sequence, including
+a Panda reset while offroad. Disabled plugins take effect at the next card start.
+
+Arming, drive-state and fault checks remain at 10 Hz. Only an active upload steps
+at 100 Hz, with at most one 64-byte EP2 record per iteration, including metadata.
+The idle fast path returns before any health/Params reads. Heartbeats retain the
+existing 10 Hz path. Overall upload deadline is 2000 ms; changing params does not
+extend it. Rule controls, EP2 and loader health reads use 5 ms transport timeouts.
+SPI excludes mutex/flock wait from the transfer timeout; the overall upload
+deadline still includes wall time. USB finite controls do not retry forever,
+and SPI rule requests do not inherit the old 100 ms minimum or unbounded retry.
 CAPS must match app magic, ABI, limits, record size and reserved bytes before
 CLEAR/BEGIN or any EP2 write. Bootstub/body have no valid app CAPS. On failure,
 CLEAR is attempted only after app capabilities were established on this connection,
@@ -228,7 +238,9 @@ followed by an independent STATUS read matching state/error/CRC/length/count.
 Host proof: `safety_manifest_check.py` G7-G12, `manifest_check.py` M18,
 `plugin_host_check.py` P45-P48, `store_check.py` S40-S41, `phase4_check.py` C20.
 `panda_rules_check.py --output <dir>` drives the production C++ PandaSafety/Panda
-through a fake transport into the real T32 C loader, with H1-H9 fault injection.
+through a fake transport into the real T32 C loader, with H1-H13 fault injection.
+H14 compiles the production SPI retry/transfer/LockEx source, simulates only the
+ioctl peer, and holds the real lock for 50 ms before a NACK/ACK exchange.
 Build `scons openpilot/selfdrive/pandad/pandad
 openpilot/selfdrive/pandad/tests/test_panda_rules` first. Output includes table
 bytes, trace.jsonl, native.log, result.json and SHA-256 input identities; no device.

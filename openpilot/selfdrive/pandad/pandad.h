@@ -20,6 +20,7 @@ class PandaSafety {
 public:
   PandaSafety(Panda *panda) : panda_(panda) {}
   void configureSafetyMode(bool is_onroad);
+  void updateRules();
   bool getOffroadMode();
 
 private:
@@ -34,7 +35,8 @@ private:
   double rules_deadline_ = 0;
   bool rules_caps_ = false;
   bool rules_revoked_ = false;
-  cereal::CarParams::SafetyModel configured_mode_ = cereal::CarParams::SafetyModel::SILENT;
+  bool was_onroad_ = false;
+  std::vector<std::string> car_params_;
   std::vector<std::string> fetchCarParams();
   void setSafetyMode(const std::vector<std::string> &params_string);
 

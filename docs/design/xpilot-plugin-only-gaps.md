@@ -20,7 +20,7 @@
 
 G1 host 已接通：清单 `rules` ABI 1 → card 编译 active winners → 二进制 `XpilotPandaRules` → pandad app CAPS 预检/非 car mode 分步 EP2 装载 → COMMIT/STATUS 摘要核对。失败清表并置 `XpilotPandaRulesFault`，基础模式照常配置；旧 safety.profile 拒绝，没有翻译或插件 param_bit。T32 固件格式沿用 [`xpilot-panda-rules.md`](xpilot-panda-rules.md)。商店插件重发属于 X-34，尚未包含于此系统改动。
 
-G12 本次触及的边界已实现：规则持有者运行期关键故障撤销整张 Panda 表；observe_can 发送受 core_alive 门控。P45-P48、C20、H1-H9 提供主机检查和真实 C loader 模型 trace。下文 G12 的 plan_filter 单调收紧/恰好一次发布及其他 G3/G5 边界仍未关闭；不将这次局部撤权称作全局 floor 完成。未连接设备、未刷写，设备 active commit 未知。下表保留原审计固定版本证据，不代表当前源码仍处于原状态。
+G12 本次触及的边界已实现：规则持有者运行期关键故障撤销整张 Panda 表；observe_can 发送受 core_alive 门控。P45-P48、C20、H1-H14 提供主机检查和真实 C loader 模型 trace。下文 G12 的 plan_filter 单调收紧/恰好一次发布及其他 G3/G5 边界仍未关闭；不将这次局部撤权称作全局 floor 完成。未连接设备、未刷写，设备 active commit 未知。下表保留原审计固定版本证据，不代表当前源码仍处于原状态。
 
 ## 草稿校正：硬阻塞与基础建设分开
 

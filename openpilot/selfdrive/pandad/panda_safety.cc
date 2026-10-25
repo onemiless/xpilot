@@ -5,6 +5,8 @@
 #include <zlib.h>
 
 namespace {
+const std::vector<uint8_t> RULE_CAPS = {0x58, 0x50, 0x52, 0x31, 1, 0, 0, 16, 8, 8, 8, 8, 64, 0, 0, 0};
+
 uint32_t read_le(const uint8_t *p, size_t n) {
   uint32_t v = 0;
   for (size_t i = 0; i < n; ++i) v |= uint32_t(p[i]) << (8 * i);
@@ -22,6 +24,8 @@ bool non_car(uint16_t mode) {
 }
 
 void PandaSafety::configureSafetyMode(bool is_onroad) {
+  if (was_onroad_ && !is_onroad) params_.putBool("XpilotPandaRulesFault", false);
+  was_onroad_ = is_onroad;
   if (!is_onroad) {
     initialized_ = false;
     safety_configured_ = false;
@@ -30,40 +34,45 @@ void PandaSafety::configureSafetyMode(bool is_onroad) {
     rules_step_ = RulesStep::CAPS;
     rules_caps_ = false;
     rules_revoked_ = false;
-    if (params_.getBool("XpilotPandaRulesFault")) params_.putBool("XpilotPandaRulesFault", false);
+    car_params_.clear();
     return;
   }
-  if (safety_configured_) {
-    auto health = panda_->get_state(5);
-    if (health && non_car(health->safety_mode_pkt) && health->safety_mode_pkt != uint16_t(configured_mode_)) {
-      initialized_ = false;
-      safety_configured_ = false;
-      rules_deadline_ = 0;
-      rules_step_ = RulesStep::CAPS;
-      rules_revoked_ = false;
-    } else {
-      if (params_.getBool("XpilotPandaRulesFault") && !rules_revoked_) rulesFault();
-      return;
-    }
-  }
+  if (params_.getBool("XpilotPandaRulesFault") && !rules_revoked_) rulesFault();
+  if (safety_configured_) return;
   updateMultiplexingMode();
-  auto car_params = fetchCarParams();
-  if (!car_params.empty() && loadRules()) {
-    setSafetyMode(car_params);
+  if (car_params_.empty()) car_params_ = fetchCarParams();
+}
+
+void PandaSafety::updateRules() {
+  if (car_params_.empty()) return;
+  if (loadRules()) {
+    setSafetyMode(car_params_);
     safety_configured_ = true;
+    car_params_.clear();
   }
 }
 
 void PandaSafety::rulesFault() {
-  if (rules_caps_ && !status_ok(panda_->rules_control(0xa4), 0)) {
-    panda_->set_safety_model(cereal::CarParams::SafetyModel::NO_OUTPUT, 0, 5);
-  }
   params_.putBool("XpilotPandaRulesFault", true);
   rules_step_ = RulesStep::DONE;
-  rules_revoked_ = true;
+  if (!rules_caps_) rules_caps_ = panda_->rules_control(0xa0) == RULE_CAPS;
+  if (rules_caps_) {
+    panda_->rules_control(0xa4);
+    auto s = panda_->rules_control(0xa1);
+    rules_revoked_ = status_ok(s, 0) && s[14] == 0 && read_le(s.data() + 8, 4) == 0 && read_le(s.data() + 12, 2) == 0;
+    if (!rules_revoked_) {
+      panda_->set_safety_model(cereal::CarParams::SafetyModel::NO_OUTPUT, 0, 5);
+      auto health = panda_->get_state(5);
+      rules_revoked_ = health && health->safety_mode_pkt == uint16_t(cereal::CarParams::SafetyModel::NO_OUTPUT);
+    }
+  }
 }
 
 bool PandaSafety::loadRules() {
+  if (params_.getBool("XpilotPandaRulesFault")) {
+    if (!rules_revoked_) rulesFault();
+    return true;
+  }
   auto latest = params_.get("XpilotPandaRules");
   if (rules_step_ == RulesStep::CAPS || latest != rules_) {
     rules_ = latest;
@@ -71,10 +80,6 @@ bool PandaSafety::loadRules() {
     if (rules_deadline_ == 0) rules_deadline_ = millis_since_boot() + 2000;
   }
   if (rules_step_ == RulesStep::DONE) return true;
-  if (rules_step_ != RulesStep::CAPS && params_.getBool("XpilotPandaRulesFault")) {
-    rulesFault();
-    return true;
-  }
   auto health = panda_->get_state(5);
   if (!health || !non_car(health->safety_mode_pkt) || millis_since_boot() >= rules_deadline_) {
     rulesFault();
@@ -82,8 +87,7 @@ bool PandaSafety::loadRules() {
   }
   auto fail = [this]() { rulesFault(); return true; };
   if (rules_step_ == RulesStep::CAPS) {
-    const std::vector<uint8_t> expected = {0x58, 0x50, 0x52, 0x31, 1, 0, 0, 16, 8, 8, 8, 8, 64, 0, 0, 0};
-    if (panda_->rules_control(0xa0) != expected) return fail();
+    if (panda_->rules_control(0xa0) != RULE_CAPS) return fail();
     rules_caps_ = true;
     rules_step_ = RulesStep::CLEAR;
   } else if (rules_step_ == RulesStep::CLEAR) {
@@ -187,7 +191,6 @@ void PandaSafety::setSafetyMode(const std::vector<std::string> &params_string) {
   LOGW("setting safety model: %d, param: %d, alternative experience: %d, param_sp: %d", (int)safety_model, safety_param, alternative_experience, safety_param_sp);
   panda_->set_alternative_experience(alternative_experience, safety_param_sp);
   panda_->set_safety_model(safety_model, safety_param);
-  configured_mode_ = safety_model;
 }
 
 bool PandaSafety::getOffroadMode() {

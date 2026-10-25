@@ -335,11 +335,13 @@ Tesla 自有地址按地址独占，与 bus/length 无关（包括 0x488、0x2B9
 
 app 固件专用 CAPS/STATUS/BEGIN/COMMIT/CLEAR 及 EP2 64 字节记录见合同。主机必须先验证 CAPS 是 app，绝不向 bootstub EP2 写规则。BEGIN 立即撤销旧表，CRC/格式/上传失败后空表；只允许非 car mode 提交。启动和每次切入非 car mode 清表，每次设置模式重置模板和预算，切入 car mode 中止未完成上传。表为空或失败不改变基础 Tesla 接管条件。
 
-宿主衔接（X-20261025-33）：card 编译已启用且裁决胜出的规则到 `XpilotPandaRules`；pandad 每循环只发一条 EP2 记录，保留心跳和总截止时间，在 0xDF/0xDC 前 COMMIT 并核对 STATUS CRC/count。失败 CLEAR、记录功能故障，基础模式仍正常 arming。没有规则也显式装载空表。插件不再分配 safetyParam 位；G14 固定位保留。旧 `safety.profile` 插件必须发布新版本替代，系统不提供翻译层；主机实现和模型验证不代表设备已部署。
+宿主衔接（X-20261025-33）：card 编译已启用且裁决胜出的规则到 `XpilotPandaRules`；pandad 每循环只发一条 EP2 记录，保留心跳和总截止时间，在 0xDF/0xDC 前 COMMIT 并核对 STATUS CRC/count。失败 CLEAR、记录功能故障，基础模式仍正常 arming。无故障且没有规则时也显式装载空表；功能故障锁定时只撤权，不上传任何表。插件不再分配 safetyParam 位；G14 固定位保留。旧 `safety.profile` 插件必须发布新版本替代，系统不提供翻译层；主机实现和模型验证不代表设备已部署。
 
 `XpilotPandaRules` 是 BYTES：完整表紧接 4 字节 little-endian CRC32（只计算表，参数总长 20–4100）；没有 JSON 或额外长度前缀。唯一编码器为 `openpilot/tesla/panda_rules.py`，固件测试 fixture 也导入它。card 在 setup 后、CP/SP 发布前同步写入；没有规则也写空表。跨插件重复地址或总量超限，只丢弃当前插件并记录 `card.rules`，其他规则保留。旧 generator 读取入口只供旧 oracle 检查，生产发现、安装与编译均不读取 safety.json。
 
-功能故障参数 `XpilotPandaRulesFault`（BOOL）在 manager 启动和停车时清除。规则持有者运行期任一 hook 异常视作关键故障，同步置位；pandad 在上传期和接管后检查，CLEAR 整表并保持基础模式；CLEAR 读回失败先设 NO_OUTPUT 清表再恢复基础模式。本行程不重新授予规则；表变更只在回到非 car mode 后重载。初始化/setup/编译拒绝发生在表写入之前，只停用该插件。observe_can 的即时发送和控制发送都受 `core_alive` 门控。上传每个 100 Hz 循环最多一条 EP2 记录，心跳保持 10 Hz；总期限两秒，相关传输限时 5 ms。CAPS 失败绝不写 EP2；STATUS 要独立核对 state/error/CRC/length/count。
+功能故障参数 `XpilotPandaRulesFault`（BOOL）由 manager 启动清除；pandad 只在同一进程观察到 onroad→offroad 边沿时清除，启动时暂未收到 deviceState 的 false 不清除。规则持有者运行期**任一 hook 异常**均视作关键故障，同步置位，此策略不变；初始化/setup/编译拒绝发生在表写入之前，只停用该插件。故障锁定时不上传任何表，只撤权并继续本次正常的基础模式初始化。撤权须独立 STATUS 读回确认空表（count/length/CRC 均为零），或 NO_OUTPUT 的 health 读回确认；CLEAR 与 NO_OUTPUT 均失败时，在后续 10 Hz 检查继续重试，不提前标记完成。
+
+已配置后的行驶中不自动重新 arming，也不因 Panda 退到 SILENT、复位或 NO_OUTPUT 而重装；模式不匹配继续交给 selfdrived 处理。规则变更只在正常 offroad→onroad 初始化序列装载，包含停车期间的 Panda 复位。observe_can 的即时发送和控制发送都受 `core_alive` 门控。arming、行程状态和故障检查保留 10 Hz；只有上传进行中才在 100 Hz 推进一步，每循环最多一条 EP2 记录，空闲快速入口直接返回，不读 health/Params。心跳保持 10 Hz；总期限两秒，相关传输限时 5 ms。SPI 的单次传输计时排除等待总线锁的时间，总上传期限仍计算实际墙钟时间。CAPS 失败绝不写 EP2；STATUS 要独立核对 state/error/CRC/length/count。
 
 生产固件只包含 `xpilot_rules.h` 引擎。`auto_speed.h`、`ambient_light.h`、`registry.h`、`gen_safety.py`、`safety.json` 暂留作测试 oracle/迁移参考，不再授予生产发送权限。X-33 落地、差分门通过后另行删除，不能在本任务删除。navassist oracle 固定为 Sniper-Eon/xpilot `ab3535b5a4acbf318c55005868d37ed19e2cf77d` 的测试 fixture，唯一故意差异是 cancel 会话豁免。
 
