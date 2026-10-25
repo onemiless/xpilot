@@ -11,7 +11,10 @@ F6 late/burst/200ms-stalled sender: one-slot overwrite, deadline, no catch-up.
 F7 frozen/crashed child, new epoch without dual IDR, reset/zero-pair, five warmups.
 F8 local load/run failure propagates; phone never conceals a base failure.
 F9 one publisher, four messages selected together, baseline bytes unchanged.
-F13 trajectory/lead/pose/action jumps fail admission; fresh-only fade-in, no stale fade-out.
+F13 trajectory/lead/pose/action jumps fail admission; whole-frame source, including raw predictions.
+Round 1: adapter mutation cannot alter fallback; camera regression rewarms; early arrival
+is frame-only rejection; failed init and SIGKILL leave no mailbox leaks. Candidate lock,
+post-pick arrival and 200ms stall occur after Phone active. Burst frames/data are distinct.
 
 The replay executes unmodified main() and all real postprocessing/serialization. Only
 VisionIPC, inference and input services are deterministic doubles. BGM1 peer is a
@@ -89,6 +92,9 @@ def raw_output(delta=0.):
   lead[:, :, 2] = 20
   raw[1907:1979] = lead.ravel()
   raw[2062:2064] = [0.01 + delta, 0.1 + delta]
+  raw[800:855] += delta
+  raw[855] += delta
+  raw[2054] += delta
   return raw
 
 
@@ -151,7 +157,7 @@ def health_replay(messages, rows):
     names = [driver.events.get_event_name(e) for e in driver.events.names]
     assert not driver.events.contains(ET.NO_ENTRY), names
     assert not set(names) & {'processNotRunning', 'modeldLagging', 'commIssue', 'commIssueAvgFreq'}, names
-    events.append(names)
+    events.append({'onroadEvents': names, 'onroadEventsSP': [driver.events_sp.get_event_name(e) for e in driver.events_sp.names]})
   return events
 
 
@@ -162,13 +168,10 @@ def peer(path, conn):
     command = conn.recv()
     if command == 'crash':
       os._exit(7)
-    if command in ('freeze', 'stall'):
+    if command == 'freeze':
       fcntl.lockf(fd, fcntl.LOCK_EX, SIZE, 0)
       conn.send('frozen')
-      if command == 'stall':
-        time.sleep(.2)
-      else:
-        conn.recv()
+      conn.recv()
       fcntl.lockf(fd, fcntl.LOCK_UN, SIZE, 0)
       continue
     scenario, epoch, now, expected_inputs = command
@@ -179,6 +182,18 @@ def peer(path, conn):
     assert meta[7:25] == tuple(np.eye(3, dtype=np.float32).ravel()) * 2
     assert len(meta[25:]) == 12
     np.testing.assert_allclose(meta[25:], expected_inputs, atol=1e-7, rtol=0)
+    if scenario in ('hold', 'stall_active'):
+      offset, size = (OFFSET, SIZE - OFFSET) if scenario == 'hold' else (0, SIZE)
+      fcntl.lockf(fd, fcntl.LOCK_EX, size, offset)
+      conn.send((b'', META.pack(*meta)))
+      if scenario == 'hold':
+        assert conn.recv() == 'release'
+      else:
+        time.sleep(.2)
+      fcntl.lockf(fd, fcntl.LOCK_UN, size, offset)
+      if scenario == 'hold':
+        conn.send('released')
+      continue
     raw = raw_output(.1)
     flags, paired, version, kind, length = 0, 3, 2, 0x11, 8280
     arrival = eof + 10_000_000
@@ -206,6 +221,8 @@ def peer(path, conn):
       eof -= 1
     if scenario == 'future':
       arrival = now + 1
+    if scenario == 'early':
+      arrival = eof - 1
     if scenario == 'future_eof':
       eof = now + 1
     if scenario == 'stale':
@@ -229,7 +246,15 @@ def peer(path, conn):
     if scenario == 'partial':
       data = data[:20]
     saved = data
-    for _ in range(200 if scenario == 'burst' else 1):
+    packets = []
+    for i in range(200 if scenario == 'burst' else 1):
+      if scenario == 'burst':
+        packet_frame = frame - 199 + i
+        packet_eof = eof - (199 - i) * 50_000_000
+        wire = struct.pack('<4sBBHIIQ', b'BGM1', 2, 0x11, 0, packet_frame, 8280, packet_eof)
+        wire += raw_output(.1 + packet_frame * .0001).tobytes() + bytes(32)
+        data = ENVELOPE.pack(session, epoch, packet_eof + 10_000_000, 3, len(wire)) + wire
+      packets.append(data)
       fcntl.lockf(fd, fcntl.LOCK_EX, SIZE - OFFSET, OFFSET)
       padded = data + bytes(SIZE - OFFSET - len(data))
       os.pwrite(fd, bytes(ENVELOPE.size), OFFSET)
@@ -238,19 +263,24 @@ def peer(path, conn):
       os.pwrite(fd, padded[ENVELOPE.size - 4:ENVELOPE.size], OFFSET + ENVELOPE.size - 4)
       fcntl.lockf(fd, fcntl.LOCK_UN, SIZE - OFFSET, OFFSET)
     assert os.fstat(fd).st_size == SIZE
-    conn.send((data, META.pack(*meta)))
+    conn.send((packets if scenario == 'burst' else data, META.pack(*meta)))
 
 
 class EndReplay(Exception):
   pass
 
 
-def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, local_failure=None, paced=False, action_width=2):
+def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, local_failure=None, paced=False, action_width=2,
+           frame_offset=0, expected_events=None, raw_predictions=True):
   clock = types.SimpleNamespace(now=1_000_000_000)
   rows, messages, wire_log, metadata_log, subscribers = [], [], [], [], []
   local_runs = []
   original_new_message = messaging.new_message
   current = 0
+  frame_origin = 0
+  camera_frame = camera_eof = 0
+  expected = None
+  pick_ns = 0
   wall_start = time.monotonic()
 
   def stock_probe():
@@ -272,16 +302,20 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       return True
 
     def recv(self):
-      nonlocal current
+      nonlocal current, frame_origin, camera_frame, camera_eof
       if self.main:
         current += 1
         if current > len(scenarios):
           raise EndReplay
         if paced:
           time.sleep(max(0, wall_start + current * .05 - time.monotonic()))
-        clock.now = 1_000_000_000 + current * 50_000_000 + 20_000_000
-      self.frame_id = current
-      self.timestamp_sof = 1_000_000_000 + current * 50_000_000
+        if scenarios[current - 1] == 'camera_restart':
+          frame_origin = current - 1
+        camera_frame = current - frame_origin + frame_offset
+        camera_eof = 1_000_000_000 + (current + frame_offset) * 50_000_000
+        clock.now = camera_eof + 20_000_000
+      self.frame_id = camera_frame
+      self.timestamp_sof = camera_eof
       self.timestamp_eof = self.timestamp_sof
       return b'fake VisionBuf'
 
@@ -296,6 +330,7 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       self.prev_desire = np.zeros(8, dtype=np.float32)
 
     def run(self, bufs, transforms, inputs, *args):
+      nonlocal expected
       local_runs.append(current)
       if local_failure == 'run':
         raise RuntimeError('local run failed')
@@ -303,14 +338,20 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       frame_epoch = epoch
       if isinstance(scenario, tuple):
         scenario, frame_epoch = scenario
-      if conn is not None and scenario != 'absent':
-        pulse = np.where(inputs['desire_pulse'] - self.prev_desire > .99, inputs['desire_pulse'], 0).copy()
-        pulse[0] = 0
-        expected = np.concatenate([pulse, inputs['traffic_convention'], inputs['action_t']])
+      pulse = np.where(inputs['desire_pulse'] - self.prev_desire > .99, inputs['desire_pulse'], 0).copy()
+      pulse[0] = 0
+      expected = np.concatenate([pulse, inputs['traffic_convention'], inputs['action_t']])
+      if conn is not None and scenario not in ('absent', 'after_pick', 'queued'):
         conn.send((scenario, frame_epoch, clock.now, expected))
         assert conn.poll(2), 'fake peer stalled'
         wire, meta = conn.recv()
-        wire_log.append(wire)
+        if isinstance(wire, list):
+          assert len(wire) == 200
+          assert len({struct.unpack_from('<I', w, ENVELOPE.size + 8)[0] for w in wire}) == 200
+          assert len({w[ENVELOPE.size + 24:ENVELOPE.size + 8288] for w in wire}) == 200
+          wire_log.extend(wire)
+        elif wire:
+          wire_log.append(wire)
         metadata_log.append(meta)
       if scenario == 'late':
         clock.now += 30_000_000
@@ -340,7 +381,7 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       return self.values[name]
 
     def update(self, *args):
-      self.values['narrowRoadCameraState'].frameId = current
+      self.values['narrowRoadCameraState'].frameId = camera_frame
 
   class Publisher:
     def __init__(self, services):
@@ -356,11 +397,42 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       messages.append(data)
       if service == 'modelDataV2SP':
         selected = 'phone' if source is not None and source.selected else 'local'
-        rows.append({'case': name, 'epoch': source.epoch if source else 0, 'frameId': current,
-                     'EOF': 1_000_000_000 + current * 50_000_000,
+        rows.append({'case': name, 'epoch': source.epoch if source else 0, 'frameId': camera_frame,
+                     'EOF': camera_eof,
                      'arrival': source.arrival_ns if source else 0, 'publish': clock.now, 'source': selected,
-                     'reject_reason': source.reason if source else '', 'weight': source.weight if source else 0,
+                     'reject_reason': source.reason if source else '', 'pick_ns': pick_ns,
                      'host_publish_ns': time.monotonic_ns() if paced else 0})
+        scenario = scenarios[current - 1]
+        if scenario == 'hold':
+          assert source.reason == 'ipc_busy' and pick_ns < 20_000_000
+          conn.send('release')
+          assert conn.poll(2) and conn.recv() == 'released'
+        if scenario == 'stall_active':
+          assert source.reason == 'ipc_busy' and pick_ns < 20_000_000
+        if scenario == 'after_pick':
+          assert not source.selected
+          conn.send(('good', epoch, clock.now, expected))
+          assert conn.poll(2)
+          wire, meta = conn.recv()
+          wire_log.append(wire)
+          metadata_log.append(meta)
+
+  if source is not None:
+    original_pick = source.pick
+
+    def pick(local):
+      nonlocal pick_ns
+      started = time.perf_counter_ns()
+      result = original_pick(local)
+      pick_ns = time.perf_counter_ns() - started
+      if result[1]:
+        scenario = scenarios[current - 1]
+        delta = .1 + camera_frame * .0001 if scenario == 'burst' else .1
+        expected_heads = decode(raw_output(delta))
+        assert result[0].keys() == expected_heads.keys()
+        for key in expected_heads:
+          np.testing.assert_array_equal(result[0][key], expected_heads[key], err_msg=key)
+      return result
 
   with contextlib.ExitStack() as stack:
     for attr, value in {'VisionIpcClient': Vision, 'ModelState': Local, 'SubMaster': Inputs, 'PubMaster': Publisher,
@@ -371,8 +443,10 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
                         'get_demo_car_params': lambda: types.SimpleNamespace(longitudinalActuatorDelay=.2, brand='tesla')}.items():
       stack.enter_context(patch.object(module, attr, value))
     stack.enter_context(patch.object(messaging, 'new_message', lambda s, **kw: original_new_message(s, logMonoTime=clock.now, **kw)))
+    stack.enter_context(patch('openpilot.selfdrive.modeld.fill_model_msg.SEND_RAW_PRED', raw_predictions))
     if source is not None:
       stack.enter_context(patch('openpilot.tesla.model_source.nanos_since_boot', lambda: clock.now))
+      stack.enter_context(patch.object(source, 'pick', pick))
     with contextlib.suppress(EndReplay):
       if source is None:
         module.main(demo=True)
@@ -383,7 +457,10 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
   (output / f'{name}.rlog').write_bytes(b''.join(messages))
   (output / f'{name}.wire').write_bytes(b''.join(struct.pack('<I', len(w)) + w for w in wire_log))
   (output / f'{name}.meta').write_bytes(b''.join(metadata_log))
-  (output / f'{name}.health.json').write_text(json.dumps(health_replay(messages, rows)) + '\n')
+  events = health_replay(messages, rows)
+  if expected_events is not None:
+    assert events == expected_events[:len(rows)], (name, events)
+  (output / f'{name}.health.json').write_text(json.dumps(events) + '\n')
   for i, row in enumerate(rows):
     group = [messaging.log_from_bytes(data) for data in messages[i * 4:i * 4 + 4]]
     assert [m.which() for m in group] == ['modelV2', 'drivingModelData', 'cameraOdometry', 'modelDataV2SP']
@@ -391,17 +468,20 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
     assert m.modelV2.frameId == d.drivingModelData.frameId == p.cameraOdometry.frameId == row['frameId']
     assert m.modelV2.timestampEof == p.cameraOdometry.timestampEof == row['EOF']
     assert m.modelV2.big == d.drivingModelData.big == (row['source'] == 'phone')
-    delta = row['weight'] * .1
+    delta = (.1 + row['frameId'] * .0001 if scenarios[i] == 'burst' else .1) if row['source'] == 'phone' else 0
     assert abs(m.modelV2.position.y[0] - delta) < 1e-6
     assert abs(m.modelV2.leadsV3[0].x[0] - 30 - delta) < 1e-5
     assert abs(p.cameraOdometry.trans[0] - delta) < 1e-6
-    expected_curvature = (.01 + delta) / 400 if action_width else 0
+    expected_curvature = (.01 + delta) / 400 if action_width or row['source'] == 'phone' else 0
     assert abs(m.modelV2.action.desiredCurvature - expected_curvature) < 1e-6
+    if raw_predictions:
+      assert m.modelV2.rawPredictions == raw_output(delta).tobytes(), (name, i, row['source'])
     clipped, _ = clip_curvature(20, 0, m.modelV2.action.desiredCurvature, 0)
     assert abs(clipped) <= 5 / 400 * .01
   if paced:
     intervals = np.diff([r['host_publish_ns'] for r in rows]) / 1e9
-    assert abs(np.mean(intervals) - .05) < .005 and max(intervals) < .1, intervals
+    slowest = int(np.argmax(intervals))
+    assert abs(np.mean(intervals) - .05) < .005 and max(intervals) < .1, (name, max(intervals), rows[slowest:slowest + 2])
   return rows, messages
 
 
@@ -417,23 +497,27 @@ def main():
   baseline = types.ModuleType('baseline_modeld')
   exec(compile(baseline_code, 'baseline_modeld.py', 'exec'), baseline.__dict__)
   (out / 'baseline_modeld.py').write_bytes(baseline_code)
-  rows, reference = replay(baseline, out, 'baseline', ['absent'] * 60)
-  replay_rows, actual = replay(modeld, out, 'disabled', ['absent'] * 60)
+  rows, reference = replay(baseline, out, 'baseline', ['absent'] * 60, raw_predictions=False)
+  baseline_events = json.loads((out / 'baseline.health.json').read_text())
+  replay_rows, actual = replay(modeld, out, 'disabled', ['absent'] * 60, expected_events=baseline_events, raw_predictions=False)
   assert reference == actual, 'default modeld output changed'
+  rows.extend(replay_rows)
+  replay_rows, reference_raw = replay(baseline, out, 'baseline_raw', ['absent'] * 60)
+  rows.extend(replay_rows)
+  replay_rows, actual = replay(modeld, out, 'disabled_raw', ['absent'] * 60, expected_events=baseline_events)
+  assert reference_raw == actual
   rows.extend(replay_rows)
   covered = []
   ctx = multiprocessing.get_context('fork')
   with tempfile.TemporaryDirectory() as directory:
-    def execute(name, scenarios, epoch=1, decoder=decode, admission=admit, paced=False, stall=False, action_width=2):
+    def execute(name, scenarios, epoch=1, decoder=decode, admission=admit, paced=False, action_width=2, frame_offset=0):
       source = ModelSource(directory, decoder, admission)
       parent, child = ctx.Pipe()
       process = ctx.Process(target=peer, args=(source.path, child))
       process.start()
       try:
-        if stall:
-          parent.send('stall')
-          assert parent.poll(2) and parent.recv() == 'frozen'
-        records, _ = replay(modeld, out, name, scenarios, source, parent, epoch, paced=paced, action_width=action_width)
+        records, _ = replay(modeld, out, name, scenarios, source, parent, epoch, paced=paced, action_width=action_width,
+                            frame_offset=frame_offset, expected_events=baseline_events)
         rows.extend(records)
         return records, source
       finally:
@@ -442,7 +526,7 @@ def main():
         source.close()
 
     for case in ('magic', 'version', 'type', 'flags', 'length', 'truncated', 'oversized',
-                 'nan', 'inf', 'zero', 'session', 'epoch_zero', 'ipc_flags', 'frame', 'eof', 'future', 'future_eof',
+                 'nan', 'inf', 'zero', 'session', 'epoch_zero', 'ipc_flags', 'frame', 'eof', 'future',
                  'jump_plan', 'jump_lead', 'jump_pose', 'jump_action'):
       records, source = execute(case, ['good'] * 10 + [case] + ['good'] * 8)
       assert records[9]['source'] == 'phone'
@@ -450,7 +534,7 @@ def main():
       assert source.locked, case
       covered.append(case)
     execute('absent', ['absent'] * 60)
-    assert (out / 'absent.rlog').read_bytes() == (out / 'baseline.rlog').read_bytes()
+    assert (out / 'absent.rlog').read_bytes() == (out / 'baseline_raw.rlog').read_bytes()
     records, _ = execute('stock_action_mean_sigma', ['good'] * 15, action_width=4)
     assert records[-1]['source'] == 'phone'
     records, _ = execute('stock_plan_action', ['good'] * 15, action_width=0)
@@ -461,8 +545,16 @@ def main():
     for case in ('reset', 'zero_pair', 'unpaired'):
       records, _ = execute(case, [case] + ['good'] * 10)
       assert all(r['source'] == 'local' for r in records[:5])
-    records, _ = execute('replay', ['good'] * 10 + ['replay'])
-    assert records[-1]['source'] == 'local'
+    records, source = execute('replay', ['good'] * 10 + ['replay'] + ['good'] * 10)
+    assert records[10]['source'] == 'local' and records[-1]['source'] == 'phone' and not source.locked
+    records, source = execute('camera_restart', ['good'] * 10 + ['camera_restart'] + ['good'] * 10)
+    assert records[9]['frameId'] == 10 and records[10]['frameId'] == 1
+    assert all(r['source'] == 'local' for r in records[10:15])
+    assert records[15]['source'] == 'phone' and not source.locked
+    for case in ('early', 'future_eof'):
+      records, source = execute(case, ['good'] * 10 + [case] + ['good'] * 10)
+      assert records[10]['source'] == 'local' and records[-1]['source'] == 'phone' and not source.locked
+      assert records[10]['reject_reason'] == 'arrival_before_eof'
     records, _ = execute('partial', ['good'] * 10 + ['partial'] + ['good'] * 10)
     assert records[10]['source'] == 'local' and records[-1]['source'] == 'phone'
     records, _ = execute('epochs', ['good'] * 10 + [('good', 2)] * 10 + [('good', 1)] + [('good', 2)] * 10)
@@ -471,14 +563,28 @@ def main():
     assert records[20]['reject_reason'] == 'old_epoch'
     records, source = execute('reset_same_epoch', ['good'] * 10 + ['reset'] + ['good'] * 10)
     assert source.locked and all(r['source'] == 'local' for r in records[10:])
-    records, _ = execute('burst', ['burst'] * 15)
+    records, _ = execute('burst', ['good'] * 10 + ['burst', 'queued'] + ['good'] * 10, frame_offset=200)
+    assert records[10]['source'] == 'phone' and records[11]['source'] == 'local'
     assert records[-1]['source'] == 'phone'
     records, _ = execute('deadline', ['good'] * 10 + ['deadline', 'past_deadline'])
     assert records[-2]['source'] == 'phone' and records[-1]['source'] == 'local'
     records, _ = execute('stale', ['absent'] * 10 + ['stale'] + ['good'] * 10)
     assert records[10]['source'] == 'local' and records[-1]['source'] == 'phone'
-    records, _ = execute('stall_200ms', ['absent'] * 5 + ['good'] * 55, paced=True, stall=True)
+    records, _ = execute('stall_200ms', ['good'] * 10 + ['stall_active'] + ['absent'] * 5 + ['good'] * 44, paced=True)
+    assert records[9]['source'] == 'phone' and all(r['source'] == 'local' for r in records[10:16])
     assert records[-1]['source'] == 'phone'
+    records, _ = execute('candidate_lock', ['good'] * 10 + ['hold'] + ['good'] * 10, paced=True)
+    assert records[9]['source'] == 'phone' and records[10]['source'] == 'local' and records[-1]['source'] == 'phone'
+    records, source = execute('after_pick', ['good'] * 10 + ['after_pick', 'queued'] + ['good'] * 10)
+    assert all(r['source'] == 'local' for r in records[10:12]) and records[-1]['source'] == 'phone' and not source.locked
+
+    def corrupt_local(local, remote):
+      for value in local.values():
+        value[:] = 1000
+      return False
+
+    execute('adapter_mutation', ['good'] * 12, admission=corrupt_local)
+    assert (out / 'adapter_mutation.rlog').read_bytes() == b''.join(reference_raw[:48])
     records, _ = execute('unqualified', ['good'] * 12, admission=lambda a, b: False)
     assert all(r['source'] == 'local' for r in records)
     for case, decoder in [('shape', lambda raw: decode(raw) | {'pose': np.ones((1, 5))}),
@@ -504,13 +610,56 @@ def main():
     process.start()
     parent.send('freeze')
     assert parent.poll(2) and parent.recv() == 'frozen'
-    records, _ = replay(modeld, out, 'frozen', ['absent'] * 60, source, paced=True)
+    records, _ = replay(modeld, out, 'frozen', ['absent'] * 60, source, paced=True, expected_events=baseline_events)
     rows.extend(records)
     process.kill()
     process.join(2)
-    records, _ = replay(modeld, out, 'crashed', ['absent'] * 60, source, paced=True)
+    records, _ = replay(modeld, out, 'crashed', ['absent'] * 60, source, paced=True, expected_events=baseline_events)
     rows.extend(records)
     source.close()
+    # A killed host leaves its file; a new host in the same private directory removes it.
+    parent, child = ctx.Pipe()
+
+    def abandoned_host():
+      ModelSource(directory, decode, admit)
+      child.send('ready')
+      child.recv()
+
+    process = ctx.Process(target=abandoned_host)
+    process.start()
+    assert parent.poll(2) and parent.recv() == 'ready'
+    process.kill()
+    process.join(2)
+    assert process.exitcode == -9
+    stale = set(Path(directory).glob('model-source-*'))
+    assert len(stale) == 1
+    source = ModelSource(directory, decode, admit)
+    assert not any(p.exists() for p in stale)
+    source.close()
+    for target in ('os.ftruncate', 'mmap.mmap'):
+      opened = []
+      mkstemp = tempfile.mkstemp
+
+      def track_mailbox(*args, _mkstemp=mkstemp, _opened=opened, **kwargs):
+        result = _mkstemp(*args, **kwargs)
+        _opened.append(result)
+        return result
+
+      with (patch('openpilot.tesla.model_source.tempfile.mkstemp', track_mailbox),
+            patch('openpilot.tesla.model_source.' + target, side_effect=OSError('injected'))):
+        try:
+          ModelSource(directory, decode, admit)
+          raise AssertionError('mailbox failure was swallowed')
+        except OSError as error:
+          assert str(error) == 'injected'
+      fd, path = opened[0]
+      assert not Path(path).exists()
+      try:
+        os.fstat(fd)
+        raise AssertionError('mailbox fd leaked')
+      except OSError:
+        pass
+    (out / 'mailbox-lifecycle.json').write_text(json.dumps({'stale_cleaned': True, 'ftruncate_cleaned': True, 'mmap_cleaned': True}) + '\n')
     # The actual discovery path must reject an old host before it loses the default role.
     from openpilot.tesla import plugins
     plugin_path = Path(directory) / 'entry_probe'
@@ -547,6 +696,11 @@ class Candidate(Plugin):
             'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
             'cases': ['F1', 'F2 host readiness', 'F3 host IPC/wire', 'F4', 'F5', 'F6', 'F7 host child', 'F8', 'F9', 'F13 host'],
             'malformed_cases': covered, 'frames': len(rows), 'default_byte_identical': True,
+            'round1': {'whole_frame_and_raw_match': True, 'adapter_fallback_unchanged': True,
+                       'frame_regression_rewarms': True, 'early_arrival_recovers': True,
+                       'active_candidate_lock_fallback': True, 'post_pick_reply_rejected_next_frame': True,
+                       'stall_starts_active': True, 'all_event_lists_equal_baseline': True,
+                       'burst_distinct_frames': 200, 'burst_newest_only': True, 'mailbox_failure_and_sigkill_cleanup': True},
             'source_sha256': {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in
                               ('openpilot/selfdrive/modeld/modeld.py', 'openpilot/tesla/model_source.py',
                                'tools/sp_tesla_e2e/model_source_e2e.py', 'XPILOT.md')},
@@ -554,7 +708,7 @@ class Candidate(Plugin):
             'host_cadence': {case: {'frames': len(selected),
                                     'mean_ms': float(np.mean(np.diff(selected)) / 1e6),
                                     'max_ms': float(max(np.diff(selected)) / 1e6)}
-                             for case in ('frozen', 'crashed', 'stall_200ms')
+                             for case in ('frozen', 'crashed', 'stall_200ms', 'candidate_lock')
                              if (selected := [r['host_publish_ns'] for r in rows if r['case'] == case])},
             'limits': ['synthetic inference/VisionIPC and deterministic BOOTTIME', 'no phone QNN, TCP/HEVC or device execution',
                        'real modeld postprocessing, Capnp/msgq and selfdrived.update_events; unrelated car/device inputs are healthy fixtures']}

@@ -10,6 +10,7 @@ The child opens path itself; it never holds a VisionBuf or a cereal publisher.
 import fcntl
 import mmap
 import os
+from pathlib import Path
 import secrets
 import struct
 import tempfile
@@ -41,14 +42,20 @@ class ModelSource:
   def __init__(self, directory, decode, admit):
     # Only bounded, pure Python adapters belong here; native/network work stays in the child.
     self.decode, self.admit = decode, admit
+    for stale in Path(directory).glob('model-source-*'):
+      stale.unlink()
     self.fd, self.path = tempfile.mkstemp(prefix='model-source-', dir=directory)
-    os.ftruncate(self.fd, SIZE)
-    self.buffer = mmap.mmap(self.fd, SIZE)
+    try:
+      os.ftruncate(self.fd, SIZE)
+      self.buffer = mmap.mmap(self.fd, SIZE)
+    except BaseException:
+      os.close(self.fd)
+      os.unlink(self.path)
+      raise
     self.buffer[:] = bytes(SIZE)
     self.session = secrets.randbits(64)
     self.epoch = self.last_frame = self.fresh = self.arrival_ns = 0
     self.frame = self.eof = 0
-    self.weight = 0.
     self.selected = self.locked = self.sent = False
     self.reason = 'absent'
 
@@ -73,6 +80,8 @@ class ModelSource:
       fcntl.lockf(self.fd, fcntl.LOCK_UN, size, offset)
 
   def send_frame(self, main, extra, transforms, inputs, prev_desire):
+    if main.frame_id < self.frame:
+      self.epoch = self.last_frame = self.fresh = 0
     self.frame, self.eof = main.frame_id, main.timestamp_eof
     pulse = np.where(inputs['desire_pulse'] - prev_desire > .99, inputs['desire_pulse'], 0).copy()
     pulse[0] = 0
@@ -85,7 +94,6 @@ class ModelSource:
     self.reason = reason
     self.locked |= lock
     self.fresh = 0
-    self.weight = 0.
     return None
 
   def _candidate(self, local):
@@ -113,20 +121,21 @@ class ModelSource:
     if (magic, version, kind, length) != (b'BGM1', 2, 0x11, 8280) or flags & ~3:
       return self._reject('wire_abi', True)
     now = nanos_since_boot()
-    if eof > now or arrival > now or arrival < eof:
+    if arrival < eof:
+      return self._reject('arrival_before_eof')
+    if eof > now or arrival > now:
       return self._reject('future_timestamp', True)
-    if frame < self.frame:
-      return self._reject('replay', True) if frame <= self.last_frame and epoch == self.epoch else self._reject('old_frame')
+    if frame < self.frame or (frame > self.frame and eof < self.eof):
+      return self._reject('old_frame')
     if frame != self.frame or eof != self.eof:
       return self._reject('frame_eof', True)
     if frame <= self.last_frame and epoch == self.epoch:
-      return self._reject('replay', True)
+      return self._reject('replay')
     if now > eof + DEADLINE_NS or arrival > eof + DEADLINE_NS:
       return self._reject('late')
     new_epoch = epoch > self.epoch
     if new_epoch:
       self.epoch, self.fresh, self.last_frame = epoch, 0, 0
-      self.weight = 0.
       if paired != 3:
         return self._reject('need_dual_idr')
     if paired != 3:
@@ -140,14 +149,14 @@ class ModelSource:
     if not np.isfinite(raw).all() or not np.any(raw):
       return self._reject('raw_values', True)
     try:
-      remote = self.decode(raw)
+      remote = self.decode(raw.copy())
       shapes = HEAD_SHAPES | ({'action': (1, 2)} if 'action' in remote else {})
       if any(k not in remote or remote[k].shape != shape or not np.isfinite(remote[k]).all() for k, shape in shapes.items()):
         return self._reject('head_shape_values', True)
-      local_heads = {k: local[k] for k in HEAD_SHAPES}
+      local_heads = {k: local[k].copy() for k in HEAD_SHAPES}
       if 'action' in local:
         # Stock get_action_from_model reads only the first two means, even with log-sigma present.
-        local_heads['action'] = local['action'][:, :2]
+        local_heads['action'] = local['action'][:, :2].copy()
         if 'action' not in remote:
           return self._reject('local_profile', True)
       if not self.admit(local_heads, remote):
@@ -158,19 +167,14 @@ class ModelSource:
       return self._reject('late')
     if self.last_frame and frame != self.last_frame + 1:
       self.fresh = 0
-      self.weight = 0.
     self.last_frame = frame
     self.fresh += 1
     if self.fresh <= 5:
       self.reason = 'warmup'
       return None
-    self.weight = min(1., self.weight + .2)
     self.reason = ''
-    # Only the current pair is blended. A missing candidate never retains a remote leg.
-    output = {k: v * (1 - self.weight) + remote[k] * self.weight for k, v in local_heads.items()}
-    if 'raw_pred' in local:
-      output['raw_pred'] = raw
-    return output
+    remote['raw_pred'] = raw
+    return remote
 
   def pick(self, local):
     remote = self._candidate(local)
