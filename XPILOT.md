@@ -343,9 +343,11 @@ app 固件专用 CAPS/STATUS/BEGIN/COMMIT/CLEAR 及 EP2 64 字节记录见合同
 
 已配置后的行驶中不自动重新 arming，也不因 Panda 退到 SILENT、复位或 NO_OUTPUT 而重装；模式不匹配继续交给 selfdrived 处理。规则变更只在正常 offroad→onroad 初始化序列装载，包含停车期间的 Panda 复位。observe_can 的即时发送和控制发送都受 `core_alive` 门控。arming、行程状态和故障检查保留 10 Hz；只有上传进行中才在 100 Hz 推进一步，每循环最多一条 EP2 记录，空闲快速入口直接返回，不读 health/Params。心跳保持 10 Hz；总期限两秒，相关传输限时 5 ms。SPI 的单次传输计时排除等待总线锁的时间，总上传期限仍计算实际墙钟时间。CAPS 失败绝不写 EP2；STATUS 要独立核对 state/error/CRC/length/count。
 
-生产固件只包含 `xpilot_rules.h` 引擎。`auto_speed.h`、`ambient_light.h`、`registry.h`、`gen_safety.py`、`safety.json` 暂留作测试 oracle/迁移参考，不再授予生产发送权限。X-33 落地、差分门通过后另行删除，不能在本任务删除。navassist oracle 固定为 Sniper-Eon/xpilot `ab3535b5a4acbf318c55005868d37ed19e2cf77d` 的测试 fixture，唯一故意差异是 cancel 会话豁免。
+生产固件只包含 `xpilot_rules.h` 引擎。`auto_speed.h`、`ambient_light.h`、`registry.h`、`gen_safety.py`、`safety.json` 暂留作测试 oracle/迁移参考，不再授予生产发送权限。X-33 落地、差分门通过后另行删除，不能在本任务删除。navassist oracle 固定为 Sniper-Eon/xpilot `ab3535b5a4acbf318c55005868d37ed19e2cf77d` 的测试 fixture，故意差异包括 cancel 会话豁免、tick 锁定过期状态以避免整圈计时器回绕后复活或停顿，以及拒绝 CAN ID 类型不匹配的帧。
 
-检查：`test_xpilot_rules.py`（失败矩阵 R1–R13、真实 C 引擎和 app loader、旧头文件差分）、`test_xpilot_plugins.py`、全部 opendbc safety、cppcheck MISRA、可用时 mutation、F4/H7/body 构建与 RAM/flash 对照。运行 `XPILOT_RULES_ARTIFACT=<路径> PYTHONPATH=opendbc_repo python -m unittest opendbc.safety.tests.test_xpilot_rules` 保存可重复的流摘要。主机检查、固件构建、设备 active commit 和刷写分别报告；本任务无设备访问。
+1 Hz `safety_tick` 将过期模板置为无效，达到最小间隔后清除 TX 标记，idle/window 到期后清零会话计数；时间戳保留用于 tick 之间的边界检查。模板只能由匹配的车端 RX 刷新，宿主不能刷新。RX/TX 的标准帧或扩展帧类型必须与地址范围一致。
+
+检查：`test_xpilot_rules.py`（失败矩阵 R1–R17、真实 C 引擎和 app loader、旧头文件差分）、`test_xpilot_plugins.py`、全部 opendbc safety、cppcheck MISRA、可用时 mutation、F4/H7/body 构建与 RAM/flash 对照。运行 `XPILOT_RULES_ARTIFACT=<路径> PYTHONPATH=opendbc_repo python -m unittest opendbc.safety.tests.test_xpilot_rules` 保存可重复的流摘要。主机检查、固件构建、设备 active commit 和刷写分别报告；本任务无设备访问。
 
 Tesla 接管例外（用户 2026-10-25 决定）：`safety.h` 的最低频率检查遵守 `ignore_frequency_check`，时效、校验和、计数器和质量检查不变；SP 扩展允许原车 Autosteer 设置（mixed AP），以后由 mixed AP 插件接管，不改上游 `carstate.py` 或 panda 的 Autosteer 安全逻辑。
 

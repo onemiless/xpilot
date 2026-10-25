@@ -278,12 +278,34 @@ static bool xpilot_checksum(const uint8_t *data, uint8_t length, uint32_t addr, 
   return valid;
 }
 
+static void xpilot_rules_tick(uint32_t now) {
+  for (uint8_t i = 0U; i < XPILOT_RULES_MAX; i++) {
+    if (i < xpilot_rule_count) {
+      const uint8_t *r = &xpilot_rule_table[xpilot_rule_offsets[i]];
+      XpilotRuleState *s = &xpilot_rule_states[i];
+      if (safety_get_ts_elapsed(now, s->template_ts) > xpilot_read_le(&r[16], 4U)) {
+        s->template_valid = false;
+      }
+      if (safety_get_ts_elapsed(now, s->last_tx) >= xpilot_read_le(&r[20], 4U)) {
+        s->tx_valid = false;
+      }
+      const bool idle = r[24] == 1U;
+      const uint32_t period = xpilot_read_le(&r[idle ? 28U : 32U], 4U);
+      if (safety_get_ts_elapsed(now, idle ? s->last_tx : s->session_ts) >= period) {
+        s->count = 0U;
+      }
+    }
+  }
+}
+
 static void xpilot_rules_rx(const CANPacket_t *msg) {
   if ((current_safety_mode == SAFETY_TESLA) && tesla_has_vehicle_bus) {
     for (uint8_t i = 0U; i < XPILOT_RULES_MAX; i++) {
       if (i < xpilot_rule_count) {
         const uint8_t *r = &xpilot_rule_table[xpilot_rule_offsets[i]];
-        if ((msg->addr == xpilot_read_le(&r[8], 4U)) && (msg->bus == r[13]) && (GET_LEN(msg) == r[15])) {
+        const uint32_t addr = xpilot_read_le(&r[8], 4U);
+        if ((msg->addr == addr) && ((msg->extended != 0U) == (addr > 0x7FFU)) &&
+            (msg->bus == r[13]) && (GET_LEN(msg) == r[15])) {
           bool valid = xpilot_checksum(msg->data, r[15], msg->addr, r[41], r[42]);
           for (uint8_t j = 0U; j < 8U; j++) {
             valid = valid && ((msg->data[j] & r[44U + j]) == r[52U + j]);
@@ -344,7 +366,7 @@ static bool xpilot_rule_tx(const CANPacket_t *msg, const uint8_t *r, XpilotRuleS
   }
   bool new_session = s->count == 0U;
   if (r[24] == 1U) {
-    new_session = new_session || (s->tx_valid && (safety_get_ts_elapsed(now, s->last_tx) >= xpilot_read_le(&r[28], 4U)));
+    new_session = new_session || (safety_get_ts_elapsed(now, s->last_tx) >= xpilot_read_le(&r[28], 4U));
   } else {
     new_session = new_session || (safety_get_ts_elapsed(now, s->session_ts) >= xpilot_read_le(&r[32], 4U));
   }
@@ -372,7 +394,8 @@ static bool xpilot_rules_tx(const CANPacket_t *msg) {
     for (uint8_t i = 0U; i < XPILOT_RULES_MAX; i++) {
       if (i < xpilot_rule_count) {
         const uint8_t *r = &xpilot_rule_table[xpilot_rule_offsets[i]];
-        if ((msg->addr == xpilot_read_le(&r[4], 4U)) && (GET_LEN(msg) == r[14])) {
+        const uint32_t addr = xpilot_read_le(&r[4], 4U);
+        if ((msg->addr == addr) && ((msg->extended != 0U) == (addr > 0x7FFU)) && (GET_LEN(msg) == r[14])) {
           allowed = xpilot_rule_tx(msg, r, &xpilot_rule_states[i]);
         }
       }

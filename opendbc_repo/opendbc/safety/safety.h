@@ -309,11 +309,12 @@ void gen_crc_lookup_table_16(uint16_t poly, uint16_t crc_lut[]) {
   }
 }
 
-// 1Hz safety function called by main. Now just a check for lagging safety messages
+// 1Hz safety function called by main.
 void safety_tick(void) {
   const uint8_t MAX_MISSED_MSGS = 10U;
   bool rx_checks_invalid = false;
   uint32_t ts = microsecond_timer_get();
+  xpilot_rules_tick(ts);
   for (int i=0; i < current_safety_config.rx_checks_len; i++) {
     uint32_t elapsed_time = safety_get_ts_elapsed(ts, current_safety_config.rx_checks[i].status.last_timestamp);
     // lag threshold is max of: 1s and MAX_MISSED_MSGS * expected timestep.
@@ -448,6 +449,7 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
       current_hooks = safety_hook_registry[i].hooks;
       current_safety_mode = mode;
       current_safety_param = param;
+      xpilot_rule_error = 0U;
       if (xpilot_non_car_mode(mode) || (xpilot_rule_status == 1U)) {
         xpilot_rules_clear();
       }

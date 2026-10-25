@@ -57,6 +57,8 @@ header with total length 16/count 0; CLEAR instead reports committed CRC 0.
 Checksum kind: 0 none (byte must be 0), 1 TESLA_SUM8. SUM8 adds all payload bytes
 except checksum_byte and all four address bytes, modulo 256. RX uses RX address,
 TX uses TX address. It has no per-address lookup. Byte must be within frame length.
+RX and TX must also match the CAN ID type: standard for address <= 0x7FF,
+extended for address > 0x7FF.
 Bits use Intel numbering (bit 0 = byte 0 LSB). All masks beyond frame length are 0.
 Each TX bit must belong to exactly one of copy, constant, a field, counter, checksum.
 Counter wraps modulo 2**width and is always template counter + 1, never last TX + 1.
@@ -93,8 +95,12 @@ IDLE starts on first accepted nonexempt TX or an idle gap >= idle_reset_us since
 last accepted TX. Within a session count < max_count and (if enabled) age < max_span_us.
 WINDOW starts on first accepted nonexempt TX; age >= window_us starts a new window.
 Count < max_count within the window. Rejected TX changes no runtime state.
-All elapsed times use uint32 subtraction, including wrap; host must refresh templates
-and reset modes within a timer cycle (no multi-wrap elapsed-time guarantee).
+All elapsed times use uint32 subtraction, including wrap. The 1 Hz safety tick
+permanently invalidates a template once age > TTL, clears the interval marker once
+elapsed >= min_interval_us, and zeros the session count once its IDLE idle period
+or WINDOW period has elapsed. Timestamp values remain available for boundaries
+between ticks. Expired state cannot revive or stall TX after a full timer cycle;
+a template becomes valid again only on matching car RX, never a host refresh.
 
 ## Ownership and gates
 
@@ -250,6 +256,10 @@ bytes, trace.jsonl, native.log, result.json and SHA-256 input identities; no dev
 Production includes only the runtime engine. auto_speed.h, ambient_light.h,
 registry.h, gen_safety.py and safety.json remain solely as differential/reference
 fixtures in this task; delete them after X-33 lands and differential gates pass.
-The pinned navassist header is a test fixture, not production firmware. Its old
-cancel budget consumption is the sole deliberate equivalence difference.
+The pinned navassist header is a test fixture, not production firmware. Deliberate
+differences from the old headers: cancel skips session budget; tick-based expiry
+latches invalidate stale templates and retire expired interval/session markers
+across full timer cycles; mismatched standard/extended CAN ID types are rejected.
+Short-stream verdicts remain equivalent; the tick may clear expired flags/count
+before the old headers' lazy TX checks do. R14-R17 cover the corrected boundaries.
 No signature or network authentication work is included. No device/flash proof.
