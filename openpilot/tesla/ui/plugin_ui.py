@@ -14,6 +14,7 @@ from openpilot.tesla.plugin_params import ParamsView
 from openpilot.tesla.ui import tiles
 from openpilot.tesla.plugins import PLUGINS, resolve, ui_module
 
+HUD_REFRESH_S = 1.0  # s between reads of the saved HUD layout
 MAX_FAILURES = 3  # a widget that raises this many times in a row is not drawn again
 
 
@@ -94,13 +95,17 @@ class Overlays:
     self._entries = [[name, w, 0] for name, w in load(base)]
     self._enabled = EnabledPlugins(params)
     self._layout_params = ParamsView(params, tiles.LAYOUT_SPEC)
+    self._hud, self._hud_t, self._hud_v = {}, -HUD_REFRESH_S, -1
     if base is HudOverlay:
       for name, widget, _ in self._entries:
         widget.plugin_id = name or type(widget).__name__
 
   def render_hud(self, rect) -> None:
     """Apply the persisted HUD rect before Widget.render; hidden overlays never render."""
-    hud = tiles.hud_layout(self._layout_params.get(tiles.LAYOUT_PARAM))
+    now = time.monotonic()
+    if self._hud_v != tiles.layout_version or now - self._hud_t >= HUD_REFRESH_S:  # no Params read every frame
+      self._hud, self._hud_t, self._hud_v = tiles.hud_layout(self._layout_params.get(tiles.LAYOUT_PARAM)), now, tiles.layout_version
+    hud = self._hud
 
     def draw(widget):
       entry = hud.get(widget.plugin_id)

@@ -24,6 +24,7 @@ ACCENT = THEMES["Cobalt"]
 DRIVE_CELLS = (1, 0, 6, 3)  # col, row, cols, rows under the mici driving view
 MICI = (536, 240)
 LAYOUT_PARAM = "XpilotTileLayout"
+layout_version = 0  # bumped on every layout save in this process; HUD readers reload on change
 THEME_PARAM = "XpilotTileTheme"  # a THEMES name
 LAYOUT_SPEC = {LAYOUT_PARAM: {"type": "JSON"}, THEME_PARAM: {"type": "STRING"}}  # kept by plugin_params.ParamsView as files, not compiled params
 

@@ -175,6 +175,7 @@ class BigScreenHost:
       saved["drive"]["view"] = list(self._view_position)
       saved["drive"]["hud"] = self._hud
       self._layout_params.put(LAYOUT_PARAM, saved)
+      tiles.layout_version += 1
     except Exception:
       cloudlog.exception("tile layout not saved")
 
