@@ -95,7 +95,7 @@ def main():
   # Match the parent test's isolated Params boundary in both the readiness and restarted-manager interpreters.
   (support / "sitecustomize.py").write_text("import sys, types\nsys.modules['openpilot.common.params'] = " +
                                          "types.SimpleNamespace(Params=object, UnknownKeyName=KeyError)\n")
-  os.environ["PYTHONPATH"] = os.pathsep.join((str(support), str(ROOT / "opendbc_repo")))
+  os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, (str(support), str(ROOT / "opendbc_repo"), os.environ.get("PYTHONPATH"))))
   site = output / "http"
   site.mkdir(exist_ok=True)
   http.server.SimpleHTTPRequestHandler.log_message = lambda *a: None
