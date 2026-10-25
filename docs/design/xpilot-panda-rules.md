@@ -139,7 +139,7 @@ u16 reserved=0`.
 STATUS: `u32 magic, u16 abi, u8 state (0 EMPTY,1 UPLOADING,2 COMMITTED),
 u8 error, u32 committed_crc32, u16 committed_len, u8 committed_count,
 u8 reserved=0, u16 upload_id, u16 received_len, u16 expected_len,
-u8 expected_count, u8 reserved=0`. After failure committed crc/len/count are zero.
+u8 expected_count, u8 reserved=0`. After upload/validation failure committed crc/len/count are zero.
 Upload IDs increment per BEGIN, skip zero, and are invalidated by CLEAR/mode change.
 
 ## EP2 records
