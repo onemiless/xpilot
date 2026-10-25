@@ -121,6 +121,8 @@ class PluginsPage(Widget):
       page = ListPage()
       for p in plugins:
         summary = f"v{p.MANIFEST.version} - {p.MANIFEST.author or 'unknown'} - {p.DESCRIPTION}"
+        if p.SETTINGS:
+          summary += f"\nTap for settings ({len(p.SETTINGS)})"
         page.add(self.switches.make(p, summary, on_tap=lambda p=p: self._open_plugin(p)))
       for e in entries:
         page.add(InfoRow(lambda e=e: f"{e.name} - {jobs.row_value(jobs.current(e.id) or e)}", f"v{e.version} - {e.author} - {e.description}",
