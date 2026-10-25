@@ -39,6 +39,9 @@ def convert_to_capnp(struct: structs.CarParamsSP | structs.CarStateSP) -> capnp.
   struct_dict = asdictref(struct)
 
   if isinstance(struct, structs.CarParamsSP):
+    if not 0 <= struct.safetyParam <= 0xFFFF:
+      raise ValueError(f"CarParamsSP.safetyParam must be in 0..0xFFFF, got {struct.safetyParam}")
+    struct_dict['safetyParam'] = struct.safetyParam if struct.safetyParam < 0x8000 else struct.safetyParam - 0x10000
     struct_capnp = custom.CarParamsSP.new_message(**struct_dict)
   elif isinstance(struct, structs.CarStateSP):
     struct_capnp = custom.CarStateSP.new_message(**struct_dict)
