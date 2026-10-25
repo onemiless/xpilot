@@ -1,12 +1,12 @@
 #include "system/loggerd/encoder/encoder.h"
 
-VideoEncoder::VideoEncoder(const EncoderInfo &encoder_info, int in_width, int in_height)
+VideoEncoder::VideoEncoder(const EncoderInfo &encoder_info, int in_width, int in_height, bool publish)
     : encoder_info(encoder_info), in_width(in_width), in_height(in_height) {
 
   out_width = encoder_info.frame_width > 0 ? encoder_info.frame_width : in_width;
   out_height = encoder_info.frame_height > 0 ? encoder_info.frame_height : in_height;
 
-  pm.reset(new PubMaster(std::vector{encoder_info.publish_name}));
+  if (publish) pm.reset(new PubMaster(std::vector{encoder_info.publish_name}));
 }
 
 void VideoEncoder::publisher_publish(int segment_num, uint32_t idx, VisionIpcBufExtra &extra,
