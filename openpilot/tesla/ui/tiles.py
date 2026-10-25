@@ -114,8 +114,8 @@ def hud_buttons(boxes, view) -> dict:
       ys.update((py - bh - gap, py + ph + gap))
     candidates = sorted(((cx, cy) for cx in xs for cy in ys if vx <= cx <= vx + vw - bw and vy <= cy <= vy + vh - bh),
                         key=lambda p: (abs(p[0] - bx) + abs(p[1] - by), p[1], p[0]))
-    cx, cy = next((cx, cy) for cx, cy in candidates
-                  if all(cx + bw <= px or px + pw <= cx or cy + bh <= py or py + ph <= cy for px, py, pw, ph in out.values()))
+    cx, cy = next(((cx, cy) for cx, cy in candidates
+                  if all(cx + bw <= px or px + pw <= cx or cy + bh <= py or py + ph <= cy for px, py, pw, ph in out.values())), (bx, by))  # no free spot: keep the corner, never crash the editor
     out[name] = (cx, cy, bw, bh)
   return out
 
