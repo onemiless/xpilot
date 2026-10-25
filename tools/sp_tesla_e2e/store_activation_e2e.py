@@ -491,8 +491,8 @@ raise AssertionError(f'kill point not reached: {point}: {error}')
 
   def startup_order():
     manager = ast.parse((ROOT / "openpilot/system/manager/manager.py").read_text())
-    recovery = next(i for i, n in enumerate(manager.body) if isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
-                    and isinstance(n.value.func, ast.Name) and n.value.func.id == "recover")
+    recovery = next(i for i, n in enumerate(manager.body) if any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                    and c.func.id == "recover" for c in ast.walk(n)))
     discovery = next(i for i, n in enumerate(manager.body) if isinstance(n, ast.ImportFrom)
                      and n.module == "openpilot.system.manager.process_config")
     assert recovery < discovery, "manager imports/discovers plugins before recovery"
