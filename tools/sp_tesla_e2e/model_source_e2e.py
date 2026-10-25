@@ -15,6 +15,10 @@ F13 trajectory/lead/pose/action jumps fail admission; whole-frame source, includ
 Round 1: adapter mutation cannot alter fallback; camera regression rewarms; early arrival
 is frame-only rejection; failed init and SIGKILL leave no mailbox leaks. Candidate lock,
 post-pick arrival and 200ms stall occur after Phone active. Burst frames/data are distinct.
+Bounded wait: no peer/lock/cold source never sleeps; engaged +35ms adopts after warm-up;
++60ms falls back without locking; short gaps preserve warm-up, long gaps rewarm.
+Transient absent/old_frame/ipc_busy polls preserve progress; EOF+45ms bounds waiting
+and the timed 50ms camera replay must publish every frame before the next EOF.
 
 The replay executes unmodified main() and all real postprocessing/serialization. Only
 VisionIPC, inference and input services are deterministic doubles. BGM1 peer is a
@@ -68,6 +72,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature
 from openpilot.selfdrive.selfdrived.selfdrived import SelfdriveD
 from openpilot.selfdrive.selfdrived.events import Events, ET
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
+from openpilot.tesla.model_source import nanos_since_boot
 from opendbc.car.structs import car
 
 META = struct.Struct('<4sIQIIQQ30f')
@@ -241,6 +246,13 @@ def peer(path, conn):
     if scenario == 'oversized':
       wire += b'x'
     data = ENVELOPE.pack(session, epoch, arrival, paired, len(wire)) + wire
+    if scenario.startswith('phone_'):
+      delay_ms = int(scenario.split('_')[1])
+      if scenario.endswith('_busy'):
+        fcntl.lockf(fd, fcntl.LOCK_EX, SIZE - OFFSET, OFFSET)
+      conn.send(('scheduled', META.pack(*meta)))
+      time.sleep(max(0, (eof + delay_ms * 1_000_000 - nanos_since_boot()) / 1e9))
+      data = ENVELOPE.pack(session, epoch, nanos_since_boot(), paired, len(wire)) + wire
     if scenario == 'replay':
       data = saved
     if scenario == 'partial':
@@ -271,7 +283,7 @@ class EndReplay(Exception):
 
 
 def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, local_failure=None, paced=False, action_width=2,
-           frame_offset=0, expected_events=None, raw_predictions=True):
+           frame_offset=0, expected_events=None, raw_predictions=True, realtime=False):
   clock = types.SimpleNamespace(now=1_000_000_000)
   rows, messages, wire_log, metadata_log, subscribers = [], [], [], [], []
   local_runs = []
@@ -281,7 +293,35 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
   camera_frame = camera_eof = 0
   expected = None
   pick_ns = 0
+  sleep_ns = 0
+  pick_clock_ns = 0
+  pick_end = 0
   wall_start = time.monotonic()
+  boot_start = nanos_since_boot()
+
+  def now():
+    if realtime:
+      clock.now = nanos_since_boot()
+    return clock.now
+
+  def sleep(seconds):
+    nonlocal sleep_ns
+    sleep_ns += round(seconds * 1e9)
+    if realtime:
+      time.sleep(seconds)
+    else:
+      clock.now += round(seconds * 1e9)
+
+  def record_peer(reply):
+    wire, meta = reply
+    if isinstance(wire, list):
+      assert len(wire) == 200
+      assert len({struct.unpack_from('<I', w, ENVELOPE.size + 8)[0] for w in wire}) == 200
+      assert len({w[ENVELOPE.size + 24:ENVELOPE.size + 8288] for w in wire}) == 200
+      wire_log.extend(wire)
+    elif wire:
+      wire_log.append(wire)
+    metadata_log.append(meta)
 
   def stock_probe():
     assert source is None, 'stock entry probed Chestnut/phone USB'
@@ -313,6 +353,9 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
           frame_origin = current - 1
         camera_frame = current - frame_origin + frame_offset
         camera_eof = 1_000_000_000 + (current + frame_offset) * 50_000_000
+        if realtime:
+          camera_eof = boot_start + current * 50_000_000
+          assert now() < camera_eof + 50_000_000, 'next camera frame was dropped'
         clock.now = camera_eof + 20_000_000
       self.frame_id = camera_frame
       self.timestamp_sof = camera_eof
@@ -342,17 +385,17 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       pulse[0] = 0
       expected = np.concatenate([pulse, inputs['traffic_convention'], inputs['action_t']])
       if conn is not None and scenario not in ('absent', 'after_pick', 'queued'):
-        conn.send((scenario, frame_epoch, clock.now, expected))
-        assert conn.poll(2), 'fake peer stalled'
-        wire, meta = conn.recv()
-        if isinstance(wire, list):
-          assert len(wire) == 200
-          assert len({struct.unpack_from('<I', w, ENVELOPE.size + 8)[0] for w in wire}) == 200
-          assert len({w[ENVELOPE.size + 24:ENVELOPE.size + 8288] for w in wire}) == 200
-          wire_log.extend(wire)
-        elif wire:
-          wire_log.append(wire)
-        metadata_log.append(meta)
+        conn.send((scenario, frame_epoch, now(), expected))
+        while True:
+          assert conn.poll(2), 'fake peer stalled'
+          reply = conn.recv()
+          if reply[0] == 'scheduled':
+            break
+          record_peer(reply)
+          if not scenario.startswith('phone_'):
+            break
+      if realtime:
+        time.sleep(max(0, (camera_eof + 20_000_000 - now()) / 1e9))
       if scenario == 'late':
         clock.now += 30_000_000
       if scenario == 'past_deadline':
@@ -399,16 +442,18 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
         selected = 'phone' if source is not None and source.selected else 'local'
         rows.append({'case': name, 'epoch': source.epoch if source else 0, 'frameId': camera_frame,
                      'EOF': camera_eof,
-                     'arrival': source.arrival_ns if source else 0, 'publish': clock.now, 'source': selected,
+                     'arrival': source.arrival_ns if source else 0, 'publish': now(), 'source': selected,
                      'reject_reason': source.reason if source else '', 'pick_ns': pick_ns,
+                     'pick_clock_ns': pick_clock_ns, 'pick_end': pick_end,
+                     'sleep_ns': sleep_ns, 'fresh': source.fresh if source else 0,
                      'host_publish_ns': time.monotonic_ns() if paced else 0})
         scenario = scenarios[current - 1]
         if scenario == 'hold':
-          assert source.reason == 'ipc_busy' and pick_ns < 20_000_000
+          assert source.reason == 'ipc_busy' and pick_clock_ns <= 25_000_000
           conn.send('release')
           assert conn.poll(2) and conn.recv() == 'released'
         if scenario == 'stall_active':
-          assert source.reason == 'ipc_busy' and pick_ns < 20_000_000
+          assert source.reason == 'ipc_busy' and pick_clock_ns <= 25_000_000
         if scenario == 'after_pick':
           assert not source.selected
           conn.send(('good', epoch, clock.now, expected))
@@ -416,15 +461,24 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
           wire, meta = conn.recv()
           wire_log.append(wire)
           metadata_log.append(meta)
+        if realtime and conn is not None:
+          while conn.poll():
+            record_peer(conn.recv())
 
   if source is not None:
     original_pick = source.pick
 
     def pick(local):
-      nonlocal pick_ns
+      nonlocal pick_ns, sleep_ns, pick_clock_ns, pick_end
+      sleep_ns = 0
+      before = now()
       started = time.perf_counter_ns()
       result = original_pick(local)
       pick_ns = time.perf_counter_ns() - started
+      pick_end = now()
+      pick_clock_ns = pick_end - before
+      if not realtime:
+        assert pick_clock_ns <= max(0, camera_eof + 45_000_000 - before)
       if result[1]:
         scenario = scenarios[current - 1]
         delta = .1 + camera_frame * .0001 if scenario == 'burst' else .1
@@ -439,19 +493,23 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
                         'chestnut_compiled': stock_probe, 'chestnut_present': lambda: False,
                         'cable_connected': lambda: source is not None,
                         'get_warp_matrix': lambda *args: np.eye(3, dtype=np.float32),
-                        'time': types.SimpleNamespace(monotonic=lambda: clock.now / 1e9, perf_counter=lambda: clock.now / 1e9),
+                        'time': types.SimpleNamespace(monotonic=lambda: now() / 1e9, perf_counter=lambda: now() / 1e9),
                         'get_demo_car_params': lambda: types.SimpleNamespace(longitudinalActuatorDelay=.2, brand='tesla')}.items():
       stack.enter_context(patch.object(module, attr, value))
-    stack.enter_context(patch.object(messaging, 'new_message', lambda s, **kw: original_new_message(s, logMonoTime=clock.now, **kw)))
+    stack.enter_context(patch.object(messaging, 'new_message', lambda s, **kw: original_new_message(s, logMonoTime=now(), **kw)))
     stack.enter_context(patch('openpilot.selfdrive.modeld.fill_model_msg.SEND_RAW_PRED', raw_predictions))
     if source is not None:
-      stack.enter_context(patch('openpilot.tesla.model_source.nanos_since_boot', lambda: clock.now))
+      stack.enter_context(patch('openpilot.tesla.model_source.nanos_since_boot', now))
+      stack.enter_context(patch('openpilot.tesla.model_source.time', types.SimpleNamespace(**(vars(time) | {'sleep': sleep}))))
       stack.enter_context(patch.object(source, 'pick', pick))
     with contextlib.suppress(EndReplay):
       if source is None:
         module.main(demo=True)
       else:
         module.run_with_model_source(source, demo=True)
+  if realtime and conn is not None:
+    while conn.poll(.1):
+      record_peer(conn.recv())
   assert len(local_runs) == len(scenarios)
   assert len(messages) == 4 * len(scenarios)
   (output / f'{name}.rlog').write_bytes(b''.join(messages))
@@ -468,6 +526,9 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
     assert m.modelV2.frameId == d.drivingModelData.frameId == p.cameraOdometry.frameId == row['frameId']
     assert m.modelV2.timestampEof == p.cameraOdometry.timestampEof == row['EOF']
     assert m.modelV2.big == d.drivingModelData.big == (row['source'] == 'phone')
+    if realtime:
+      assert m.modelV2.frameDropPerc == d.drivingModelData.frameDropPerc == 0
+      assert row['publish'] < row['EOF'] + 50_000_000, (name, row)
     delta = (.1 + row['frameId'] * .0001 if scenarios[i] == 'burst' else .1) if row['source'] == 'phone' else 0
     assert abs(m.modelV2.position.y[0] - delta) < 1e-6
     assert abs(m.modelV2.leadsV3[0].x[0] - 30 - delta) < 1e-5
@@ -510,14 +571,15 @@ def main():
   covered = []
   ctx = multiprocessing.get_context('fork')
   with tempfile.TemporaryDirectory() as directory:
-    def execute(name, scenarios, epoch=1, decoder=decode, admission=admit, paced=False, action_width=2, frame_offset=0):
+    def execute(name, scenarios, epoch=1, decoder=decode, admission=admit, paced=False, action_width=2, frame_offset=0,
+                realtime=False):
       source = ModelSource(directory, decoder, admission)
       parent, child = ctx.Pipe()
       process = ctx.Process(target=peer, args=(source.path, child))
       process.start()
       try:
         records, _ = replay(modeld, out, name, scenarios, source, parent, epoch, paced=paced, action_width=action_width,
-                            frame_offset=frame_offset, expected_events=baseline_events)
+                            frame_offset=frame_offset, expected_events=baseline_events, realtime=realtime)
         rows.extend(records)
         return records, source
       finally:
@@ -531,10 +593,45 @@ def main():
       records, source = execute(case, ['good'] * 10 + [case] + ['good'] * 8)
       assert records[9]['source'] == 'phone'
       assert all(r['source'] == 'local' for r in records[10:]), case
+      assert all(r['sleep_ns'] == 0 for r in records[10:]), case
       assert source.locked, case
       covered.append(case)
-    execute('absent', ['absent'] * 60)
+    records, _ = execute('absent', ['absent'] * 60)
+    assert all(r['sleep_ns'] == r['pick_clock_ns'] == 0 for r in records)
     assert (out / 'absent.rlog').read_bytes() == (out / 'baseline_raw.rlog').read_bytes()
+    for case in ('late', 'absent', 'stale', 'partial', 'hold'):
+      records, source = execute('single_' + case, ['good'] * 10 + [case] + ['good'] * 6)
+      assert records[10]['source'] == 'local' and records[11]['source'] == 'phone', case
+      assert not source.locked
+    records, _ = execute('warmup_gap', ['good'] * 3 + ['absent'] + ['good'] * 4)
+    assert records[3]['fresh'] == 3 and records[6]['source'] == 'phone'
+    records, _ = execute('short_gap', ['good'] * 10 + ['absent'] * 2 + ['good'] * 6)
+    assert records[12]['source'] == 'phone'
+    records, _ = execute('long_gap', ['good'] * 10 + ['absent'] * 3 + ['good'] * 6)
+    assert records[13]['fresh'] == 1 and all(r['source'] == 'local' for r in records[13:18])
+    assert records[18]['source'] == 'phone' and records[13]['sleep_ns'] == 0
+
+    # One timely reply engages the source; a cold delayed peer must remain zero-wait.
+    for case, scenarios in (
+      ('phone35', ['good'] + ['phone_35'] * 59),
+      ('phone60', ['good'] * 10 + ['phone_60'] * 50),
+      ('phone35_single_late', ['good'] + ['phone_35'] * 9 + ['phone_60'] + ['phone_35'] * 49),
+      ('phone35_busy', ['good'] + ['phone_35_busy'] * 59),
+      ('cold_phone35', ['phone_35'] * 20),
+      ('no_peer_timed', ['absent'] * 60),
+    ):
+      records, source = execute(case, scenarios, paced=True, realtime=True)
+      assert not source.locked
+      if case in ('phone35', 'phone35_busy', 'phone35_single_late'):
+        normal = records[5:]
+        assert sum(r['source'] == 'phone' for r in normal) / len(normal) >= .95, case
+        if case == 'phone35_single_late':
+          assert records[10]['source'] == 'local' and records[11]['source'] == 'phone'
+      elif case == 'phone60':
+        assert all(r['source'] == 'local' for r in records[10:])
+        assert all(r['sleep_ns'] == 0 for r in records[13:])
+      else:
+        assert all(r['source'] == 'local' and r['sleep_ns'] == 0 for r in records)
     records, _ = execute('stock_action_mean_sigma', ['good'] * 15, action_width=4)
     assert records[-1]['source'] == 'phone'
     records, _ = execute('stock_plan_action', ['good'] * 15, action_width=0)
@@ -710,7 +807,24 @@ class Candidate(Plugin):
                                     'max_ms': float(max(np.diff(selected)) / 1e6)}
                              for case in ('frozen', 'crashed', 'stall_200ms', 'candidate_lock')
                              if (selected := [r['host_publish_ns'] for r in rows if r['case'] == case])},
-            'limits': ['synthetic inference/VisionIPC and deterministic BOOTTIME', 'no phone QNN, TCP/HEVC or device execution',
+            'bounded_wait': {
+              'engaged_frames': 3, 'deadline_ms': 45, 'camera_period_ms': 50, 'timed_frame_drops': 0,
+              'deterministic_max_wait_ms': max(r['pick_clock_ns'] for r in rows if not r['host_publish_ns']) / 1e6,
+              'cases': {case: {
+                'frames': len(selected),
+                'adoption_after_warmup': sum(r['source'] == 'phone' for r in selected[5:]) / len(selected[5:]),
+                'max_sleep_ms': max(r['sleep_ns'] for r in selected) / 1e6,
+                'pick_ms': dict(zip(('p50', 'p95', 'max'),
+                                    np.percentile([r['pick_ns'] / 1e6 for r in selected], [50, 95, 100]), strict=True)),
+                'max_pick_end_after_eof_ms': max(r['pick_end'] - r['EOF'] for r in selected) / 1e6,
+                'eof_to_publish_ms': dict(zip(('p50', 'p95', 'max'),
+                                             np.percentile([(r['publish'] - r['EOF']) / 1e6 for r in selected], [50, 95, 100]), strict=True)),
+              } for case in ('phone35', 'phone60', 'phone35_single_late', 'phone35_busy', 'cold_phone35', 'no_peer_timed')
+                if (selected := [r for r in rows if r['case'] == case])}},
+            'limits': ['synthetic inference/VisionIPC; deterministic BOOTTIME except timed phone cases',
+                       'cold delayed peer remains zero-wait until one timely reply; timed engaged cases seed one timely reply',
+                       'OS sleep scheduling can overshoot EOF+45ms; late replies are never adopted',
+                       'no phone QNN, TCP/HEVC or device execution',
                        'real modeld postprocessing, Capnp/msgq and selfdrived.update_events; unrelated car/device inputs are healthy fixtures']}
   (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
   np.savez(out / 'inputs.npz', local_raw=raw_output(), phone_raw=raw_output(.1))

@@ -23,6 +23,7 @@ ENVELOPE = struct.Struct('<QQQII')
 REPLY = struct.Struct('<4sBBHIIQ')
 OFFSET, SIZE = 256, 16384
 DEADLINE_NS = 45_000_000
+ENGAGED_FRAMES = 3  # Tolerate two missed replies at 20 Hz, then stop waiting on a missing peer.
 HEAD_SHAPES = {
   'plan': (1, 33, 15), 'plan_stds': (1, 33, 15),
   'lane_lines': (1, 4, 33, 2), 'lane_lines_stds': (1, 4, 33, 2), 'lane_lines_prob': (1, 8),
@@ -54,7 +55,7 @@ class ModelSource:
       raise
     self.buffer[:] = bytes(SIZE)
     self.session = secrets.randbits(64)
-    self.epoch = self.last_frame = self.fresh = self.arrival_ns = 0
+    self.epoch = self.last_frame = self.last_accepted = self.fresh = self.arrival_ns = 0
     self.frame = self.eof = 0
     self.selected = self.locked = self.sent = False
     self.reason = 'absent'
@@ -81,7 +82,7 @@ class ModelSource:
 
   def send_frame(self, main, extra, transforms, inputs, prev_desire):
     if main.frame_id < self.frame:
-      self.epoch = self.last_frame = self.fresh = 0
+      self.epoch = self.last_frame = self.last_accepted = self.fresh = 0
     self.frame, self.eof = main.frame_id, main.timestamp_eof
     pulse = np.where(inputs['desire_pulse'] - prev_desire > .99, inputs['desire_pulse'], 0).copy()
     pulse[0] = 0
@@ -93,7 +94,8 @@ class ModelSource:
   def _reject(self, reason, lock=False):
     self.reason = reason
     self.locked |= lock
-    self.fresh = 0
+    if lock:
+      self.fresh = 0
     return None
 
   def _candidate(self, local):
@@ -135,7 +137,7 @@ class ModelSource:
       return self._reject('late')
     new_epoch = epoch > self.epoch
     if new_epoch:
-      self.epoch, self.fresh, self.last_frame = epoch, 0, 0
+      self.epoch, self.fresh, self.last_frame, self.last_accepted = epoch, 0, 0, 0
       if paired != 3:
         return self._reject('need_dual_idr')
     if paired != 3:
@@ -165,9 +167,7 @@ class ModelSource:
       return self._reject('adapter_error', True)
     if nanos_since_boot() > eof + DEADLINE_NS:
       return self._reject('late')
-    if self.last_frame and frame != self.last_frame + 1:
-      self.fresh = 0
-    self.last_frame = frame
+    self.last_frame = self.last_accepted = frame
     self.fresh += 1
     if self.fresh <= 5:
       self.reason = 'warmup'
@@ -177,6 +177,15 @@ class ModelSource:
     return remote
 
   def pick(self, local):
+    if self.frame - self.last_accepted > ENGAGED_FRAMES:
+      self.fresh = 0
     remote = self._candidate(local)
+    while (not self.locked and self.fresh and 0 < self.frame - self.last_accepted <= ENGAGED_FRAMES
+           and self.reason in ('absent', 'old_frame', 'ipc_busy')):
+      remaining = self.eof + DEADLINE_NS - nanos_since_boot()
+      if remaining <= 0:
+        break
+      time.sleep(min(.001, remaining / 1e9))
+      remote = self._candidate(local)
     self.selected = remote is not None
     return (remote, True) if self.selected else (local, False)
