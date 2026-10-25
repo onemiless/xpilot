@@ -159,6 +159,7 @@ class StoreJobs:
     self.offroad = offroad
     self.busy = False
     self.status = "tap Refresh"
+    self.failed = False  # last fetch returned an error (status holds it)
     self.entries: list[store.IndexEntry] = []
     self.installed: dict[str, str] = store.installed_versions()
     self.dirty = False  # set after a fetch; the UI thread rebuilds its rows and clears it
@@ -185,6 +186,7 @@ class StoreJobs:
     self.status = "loading..."
     entries, error = store.fetch_index()
     self.entries, self.status, self.dirty = entries, error or f"{len(entries)} plugins", True
+    self.failed = bool(error)
 
   def current(self, pid: str) -> store.IndexEntry | None:
     """The entry from the latest fetch (rows outlive refreshes; a dropped entry gives None)."""

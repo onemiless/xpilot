@@ -104,7 +104,7 @@ class PluginsPage(Widget):
     self.pages: dict[str, PluginPage] = {}
     self.selected = 0
     self.fetched = False
-    self.refresh_button = Button(lambda: "working..." if jobs.busy else f"Refresh ({jobs.status})", lambda: jobs.run(jobs.fetch), font_size=40)
+    self.refresh_button = Button(lambda: "working..." if jobs.busy else f"Refresh ({'failed' if jobs.failed else jobs.status})", lambda: jobs.run(jobs.fetch), font_size=40)
     self.refresh_button.set_enabled(lambda: not jobs.busy)
     self._build()
 
