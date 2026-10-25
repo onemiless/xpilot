@@ -105,7 +105,7 @@ class ModelSource:
     if self.locked:
       return None
     if not self.sent:
-      return self._reject('ipc_busy')
+      return self._reject('meta_busy')
     data = self._slot(OFFSET, SIZE - OFFSET)
     if data is None:
       return self._reject('ipc_busy')
@@ -143,10 +143,12 @@ class ModelSource:
       if paired != 3:
         return self._reject('need_dual_idr')
     if paired != 3:
+      self.fresh = 0
       return self._reject('need_dual_idr')
     if flags:
       if flags & 1 and not new_epoch:
         return self._reject('reset_without_epoch', True)
+      self.fresh = 0
       self.last_frame = frame
       return self._reject('warmup_flags')
     raw = np.frombuffer(data, dtype='<f4', count=2066, offset=ENVELOPE.size + REPLY.size).copy()
@@ -184,7 +186,7 @@ class ModelSource:
     return remote
 
   def pick(self, local):
-    if self.frame - max(self.last_accepted, self.last_seen) > ENGAGED_FRAMES:
+    if self.frame - self.last_accepted > ENGAGED_FRAMES:
       self.fresh = 0
     remote = self._candidate(local)
     while (not self.locked and 0 < self.frame - max(self.last_accepted, self.last_seen) <= ENGAGED_FRAMES

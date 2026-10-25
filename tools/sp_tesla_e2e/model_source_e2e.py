@@ -19,6 +19,8 @@ Bounded wait: no peer/lock never sleeps; cold +35ms engages from a recent on-tim
 +60ms falls back without locking; short gaps preserve warm-up, long gaps rewarm.
 Transient absent/old_frame/ipc_busy polls preserve progress; EOF+45ms bounds waiting
 and the timed 50ms camera replay must publish every frame before the next EOF.
+FIX2: flagged/unpaired replies clear warm-up; failed META publication never waits;
+recent old replies enable waiting but cannot preserve warm-up across an accepted-frame gap.
 
 The replay executes unmodified main() and all real postprocessing/serialization. Only
 VisionIPC, inference and input services are deterministic doubles. BGM1 peer is a
@@ -173,11 +175,14 @@ def peer(path, conn):
     command = conn.recv()
     if command == 'crash':
       os._exit(7)
-    if command == 'freeze':
-      fcntl.lockf(fd, fcntl.LOCK_EX, SIZE, 0)
+    if command in ('freeze', 'meta_hold'):
+      size = OFFSET if command == 'meta_hold' else SIZE
+      fcntl.lockf(fd, fcntl.LOCK_EX, size, 0)
       conn.send('frozen')
       conn.recv()
-      fcntl.lockf(fd, fcntl.LOCK_UN, SIZE, 0)
+      fcntl.lockf(fd, fcntl.LOCK_UN, size, 0)
+      if command == 'meta_hold':
+        conn.send('released')
       continue
     scenario, epoch, now, expected_inputs = command
     old = scenario.startswith('old_')
@@ -365,6 +370,9 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
           camera_eof = boot_start + current * 50_000_000
           assert now() < camera_eof + 50_000_000, 'next camera frame was dropped'
         clock.now = camera_eof + 20_000_000
+        if scenarios[current - 1] == 'meta_hold':
+          conn.send('meta_hold')
+          assert conn.poll(2) and conn.recv() == 'frozen'
       self.frame_id = camera_frame
       self.timestamp_sof = camera_eof
       self.timestamp_eof = self.timestamp_sof
@@ -392,7 +400,7 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       pulse = np.where(inputs['desire_pulse'] - self.prev_desire > .99, inputs['desire_pulse'], 0).copy()
       pulse[0] = 0
       expected = np.concatenate([pulse, inputs['traffic_convention'], inputs['action_t']])
-      if conn is not None and scenario not in ('absent', 'after_pick', 'queued'):
+      if conn is not None and scenario not in ('absent', 'after_pick', 'queued', 'meta_hold'):
         conn.send((scenario, frame_epoch, now(), expected))
         while True:
           assert conn.poll(2), 'fake peer stalled'
@@ -454,9 +462,14 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
                      'reject_reason': source.reason if source else '', 'pick_ns': pick_ns,
                      'pick_clock_ns': pick_clock_ns, 'pick_end': pick_end,
                      'sleep_ns': sleep_ns, 'fresh': source.fresh if source else 0,
+                     'last_seen': source.last_seen if source else 0, 'last_accepted': source.last_accepted if source else 0,
                      'fresh_before_pick': fresh_before_pick,
                      'host_publish_ns': time.monotonic_ns() if paced else 0})
         scenario = scenarios[current - 1]
+        if scenario == 'meta_hold':
+          assert not source.sent and source.reason == 'meta_busy' and sleep_ns == pick_clock_ns == 0
+          conn.send('release')
+          assert conn.poll(2) and conn.recv() == 'released'
         if scenario == 'hold':
           assert source.reason == 'ipc_busy' and pick_clock_ns <= 25_000_000
           conn.send('release')
@@ -620,6 +633,19 @@ def main():
     records, _ = execute('long_gap', ['good'] * 10 + ['absent'] * 3 + ['good'] * 6)
     assert records[13]['fresh'] == 1 and all(r['source'] == 'local' for r in records[13:18])
     assert records[18]['source'] == 'phone' and records[13]['sleep_ns'] == 0
+
+    for scenario, reason in (('zero_pair', 'warmup_flags'), ('unpaired', 'need_dual_idr')):
+      for count in (1, 2, 3):
+        records, source = execute(f'rewarm_{scenario}_{count}', ['good'] * 6 + [scenario] * count + ['good'] * 6)
+        assert records[5]['source'] == 'phone' and not source.locked
+        assert all(r['fresh'] == 0 and r['reject_reason'] == reason for r in records[6:6 + count]), scenario
+        assert all(r['source'] == 'local' for r in records[6:11 + count]) and records[-1]['source'] == 'phone', scenario
+    records, _ = execute('meta_busy_no_wait', ['good'] * 10 + ['meta_hold'] + ['good'] * 6)
+    assert records[10]['source'] == 'local' and records[11]['source'] == 'phone'
+    records, _ = execute('liveness_does_not_preserve_warmup', ['good'] * 6 + ['old_good'] * 4 + ['good'] * 6)
+    assert records[9]['last_seen'] == 9 and records[9]['last_accepted'] == 6 and records[9]['sleep_ns'] > 0
+    assert records[9]['fresh'] == 0 and all(r['source'] == 'local' for r in records[6:15])
+    assert records[-1]['source'] == 'phone'
 
     # The cold peer never supplies an early first reply; previous-frame traffic must engage it.
     for case, scenarios in (
