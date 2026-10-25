@@ -13,6 +13,8 @@ void test_old_rx(unsigned int i, const CANPacket_t *msg) { safety_plugins_rx(msg
 bool test_old_tx(unsigned int i, const CANPacket_t *msg) { const safety_plugin *p = safety_plugin_for(msg); return i == 2U ? old_plugins[i]->tx(msg) : ((p != NULL) && p->tx(msg)); }
 uint32_t test_state(unsigned int i, unsigned int member) {
   const XpilotRuleState *s = &xpilot_rule_states[i];
+  if (member == 3U) { return s->template_valid; }
+  if (member == 4U) { return s->tx_valid; }
   return member == 0U ? s->count : (member == 1U ? s->last_tx : s->session_ts);
 }
 uint32_t test_old_state(unsigned int i, unsigned int member) {

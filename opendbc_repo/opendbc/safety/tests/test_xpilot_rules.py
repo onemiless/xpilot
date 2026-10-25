@@ -13,6 +13,10 @@ R10: navassist cancel consumes or is blocked by session budget, or skips other g
 R11: failed replacement leaves an active/partially loaded table; explicit empty table fails.
 R12: old profile bits still grant production TX; production includes legacy headers.
 R13: cross-mode inventory scan assumes every test module exports a car inventory.
+R14: a stale RX template revives after a full uint32 timer cycle despite periodic safety ticks.
+R15: interval/IDLE/WINDOW state survives expiry and stalls after timer wrap; IDLE restart loses its timestamp gate.
+R16: an RX/TX frame with the wrong standard/extended ID type matches a rule's address.
+R17: a successful car-to-car mode set retains a refused car-mode BEGIN error.
 """
 
 import hashlib
@@ -217,7 +221,7 @@ class TestXpilotRules(unittest.TestCase):
       self.assertEqual(verdict, self.compare(i, bytes.fromhex(tx)))
     artifact = {'seed': 2026102532, 'frames': n, 'verdict_sha256': digest.hexdigest(),
                 'navassist_source': 'Sniper-Eon/xpilot@ab3535b5a4acbf318c55005868d37ed19e2cf77d',
-                'deliberate_difference': 'cancel skips session budget',
+                'deliberate_difference': 'cancel skips session budget; tick latches expired state; CAN ID type must match',
                 'replayed_frames': len(trace), 'trace_sha256': hashlib.sha256(replay_bytes).hexdigest()}
     output = os.environ.get('XPILOT_RULES_ARTIFACT')
     if output:
@@ -312,6 +316,102 @@ class TestXpilotRules(unittest.TestCase):
     self.s.set_timer(22000000)
     self.assertFalse(self.s.safety_tx_hook(packet(ADDRS[2], cancel)))
 
+  def test_R14_template_expiry_latches_across_full_wrap(self):
+    for ttl in (1500000, 0x7FFFFFFF):
+      with self.subTest(ttl=ttl):
+        r = bytearray(AUTO)
+        struct.pack_into('<I', r, 16, ttl)
+        configure(self.s, (r,))
+        rx, tx = frames(0, random.Random(14))
+        start = 100
+        self.s.set_timer(start)
+        self.s.safety_rx_hook(packet(ADDRS[0], rx))
+        self.s.test_old_rx(0, packet(ADDRS[0], rx))
+        for elapsed in range(1000000, (1 << 32) + 1, 1000000):
+          self.s.set_timer((start + elapsed) & 0xFFFFFFFF)
+          self.s.safety_tick()
+        self.s.set_timer(start + 100)
+        self.s.safety_tick()
+        self.s.set_controls_allowed(True)
+        self.assertTrue(self.s.test_old_tx(0, packet(ADDRS[0], tx)))
+        self.assertFalse(self.s.safety_tx_hook(packet(ADDRS[0], tx)))
+        self.assertFalse(self.s.test_state(0, 3))
+        self.s.safety_rx_hook(packet(ADDRS[0], rx))
+        self.assertTrue(self.s.safety_tx_hook(packet(ADDRS[0], tx)))
+
+  def test_R15_interval_and_session_expiry(self):
+    for i, interval, period in ((0, 250000, 3000000), (2, 100000, 60000000)):
+      for elapsed in (interval - 1, interval, period - 1, period, (1 << 32) + 100):
+        with self.subTest(i=i, elapsed=elapsed):
+          configure(self.s)
+          rx, tx = frames(i, random.Random(15))
+          start = 100
+          self.s.set_timer(start)
+          self.s.safety_rx_hook(packet(ADDRS[i], rx))
+          self.s.test_old_rx(i, packet(ADDRS[i], rx))
+          self.s.set_controls_allowed(True)
+          self.assertTrue(self.compare(i, tx))
+          for tick in range(1000000, elapsed, 1000000):
+            self.s.set_timer((start + tick) & 0xFFFFFFFF)
+            self.s.safety_tick()
+          self.s.set_timer((start + elapsed) & 0xFFFFFFFF)
+          self.s.safety_tick()
+          self.assertEqual(elapsed < interval, bool(self.s.test_state(i, 4)))
+          self.assertEqual(int(elapsed < period), self.s.test_state(i, 0))
+          if elapsed > (1 << 32):
+            self.s.safety_rx_hook(packet(ADDRS[i], rx))
+            self.s.test_old_rx(i, packet(ADDRS[i], rx))
+            self.s.set_controls_allowed(True)
+            self.assertFalse(self.s.test_old_tx(i, packet(ADDRS[i], tx)))
+            self.assertTrue(self.s.safety_tx_hook(packet(ADDRS[i], tx)))
+    # The idle boundary can arrive after tx_valid expired, before the next tick.
+    for gap in (2999999, 3000000, 3000001):
+      with self.subTest(gap=gap):
+        configure(self.s)
+        rx, tx = frames(0, random.Random(15))
+        self.s.set_timer(100)
+        self.s.safety_rx_hook(packet(ADDRS[0], rx))
+        self.s.set_controls_allowed(True)
+        self.assertTrue(self.s.safety_tx_hook(packet(ADDRS[0], tx)))
+        self.s.set_timer(3000099)
+        self.s.safety_tick()
+        self.s.set_timer(100 + gap)
+        self.s.safety_rx_hook(packet(ADDRS[0], rx))
+        self.s.set_controls_allowed(True)
+        self.assertTrue(self.s.safety_tx_hook(packet(ADDRS[0], tx)))
+        self.assertEqual(2 if gap < 3000000 else 1, self.s.test_state(0, 0))
+
+  def test_R16_can_id_type(self):
+    for addr in (ADDRS[0], 0x18FF50E5):
+      for direction in ('rx', 'tx'):
+        with self.subTest(addr=addr, direction=direction):
+          r = bytearray(AUTO)
+          struct.pack_into('<II', r, 4, addr, addr)
+          configure(self.s, (r,))
+          rx, tx = frames(0, random.Random(16))
+          source, send = packet(addr, rx), packet(addr, tx)
+          wrong = source if direction == 'rx' else send
+          wrong.extended = not wrong.extended
+          self.s.safety_rx_hook(source)
+          self.s.set_controls_allowed(True)
+          self.assertFalse(self.s.safety_tx_hook(send))
+          self.assertEqual(0, self.s.test_state(0, 0))
+          if direction == 'rx':
+            self.assertFalse(self.s.test_state(0, 3))
+            source.extended = not source.extended
+            self.s.safety_rx_hook(source)
+          else:
+            send.extended = not send.extended
+          self.assertTrue(self.s.safety_tx_hook(send))
+
+  def test_R17_successful_car_mode_clears_error(self):
+    configure(self.s)
+    committed = status(self.s)[4:7]
+    control(self.s, 0xA2, len(table()), 3)
+    self.assertEqual(1, status(self.s)[3])
+    self.assertEqual(0, self.s.set_safety_hooks(10, 0))
+    self.assertEqual(0, status(self.s)[3])
+    self.assertEqual(committed, status(self.s)[4:7])
 
 if __name__ == '__main__':
   unittest.main()
