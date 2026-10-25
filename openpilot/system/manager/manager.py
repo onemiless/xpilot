@@ -22,7 +22,10 @@ from openpilot.common.hardware.hw import Paths
 from openpilot.sunnypilot.system.params_migration import run_migration
 from openpilot.tesla.store import recover
 
-recover()
+try:
+  recover()
+except Exception:
+  cloudlog.exception("store recovery failed; journal kept for next boot")
 from openpilot.system.manager.process_config import managed_processes
 
 
