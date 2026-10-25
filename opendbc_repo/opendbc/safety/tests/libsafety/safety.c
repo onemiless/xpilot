@@ -306,3 +306,5 @@ void init_tests(void){
   heartbeat_engaged_mads = false;
   heartbeat_engaged_mads_mismatches = 0U;
 }
+
+#include "xpilot_rules.c"

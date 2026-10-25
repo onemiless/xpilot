@@ -34,7 +34,7 @@ C3/C3XL 保留各自锁定的 mr-one 引导链和写前白名单校验，禁止�
 1. **不改 SP 主体逻辑。** SP 文件里每个钩子点只加一行插件调用（循环、出错隔离等逻辑放在 `openpilot/tesla/` 里）。功能逻辑全部写在 `openpilot/tesla/plugins/<功能名>/`。
 2. **不改上游 Tesla 车端代码。** `opendbc_repo/opendbc/car/tesla/*`、`opendbc_repo/opendbc/sunnypilot/car/tesla/*`、`opendbc/dbc/tesla_model3_*.dbc`、`opendbc/safety/modes/tesla.h` 保持上游原样。需要车端数据，就在插件里用自己的 `CANParser` 读。
 3. **插件不能绕过车端和 panda 的检查。** 纵向：`long_target` 加速只能替换驾驶员设定车速（条件见第 4 节）；`plan_filter` 只能收紧；`role:long.planner` 可以整体替换纵向计划、包括跟车（用户 2026-10-22 决定），但加速度限制、FCW、踩刹车退出、原车 AEB 和 panda 限制不变。横向：`role:lateral.controller` 的输出不额外限制，靠车端转角速率限制和 panda 兜底。外接算力的数据只做建议。
-4. **每个 CAN 发送地址都必须有 panda safety 插件**（`opendbc/safety/plugins/`），在插件里自己校验内容、频率、时效和 `controls_allowed`。没有 safety 插件，panda 会直接拦掉。
+4. **每个额外 CAN 发送地址都必须声明 panda 运行时规则**（第 6 节），固件校验内容、频率、时效和接管门。Tesla 自有地址只由原模式校验；没有规则的其他地址一律阻断。
 5. **插件出错不能拖垮进程**：输入过期就当周期什么都不发。宿主兜底：插件在任何钩子里抛异常，就被记进 `XpilotPluginFaults`、本次进程内停用，其他插件和 SP 照常运行；plan filter 出错时计划照常发布。UI 磁贴和叠加层连续出错 3 次会停止绘制。
 6. **Params**：插件的 key 写在自己 `plugin.json` 的 `params` 里，然后运行 `python3 openpilot/tesla/plugins/gen_params.py` 生成 `common/plugin_params.inc` 并一起提交；不属于插件的 key 才写进 `params_keys.h`。每个插件有一个 BOOL 总开关 `enable_param`，默认关闭；例外：只做显示、`claims` 为空的 `ui`、`overlays` 类插件（如 `speed_card`）可以默认开启；可替换核心环节的内置默认插件（如 `sp_models`）`enable_param` 为 `null`、一直开启，被替换时按优先级让位。设置项写在 `plugin.json` 的 `settings` 里。
 7. **cereal**：只追加字段，不改已有字段的序号和类型。新消息用 `custom.capnp` 里的 `customReserved*` 槽位。
@@ -62,7 +62,7 @@ openpilot/tesla/
   plugins/gen_params.py     把各插件清单里的 params 生成到 common/plugin_params.inc
   plugins/sp_models/        默认模型：SP 的模型管理器和 modeld（role:perception.model）
   plugins/sp_engagement/ sp_safety_fallback/   默认接管和安全兜底
-  plugins/gen_safety.py     从 safety.json 生成 panda 的 registry.h（第 6 节）
+  plugins/gen_safety.py     旧 registry 生成器，仅保留作迁移参考（第 6 节）
   store.py                  插件商店：下载、校验、安装；首次启动自动安装 DEFAULTS 里的显示插件（8c）
   ui/screen.py ui/tile.py ui/tiles.py ui/slots/   大屏磁贴宿主、磁贴基类、布局模型（无 pyray）、内置磁贴（slots/settings.py 设置页磁贴）
   ui/plugin_ui.py           UI 侧插件加载：找到 Tile、HudOverlay 和 ScreenOverlay，插件关闭时隐藏
@@ -70,8 +70,9 @@ openpilot/tesla/
   ui/offroad.py ui/pages/   大屏停车时的详情页（见第 9 节）
   ui/settings_page.py ui/settings_meta.py        Tesla 设置页（上游 Tesla 选项、DM、地图）
 opendbc_repo/opendbc/safety/plugins/
-  plugin.h registry.h auto_speed.h ambient_light.h   panda safety 插件（见第 6 节）
-  safety.json               固件里有哪些 safety 插件：id、头文件、param_bit、tx
+  plugin.h registry.h auto_speed.h ambient_light.h safety.json   旧测试 oracle/迁移参考
+opendbc_repo/opendbc/safety/xpilot_rules.h   运行时引擎与验证器（第 6 节）
+panda/board/xpilot_rules.h   app EP2 loader
 .github/workflows/xpilot.yaml   CI：第 11 节的本机检查 + 插件仓库端到端
 ```
 
@@ -159,7 +160,7 @@ card 每次启动用 `cloudlog.event("xpilot.drive_snapshot", ...)` 记录本行
 
 | 资源 | 含义 | 独占 |
 |---|---|---|
-| `can.tx:0x<地址>:<总线>` | 发送这个 CAN 地址（还需要 panda safety 插件） | 是 |
+| `can.tx:0x<地址>:<总线>` | 发送这个 CAN 地址（还需要 panda 运行时规则） | 是 |
 | `process:<名字>` | 运行这个 manager 进程 | 是 |
 | `source:<数据>` | 提供某类数据，如 `source:radar`、`source:lanes` | 是 |
 | `source:radar` | 用 `radar_interface` 替换车型自带的雷达（第 7 节） | 是 |
@@ -189,7 +190,7 @@ card 每次启动用 `cloudlog.event("xpilot.drive_snapshot", ...)` 记录本行
 | 钩子 | 调用方 / 时机 | 用途 |
 |---|---|---|
 | `__init__(CP, params)` | card，识别车型后调用一次 | 创建 CANParser，读取参数 |
-| `setup(CP_SP)` | card，发布 CarParamsSP 之前 | 设置 flags；需要 panda 插件时置 `safetyParam` 位 |
+| `setup(CP_SP)` | card，发布 CarParamsSP 之前 | 设置 flags；额外 TX 权限通过运行时规则装载，不置插件 safetyParam 位 |
 | `observe_can(can_list, now_ns)` | card，每批 CAN | 只读解析；返回需要立即发送的帧（少用） |
 | `publish_state(CS_SP)` | card，每个周期 | 填写 carStateSP 里本插件的字段；也可以从这里读 `CS_SP.speedLimit` |
 | `control_sends(CS, CC, now_ns)` | card，每个控制周期 | 返回要追加发送的 `CanData` |
@@ -224,7 +225,7 @@ SP 里的调用位置：`selfdrive/car/card.py`（`CarPlugins`、`radar_interfac
    - 只显示：一个 `ui.py` 磁贴或叠加层，读已有的消息。`claims` 为空，可以默认开启。
    - 读车端数据再显示：card 钩子 `observe_can` 解析 + `publish_state` 写到 `carStateSP` 的新字段，`ui.py` 磁贴订阅 `carStateSP`。参考插件仓库的 `plugins/bms/`。
    - 影响驾驶：用第 4.4 节的规划/控制钩子，声明对应 claim；能"只收紧"的就不要"替换"。
-   - 发 CAN：`control_sends` + `can.tx` claim + panda safety 插件（第 6 节）。参考插件仓库的 `plugins/auto_speed/`、`plugins/ambient_light/`。
+   - 发 CAN：`control_sends` + `can.tx` claim + panda 运行时规则（第 6 节）。参考插件仓库的 `plugins/auto_speed/`、`plugins/ambient_light/`。
    - 独立进程：`processes()` + `process:<名字>` claim。参考插件仓库的 `plugins/traffic_light/`、`plugins/external_compute/`。
 2. **写失败模式**（在检查脚本或模块 docstring 里列出），再写检查：纯逻辑放进 `tools/sp_tesla_e2e/` 里已有的 `*_check.py`（或插件自己的 `tests/`），渲染和触摸只能在设备上用 `big_screen_e2e.py` 确认。
 3. **建目录**：在插件仓库建 `plugins/<id>/`（只有核心插件放系统仓库的 `openpilot/tesla/plugins/<id>/`）：空的 `__init__.py`、`plugin.json`（4.1）、`plugin.py`、可选的 `ui.py`：
@@ -260,7 +261,7 @@ class MyTile(Tile):
 
 4. **新消息字段**：加在 `cereal/custom.capnp`（只追加，见规则 7），设备上要重新编译（scons）。
 5. **参数**：写进 `plugin.json` 的 `params` 和 `settings`。商店插件的参数存在 `/data/xpilot_plugins/.params`（8c），不用生成；核心插件才运行 `python3 openpilot/tesla/plugins/gen_params.py`，把 `common/plugin_params.inc` 一起提交。
-6. **跑本机检查**（第 11 节），全部通过后按功能拆分提交；有 CAN 发送的先在系统仓库加 safety 头文件和 `safety.json` 条目（第 6 节），运行 `python3 openpilot/tesla/plugins/gen_safety.py` 生成 `registry.h` 一起提交，再编译 panda、跑 safety 测试和 MISRA；插件的 `plugin.json` 写同样的 `safety` 块；最后上设备实测，报告设备上的 commit。
+6. **跑本机检查**（第 11 节），全部通过后按功能拆分提交；有 CAN 发送的在插件声明固件 ABI 支持的规则（第 6 节），先完成宿主装载、差分 safety 测试、MISRA 和固件构建；插件的 `plugin.json` 携带规则；最后上设备实测，报告设备上的 commit。
 7. **不用注册**：插件自动被发现，插件市场按类别显示它的开关、版本、作者、简介和设置。插件仓库运行 `tools/build_index.py` 后发布（8c）。
 
 ### 5.2 API 一览
@@ -302,7 +303,7 @@ class MyTile(Tile):
 
 **消息**（插件可以读或发布）：`carStateSP` 里插件自己的字段（例 `teslaBattery`）、`liveMapDataSP` 和 `navInstruction`（地图和导航，第 8 节）、`externalIn` / `externalOut`（外接算力，8b），以及 SP 的所有服务（`carState`、`radarState`、`longitudinalPlan`、`deviceState` 等）。
 
-**panda safety**（C，内置插件才可以）：`safety_plugin` 结构（`msg`、`active`、`rx`、`tx`、`reset`），见第 6 节。
+**panda safety**：插件声明 ABI v1 规则，固件统一验证和执行，见第 6 节；旧 C 插件接口只供差分测试。
 
 **商店**（8c）：插件包和内置插件同样格式；代码按 `xpilot_ext.<id>` 导入、内部用相对导入；参数存在 `.params` 文件里；二进制要在清单写 `platform`。
 
@@ -321,41 +322,29 @@ class MyTile(Tile):
 - 文件超过限制就按职责拆分，不要压缩代码、删注释或合并行来凑行数。
 - 检查：核心插件由 `manifest_check.py` M11 检查（`manifest.layout_problems`）；商店插件在安装时检查，不符合就拒绝安装（`store_check.py` S16）。
 
-## 6. panda safety 插件接口（`opendbc/safety/plugins/`）
+## 6. panda 运行时规则（G1，ABI v1）
 
-```c
-typedef struct {
-  CanMsg msg;                          // 本插件唯一负责的发送报文（地址、总线、长度）
-  bool (*active)(void);                // 按 safety 模式和参数决定是否生效
-  void (*rx)(const CANPacket_t *msg);  // 每条有效的接收报文都会调用（用来记录模板、状态）
-  bool (*tx)(const CANPacket_t *msg);  // 校验一次发送；返回 true 才放行
-  void (*reset)(void);                 // safety 模式切换时调用
-} safety_plugin;
-```
+插件携带 `template_clone.v1` TX 权限规则，不签名；网络鉴权不属于系统任务。固件定义精确二进制格式、限制和错误码，合同见 [`docs/design/xpilot-panda-rules.md`](docs/design/xpilot-panda-rules.md)。最多 8 条、4 KiB 单缓冲区，无堆内存。每个 TX 位必须且只能归属于 copy、constant、field、counter 或 checksum 一项；装载时拒绝缺口、重叠、重复地址、未知 ABI/type、非 bus 1，以及 Tesla 模式拥有的地址。
 
-规则：一个插件只负责一个报文，原有 safety 模式的白名单和检查一律不改；校验报文模板、新鲜度、频率、Tesla 模式、vehicle bus、自有 `safetyParam` 位和会话上限。`auto_speed` 必须有 `controls_allowed`；`ambient_light` 是车身盲区告警，允许未接管时告警。
+Tesla 自有地址按地址独占，与 bus/length 无关（包括 0x488、0x2B9、0x27D、0x3DF 和 RX/转发列表）。它们只走原模式白名单和 hook，规则不能接管；其他地址有匹配规则才可能发送。规则全局门：Tesla 模式、有 vehicle bus、bus 1、无 relay malfunction、非 silent/noOutput。默认必须 `controls_allowed`。只有所有 field 值均声明为 exempt 的帧，才同时豁免接管门和会话预算；其余模板、TTL、内容、counter、checksum、间隔和全局门仍生效。
+
+- auto_speed：0x3C2，idle mux-1 模板，TTL 1.5 秒，间隔 250 ms，每会话 50 格，空闲 3 秒重开；无豁免。
+- ambient_light：0x679，TTL 1 秒，红色、亮度及 (zone,side) 元组，间隔 80 ms，每会话 150 帧/15 秒，空闲 1 秒重开；无豁免，必须接管。旧文档“允许未接管时告警”与旧头文件不符，已纠正。
+- navassist：0x3E9，idle 模板、TTL 1.5 秒、模板 counter+1、通用 TESLA_SUM8、间隔 100 ms、首帧起 60 秒窗口最多 200 帧。(request,reason) 只能 (1,8)/(2,8)/(3,4)。cancel=(3,4) 只释放转向灯，允许未接管时发送；用户 2026-10-25 决定 cancel 不占用且不受会话预算限制。它仍受模板、校验和、counter、间隔、relay 和 noOutput 限制。
+
+app 固件专用 CAPS/STATUS/BEGIN/COMMIT/CLEAR 及 EP2 64 字节记录见合同。主机必须先验证 CAPS 是 app，绝不向 bootstub EP2 写规则。BEGIN 立即撤销旧表，CRC/格式/上传失败后空表；只允许非 car mode 提交。启动和每次切入非 car mode 清表，每次设置模式重置模板和预算，切入 car mode 中止未完成上传。表为空或失败不改变基础 Tesla 接管条件。
+
+宿主衔接由 X-20261025-33 实现：card 编译已启用且裁决胜出的规则到 `XpilotPandaRules`；pandad 每循环只发一条 EP2 记录，保留心跳和总截止时间，在 0xDF/0xDC 前 COMMIT 并核对 STATUS CRC/count。失败 CLEAR、记录功能故障，基础模式仍正常 arming。没有规则也显式装载空表。插件不再分配 safetyParam 位；G14 固定位保留。旧 `safety.profile` 插件必须发布新版本替代，系统不提供翻译层；本固件提交不代表宿主迁移已落地。
+
+生产固件只包含 `xpilot_rules.h` 引擎。`auto_speed.h`、`ambient_light.h`、`registry.h`、`gen_safety.py`、`safety.json` 暂留作测试 oracle/迁移参考，不再授予生产发送权限。X-33 落地、差分门通过后另行删除，不能在本任务删除。navassist oracle 固定为 Sniper-Eon/xpilot `ab3535b5a4acbf318c55005868d37ed19e2cf77d` 的测试 fixture，唯一故意差异是 cancel 会话豁免。
+
+检查：`test_xpilot_rules.py`（失败矩阵 R1–R13、真实 C 引擎和 app loader、旧头文件差分）、`test_xpilot_plugins.py`、全部 opendbc safety、cppcheck MISRA、可用时 mutation、F4/H7/body 构建与 RAM/flash 对照。运行 `XPILOT_RULES_ARTIFACT=<路径> PYTHONPATH=opendbc_repo python -m unittest opendbc.safety.tests.test_xpilot_rules` 保存可重复的流摘要。主机检查、固件构建、设备 active commit 和刷写分别报告；本任务无设备访问。
+
 Tesla 接管例外（用户 2026-10-25 决定）：`safety.h` 的最低频率检查遵守 `ignore_frequency_check`，时效、校验和、计数器和质量检查不变；SP 扩展允许原车 Autosteer 设置（mixed AP），以后由 mixed AP 插件接管，不改上游 `carstate.py` 或 panda 的 Autosteer 安全逻辑。
-
-新增 safety 插件的附加规则：
-- 头文件名必须是 `<profile 名>.h`，头文件注释里的名字也用 profile 名（`gen_safety.py` 检查）。
-- 所有 safety 插件都不允许在 `nooutput` 模式发报。
-- 每个不需要 `controls_allowed` 的发送（比如告警、cancel）都要写进上面这条规则，写明在什么条件下放行、为什么安全；代码的放行条件必须和这里写的一致，不能比文字更宽。
-- 下面"当前状态"只写所有已声明头文件都验证过的结论；新头文件没跑 MISRA、编译和两个 safety 测试之前，不能沿用这句话。
-- CI（`.github/workflows/xpilot.yaml`）只跑主机检查和 `gen_safety --check`，不编译 panda、不跑 safety 测试和 MISRA。改 safety 的 PR 要把 panda 编译、`test_tesla.py`、`test_xpilot_plugins.py` 和 MISRA 的命令和结果贴进 PR，在哪台机器上跑的也写上。
-
-声明在 `opendbc/safety/plugins/safety.json`：profile 名 → `header`、十六进制字符串 `param_bit`、唯一一条 `tx`（`0x地址:总线`）。这个文件描述系统固件里编进了哪些 panda 能力，与 Python 插件 id 无关。插件在 `plugin.json` 写 `"safety": {"profile": "auto_speed"}` 复用已有能力，不能再加 `header`、`param_bit`、`tx` 等键覆盖它。旧的完整 safety 字典仍可用，但必须与文件中恰好一个条目完全一致。`manifest.parse()` 统一解析成完整条目加 `profile`；安装和发现都要求 `can.tx` claims 集合与该 profile 的 `tx` 完全一致，否则带原因拒绝或跳过。两个开启的插件用同一个 profile 时，通过现有独占 `can.tx` claim 按优先级裁决，只有一个生效。
-
-`gen_safety.py` 只用标准库，生成注册表及 C 参数位宏，拒绝重复位、未声明的头文件、声明的头文件缺失、safety tx 和头文件 `.msg` 不一致，以及核心插件未匹配 profile 的 `can.tx` claim；还检查位为单个 uint16 位、头文件名等于 `<profile 名>.h` 和头内 `.msg` 地址/总线。`plugin.h` 是公共接口，`registry.h` 是生成文件，其余头都必须在 `safety.json` 里声明。新的 CAN 行为仍须在系统仓库新增 safety 头文件和 `safety.json` 条目、生成注册表、构建固件并完成上述 safety/MISRA 验证，再上设备实测；不能靠 profile 扩大固件的放行范围。panda safety 代码只能随系统发布，不能运行时安装。当前位：ambient_light `0x2000`，auto_speed `0x4000`（和设备上刷入的 panda 一致）。Python 插件继续用 `int(self.MANIFEST.safety["param_bit"], 0)` 读解析后的声明，不能硬编码位值。
-
-**当前状态：libsafety 在 Mac（Apple clang 16）和 Linux 主机上编译；`test_tesla.py` 和 `test_xpilot_plugins.py` 通过；MISRA（cppcheck）在 Linux 主机上 0 条报告。** 只保留 Tesla 后，lateral.h/longitudinal.h/safety.h 里给其他车型用的共用函数没人调用，在 `tests/misra/main.c` 里用 `SAFETY_UNUSED` 标出，stock 头文件不改。会话上限：auto_speed 每次最多 50 格、空闲 3 秒算新会话；ambient_light 每次最多 150 帧/15 秒、空闲 1 秒算新会话。 `safety.h` 里有 4 处调用：
-1. include `opendbc/safety/plugins/registry.h`；
-2. `safety_rx_hook` 里，`valid` 为真时调用 `safety_plugins_rx(msg)`；
-3. `safety_tx_hook` 里，属于插件的报文交给 `plugin->tx(msg)` 校验，其余报文仍走原模式；
-4. `set_safety_hooks` 里调用 `safety_plugins_reset()`。
 
 ## 7. 雷达接入接口
 
-写一个声明 `source:radar` 的插件，实现 `radar_interface` 钩子（见 4.4）。插件关闭、没有声明或出错时用原车雷达。外接雷达如果需要发送报文，还要声明 `can.tx` 并配一个 panda safety 插件。
+写一个声明 `source:radar` 的插件，实现 `radar_interface` 钩子（见 4.4）。插件关闭、没有声明或出错时用原车雷达。外接雷达如果需要发送报文，还要声明 `can.tx` 并携带 panda 运行时规则。
 
 `opendbc_repo/opendbc/car/car_helpers.py` 里的 `RADAR_PLUGINS` 是旧接口，已不用，保持为空（opendbc 不改）。
 
@@ -383,7 +372,7 @@ Tesla 接管例外（用户 2026-10-25 决定）：`safety.h` 的最低频率检
 - **下载插件的代码**：作为包 `xpilot_ext.<id>` 导入，插件内部要用相对导入（`from .controller import X`）。
 - **下载插件的参数**：不编译进 Params，而是存在 `/data/xpilot_plugins/.params/<key>`，支持 BOOL、INT、FLOAT、STRING、JSON。宿主把交给插件、开关判断和设置页的 params 都包了一层（`plugin_params.ParamsView`），插件照常用 `params.get/get_bool/put`。删除插件时参数值保留，重装后设置还在。
 - **带二进制的插件**：需要编译的代码（例如 acados 求解器）以预编译二进制发布，清单里写 `"platform": {"machine", "python"}`（由插件自己的 `build_native.py` 在目标设备上生成）。设备只显示、安装和加载平台一致的版本；升级 Python 等导致不一致时，插件被跳过并显示 "Failed"。
-- **发 CAN 的插件**：panda safety 代码只能随系统发布。插件的 `safety` 块和 `can.tx` claims 必须和设备系统的 `safety.json` 一致才能安装（第 6 节）。
+- **发 CAN 的插件**：插件规则和 `can.tx` claims 必须一致，并符合设备固件 ABI（第 6 节）；旧 profile 版本由新版规则插件替代。
 - **首次启动**：`store.DEFAULTS`（speed_card、lead_card、speed_limit_card、car_tile、map_tile、clock_tile、ip_tile、blindspot_edges）在停车且能连上索引时自动安装一次，装好后设 `DoReboot` 重启生效，并写标记 `/data/xpilot_plugins/.defaults_done`；索引连不上就 30 秒后重试，不写标记。用户之后删掉的插件不会再被装回。
 
 ## 8d. 插件间消息 `pluginMsg`
@@ -444,7 +433,7 @@ Tesla 接管例外（用户 2026-10-25 决定）：`safety.h` 的最低频率检
 | `sp_engagement` / `sp_safety_fallback` | 默认接管和兜底：返回 SP 已建好的状态机/MADS 和事件列表，与其他实现走相同宿主底线；装一个持有 `role:engagement.state` / `role:safety.fallback` 的插件并打开即替换，宿主底线见第 4.4 节 | 无（一直开启） | 无发送 |
 | `sp_models` | 默认模型：SP 的模型管理器和 modeld 原样运行，只是归到插件下；装一个持有 `role:perception.model` 的插件（如 OP、Jetlink、Chipmunk 模型）并打开即替换 | 无（一直开启） | 无发送 |
 
-其他插件（auto_speed、traffic_light、ambient_light、external_compute、bms 和大屏显示插件）的列表和说明在插件仓库的 `README.md`。它们保留原来的参数名，从旧版本升级的设备要把旧参数值复制到 `/data/xpilot_plugins/.params/`。panda 部分仍在系统仓库：`auto_speed.h`（0x3C2，`0x4000`）、`ambient_light.h`（0x679，`0x2000`）。
+其他插件（auto_speed、traffic_light、ambient_light、external_compute、bms 和大屏显示插件）的列表和说明在插件仓库的 `README.md`。它们保留原来的参数名，从旧版本升级的设备要把旧参数值复制到 `/data/xpilot_plugins/.params/`。panda 生产权限由第 6 节运行时规则提供；旧 `auto_speed.h` / `ambient_light.h` 只保留作测试 oracle。
 
 ### 插件仓库 use 补齐清单（2026-10-25）
 

@@ -55,7 +55,8 @@ def cdef_from_file(path: Path) -> str:
 ffi = FFI()
 safety_dir = Path(libsafety_dir).parents[1]
 ffi.cdef(cdef_from_file(safety_dir / "can.h"), packed=True)
-for path in (safety_dir / "declarations.h", safety_dir / "ignition.h", safety_dir / "sunnypilot" / "mads_declarations.h", Path(libsafety_dir) / "safety.c"):
+for path in (safety_dir / "declarations.h", safety_dir / "ignition.h", safety_dir / "sunnypilot" / "mads_declarations.h",
+             Path(libsafety_dir) / "safety.c", Path(libsafety_dir) / "xpilot_rules.c"):
   ffi.cdef(cdef_from_file(path))
 
 class CANPacket:

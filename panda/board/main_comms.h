@@ -1,5 +1,7 @@
 #pragma once
 
+#include "board/xpilot_rules.h"
+
 extern int _app_start[0xc000]; // Only first 3 sectors of size 0x4000 are used
 
 // Prototypes
@@ -61,10 +63,9 @@ static int get_health_pkt(void *dat) {
   return sizeof(*health);
 }
 
-// Endpoint 2 is only used by the bootstub for flashing.
+// EP2 in app firmware uploads rules; bootstub has a separate flash handler.
 void comms_endpoint2_write(const uint8_t *data, uint32_t len) {
-  UNUSED(data);
-  UNUSED(len);
+  xpilot_rules_upload(data, len);
 }
 
 int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
@@ -72,6 +73,13 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
   uint32_t time;
 
   switch (req->request) {
+    case 0xa0:
+    case 0xa1:
+    case 0xa2:
+    case 0xa3:
+    case 0xa4:
+      resp_len = xpilot_rules_control(req->request, req->param1, req->param2, resp);
+      break;
     // **** 0xa8: get microsecond timer
     case 0xa8:
       time = microsecond_timer_get();

@@ -1,7 +1,9 @@
-"""xpilot panda safety plugin failure modes.
+"""xpilot migrated rule regression cases.
+
+Legacy parameter constants select fixtures only; production ignores those bits.
 
 auto_speed (0x3C2, bus 1, 8 bytes):
-- Inactive outside SAFETY_TESLA, without the 0x4000 safetyParamSP bit, or without the vehicle bus.
+- Inactive outside SAFETY_TESLA, without an installed auto_speed rule, or without the vehicle bus.
 - Wrong address, bus, or length is not plugin-owned and remains blocked by stock Tesla safety.
 - TX is blocked before an idle mux-1 template exists or after that template is stale.
 - TX is blocked when any non-tick byte or the tick byte's non-tick bits differ from the template.
@@ -13,7 +15,7 @@ auto_speed (0x3C2, bus 1, 8 bytes):
 - At most 50 ticks per session; a 3-second idle gap starts a new session.
 
 ambient_light (0x679, bus 1, 7 bytes):
-- Inactive outside SAFETY_TESLA, without the 0x2000 safetyParamSP bit, or without the vehicle bus.
+- Inactive outside SAFETY_TESLA, without an installed ambient rule, or without the vehicle bus.
 - Wrong address, bus, or length is not plugin-owned and remains blocked by stock Tesla safety.
 - TX is blocked before a template exists or after that template is stale.
 - TX is blocked for a non-red color, excessive brightness, an invalid target, or a changed protected template bit.
@@ -28,6 +30,7 @@ import unittest
 
 from opendbc.car.structs import CarParams
 from opendbc.safety.tests import common
+from opendbc.safety.tests.xpilot_rules_helpers import AUTO, AMBIENT, harness, table, upload
 from opendbc.sunnypilot.car.tesla.values import TeslaSafetyFlagsSP
 
 
@@ -42,7 +45,11 @@ class XpilotPluginSafetyBase(common.SafetyTestBase):
   SAFETY_MODEL = None
 
   def _set_mode(self, mode, param=0, param_sp=0):
-    self.safety.set_current_safety_param_sp(param_sp)
+    self.safety = harness()
+    self.assertEqual(0, self.safety.set_safety_hooks(CarParams.SafetyModel.noOutput, 0))
+    rules = [rule for bit, rule in ((AUTO_SPEED_PARAM, AUTO), (AMBIENT_PARAM, AMBIENT)) if param_sp & bit]
+    self.assertEqual(0, upload(self.safety, table(rules))[3])
+    self.safety.set_current_safety_param_sp(param_sp & 0x1FFF)
     self.assertEqual(0, self.safety.set_safety_hooks(mode, param))
 
   def _set_tesla(self, param_sp):

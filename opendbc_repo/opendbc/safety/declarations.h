@@ -37,6 +37,11 @@
 #define SAFETY_BYD 35U
 #define SAFETY_MG 38U
 
+#define XPILOT_RULES_ABI 1U
+#define XPILOT_RULES_MAX 8U
+#define XPILOT_RULES_BYTES 4096U
+#define XPILOT_RULES_MAGIC 0x31525058U
+
 #define GET_BIT(msg, b) ((bool)!!(((msg)->data[((b) / 8U)] >> ((b) % 8U)) & 0x1U))
 #define GET_FLAG(value, mask) (((value) & (mask)) == (mask))
 

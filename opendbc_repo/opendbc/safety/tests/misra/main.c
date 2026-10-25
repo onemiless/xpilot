@@ -1,4 +1,6 @@
 #include "opendbc/safety/safety.h"
+#include "../../../../../panda/board/crc.h"
+#include "../../../../../panda/board/xpilot_rules.h"
 
 // this file is checked by cppcheck
 
@@ -31,3 +33,8 @@ SAFETY_UNUSED(gen_crc_lookup_table_8);
 SAFETY_UNUSED(gen_crc_lookup_table_16);
 SAFETY_UNUSED(to_signed);
 SAFETY_UNUSED(alternative_experience);
+
+// App loader entry points are driven by USB/SPI, outside this checker translation unit.
+SAFETY_UNUSED(xpilot_rules_control);
+SAFETY_UNUSED(xpilot_rules_upload);
+SAFETY_UNUSED(crc32_init);
