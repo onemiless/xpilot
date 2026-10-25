@@ -25,7 +25,7 @@ import unittest
 import zlib
 
 from opendbc.safety.tests.xpilot_rules_helpers import (
-  ADDRS, AUTO, OWNED, ROOT, configure, control, frames, harness, packet, record, status, table, upload,
+  ADDRS, AUTO, OWNED, ROOT, configure, control, field, frames, harness, packet, record, rule, status, table, upload,
 )
 
 
@@ -87,6 +87,16 @@ class TestXpilotRules(unittest.TestCase):
         self.assertEqual((0, 0, 0), status(self.s)[4:7])
     self.assertEqual((2, 0), upload(self.s, table(()))[2:4])
     self.assertEqual(zlib.crc32(table(())), status(self.s)[4])
+    # Exercise both fixed buffer/rule-count ceilings with a valid 4096-byte table.
+    largest = []
+    for i, (fields, tuples) in enumerate(zip((4, 4, 4, 4, 4, 4, 3, 3), (8, 8, 7, 7, 7, 7, 7, 7), strict=True)):
+      largest.append(rule(0x500 + i, 8, (255 ^ ((1 << fields) - 1),) + (255,) * 7,
+                          fields=tuple(field(j, 1, 0, 1) for j in range(fields)), tuples=((1, [0]),) * tuples))
+    self.assertEqual(4096, len(table(largest)))
+    self.assertEqual((2, 0), upload(self.s, table(largest))[2:4])
+    full = rule(0x500, 8, (0,) + (255,) * 7,
+                fields=tuple(field(j, 1, 0, 1, (0,) * 8) for j in range(8)), tuples=((255, [0] * 8),) * 8)
+    self.assertEqual((2, 0), upload(self.s, table((full,)))[2:4])
 
   def test_R4_R5_loader(self):
     b = table()
