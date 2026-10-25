@@ -40,6 +40,8 @@ Failure cases listed before implementation:
 - S35 install or uninstall succeeds while IsOffroad is False
 - S36 missing/invalid use installs, damages an old version, or loads without a reason
 - S37 tile/use mismatch installs instead of preserving the old version
+- S38 incompatible requires installs or replaces a working version
+- S39 incompatible requires loads instead of being skipped with its reason
 """
 import gzip
 import hashlib
@@ -262,6 +264,18 @@ def main() -> int:
     after = {p.name: p.read_bytes() for p in use_target.iterdir() if p.is_file()}
     if not error or after != before_use:
       errors.append(f"{code} use={use!r} show={show!r}: error={error!r}, preserved={after == before_use}")
+  incompatible = {"need_hook": {"hooks": ["teleport"]}, "need_rules": {"rule_abi": 1},
+                  "need_native": {"native": {"machine": "sparc", "python": "cpython-27"}}, "bad_requires": []}
+  for pid, requires in incompatible.items():
+    publish("ext_ok", archive("ext_ok", good_files("ext_ok", requires=requires)), version="4.0.0")
+    error = store.install(store.IndexEntry(**{**entries[-1], "installable": True}))
+    after = {p.name: p.read_bytes() for p in use_target.iterdir() if p.is_file()}
+    if not error or after != before_use:
+      errors.append(f"S38 {pid} installed or damaged previous version: {error}")
+    dest = mf.INSTALL_DIR / pid
+    dest.mkdir()
+    for name, content in good_files(pid, requires=requires).items():
+      (dest / name).write_text(content)
   publish("ext_ok", archive("ext_ok", good_files("ext_ok")), version="1.0.0")
   store.install(store.IndexEntry(**{**entries[-1], "installable": True}))
   bad_use = mf.INSTALL_DIR / "bad_use"
@@ -283,6 +297,9 @@ def main() -> int:
   if any(c.NAME == "ext_here" for c in plugins.PLUGINS) or "ext_here" not in plugins.LOAD_ERRORS:
     errors.append("S14 installed plugin for another platform loaded")
   names = [c.NAME for c in plugins.PLUGINS]
+  for pid in incompatible:
+    if pid in names or not plugins.LOAD_ERRORS.get(pid):
+      errors.append(f"S39 {pid} loaded or reason missing")
   if "bad_use" in names or "use" not in plugins.LOAD_ERRORS.get("bad_use", ""):
     errors.append("S36 invalid installed use loaded or lost its reason")
   for pid in bad_safety:

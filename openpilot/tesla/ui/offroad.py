@@ -7,7 +7,9 @@ import time
 
 from openpilot.common.basedir import BASEDIR
 from openpilot.tesla import store
+from openpilot.tesla import manifest as mf
 from openpilot.tesla.manifest import CATEGORIES, conflicting
+from openpilot.tesla.plugin_params import ParamsView
 from openpilot.tesla.plugins import FAULTS_PARAM, LOAD_ERRORS, PLUGINS, REQUIRED_ROLES, is_enabled, missing_roles, resolve
 
 MICI = (536, 240)
@@ -56,6 +58,8 @@ def tesla_models() -> list[tuple[str, dict]]:
 def offroad_alerts(params) -> list[tuple[int, str]]:
   """(severity, text) of the active offroad alerts (alertmanager.set_offroad_alert), most severe first."""
   alerts = [(1, f"No {role} plugin: driving assistance unavailable") for role in missing_roles(params)]
+  warnings = ParamsView(params, mf.UPDATE_SPECS).get(mf.UPDATE_COMPAT_PARAM) or {}
+  alerts += [(1, f"System update plugin incompatibility: {name}: {reason}") for name, reason in warnings.items()]
   for key in OFFROAD_ALERT_KEYS:
     alert = params.get(key)
     if alert:
@@ -107,6 +111,10 @@ def plugin_rows(params) -> list[tuple[str, str, str]]:
 def switch_plugin(plugin, value: bool, params) -> str | None:
   """Switch a plugin; switching on switches off every plugin sharing an exclusive claim. Clears its fault mark.
   None on success, else the required-role refusal. params = plugins.view(...); callers check offroad."""
+  if value:
+    ok, reason = mf.compatible(plugin.MANIFEST, mf.HOST_CAPS)
+    if not ok:
+      return reason
   if plugin.ENABLE_PARAM is None:
     return
   off = conflicting(plugin.NAME, [(p.NAME, p.PRIORITY, p.CLAIMS) for p in PLUGINS]) if value else {plugin.NAME}

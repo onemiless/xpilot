@@ -24,7 +24,7 @@ from openpilot.selfdrive.car.helpers import convert_carControlSP, convert_to_cap
 
 from openpilot.sunnypilot.mads.helpers import set_alternative_experience, set_car_specific_params
 from openpilot.sunnypilot.selfdrive.car import interfaces as sunnypilot_interfaces
-from openpilot.tesla.plugins import CarPlugins, radar_interface
+from openpilot.tesla.plugins import CarPlugins, radar_interface, log_snapshot
 from opendbc.car.car_helpers import get_radar_interface
 
 REPLAY = "REPLAY" in os.environ
@@ -126,6 +126,7 @@ class Car:
 
     self.plugins = CarPlugins(self.CP, self.params)  # xpilot feature plugins (openpilot/tesla/plugins)
     self.plugins.setup(self.CP_SP)
+    log_snapshot(self.params)
 
     self.CP.alternativeExperience = 0
     # mads

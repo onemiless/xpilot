@@ -182,6 +182,8 @@ def finalize_update() -> None:
   run(["git", "reset", "--hard"], FINALIZED)
   run(["git", "submodule", "foreach", "--recursive", "git", "reset", "--hard"], FINALIZED)
 
+  from openpilot.tesla.manifest import check_staged
+  check_staged(FINALIZED)
   set_consistent_flag(True)
   cloudlog.info("done finalizing overlay")
 
