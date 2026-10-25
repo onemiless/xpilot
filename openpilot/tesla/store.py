@@ -109,8 +109,9 @@ def _validate(staged: Path, entry: IndexEntry) -> None:
     raise ValueError(f"manifest id {m.id!r} != index id {entry.id!r}")
   if m.id in builtin_ids():
     raise ValueError("id used by a built-in plugin")
-  if not mf.platform_ok(m.platform):
-    raise ValueError(f"built for {m.platform}, this device is {mf.host_platform()}")
+  ok, reason = mf.compatible(m, mf.HOST_CAPS)
+  if not ok:
+    raise ValueError(reason)
   module = m.entry.split(":")[0]
   for f in ("__init__.py", f"{module}.py"):
     if not (staged / f).is_file():

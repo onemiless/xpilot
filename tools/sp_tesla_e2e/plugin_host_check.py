@@ -51,6 +51,9 @@ Failure cases listed before implementation:
 - P41 switching on a conflict silently disables the only enabled claimant of another required role
 
 Run from the repo root with the openpilot python env. Native-only modules (Params) are stubbed if missing.
+- P42 enabling an incompatible plugin writes switches, disables peers, or clears faults
+- P43 staged update uses running capabilities, omits incompatibilities/alerts, or blocks activation
+- P44 drive start omits system/plugin hashes or rule CRC, includes inactive plugins, or logs repeatedly
 """
 import ast
 import json
@@ -63,6 +66,7 @@ import types
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
+ARTIFACTS = Path(tempfile.mkdtemp(prefix="xp-host-"))
 sys.path[:0] = [str(ROOT), str(ROOT / "opendbc_repo")]
 try:
   import openpilot.common.params  # noqa: F401
@@ -277,9 +281,116 @@ def main() -> int:
   errors += registration_checks(plugins_mod)
   errors += service_checks(plugins_mod)
   errors += required_role_checks(plugins_mod, real)
+  errors += capability_checks(plugins_mod, real)
 
-  print(json.dumps({"plugins": [c.NAME for c in real], "errors": errors}, indent=1))
+  print(json.dumps({"plugins": [c.NAME for c in real], "artifacts": str(ARTIFACTS), "errors": errors}, indent=1))
   return 1 if errors else 0
+
+
+def capability_checks(plugins, real) -> list[str]:
+  from dataclasses import replace
+  from openpilot.tesla import manifest as mf
+  from openpilot.tesla.plugin_params import ParamsView
+  from openpilot.tesla.ui import offroad
+  errors = []
+  class Params(FakeParams):
+    def put(self, key, value, block=False):
+      self.values[key] = value
+    put_bool = put
+
+  m = replace(real[0].MANIFEST, requires={"hooks": ["teleport"]}) if hasattr(real[0].MANIFEST, "requires") else real[0].MANIFEST
+  incoming = type("Incoming", (Plugin,), {"NAME": "incoming", "ENABLE_PARAM": "IncomingOn", "MANIFEST": m,
+                                          "CLAIMS": ("source:demo",)})
+  peer = type("Peer", (Plugin,), {"NAME": "peer", "ENABLE_PARAM": "PeerOn", "CLAIMS": incoming.CLAIMS})
+  p = Params({"PeerOn": True, plugins.FAULTS_PARAM: {"incoming": "old fault"}})
+  before = dict(p.values)
+  with patch.object(offroad, "PLUGINS", (incoming, peer)):
+    error = offroad.switch_plugin(incoming, True, p)
+  if not error or "teleport" not in error or p.values != before:
+    errors.append(f"P42 incompatible enable: {error!r}, params={p.values}")
+  if not hasattr(mf, "check_staged") or not hasattr(plugins, "log_snapshot"):
+    return errors + ["P43 missing staged precheck", "P44 missing drive snapshot"]
+
+  with tempfile.TemporaryDirectory() as tmp, patch.object(mf, "INSTALL_DIR", Path(tmp) / "installed"):
+    stage = Path(tmp) / "staged"
+    path = stage / "openpilot/tesla/manifest.py"
+    path.parent.mkdir(parents=True)
+    # The staged host drops setup; the running host still provides it.
+    path.write_text((ROOT / "openpilot/tesla/manifest.py").read_text() + '\nHOST_CAPS["hooks"] = []\n')
+    installed = mf.INSTALL_DIR / "needs_setup"
+    installed.mkdir(parents=True)
+    data = {"id": installed.name, "api": 1, "category": "tools", "use": "both", "entry": "plugin:P",
+            "version": "1.2.3", "requires": {"hooks": ["setup"]}}
+    (installed / "plugin.json").write_text(json.dumps(data))
+    mf.check_staged(stage, p)
+    warnings = ParamsView(p, mf.UPDATE_SPECS).get(mf.UPDATE_COMPAT_PARAM)
+    (ARTIFACTS / "staged-incompatibilities.json").write_text(json.dumps(warnings, indent=2))
+    if "setup" not in warnings.get("needs_setup", ""):
+      errors.append(f"P43 staged capabilities ignored: {warnings}")
+    with patch.object(plugins, "PLUGINS", real):
+      if not any("needs_setup" in text and "setup" in text for _, text in offroad.offroad_alerts(p)):
+        errors.append("P43 staged warning not shown offroad")
+    # Execute the real finalizer with only filesystem/update plumbing replaced.
+    tree = ast.parse((ROOT / "openpilot/system/updated/updated.py").read_text())
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "finalize_update")
+    events = []
+    env = {"os": types.SimpleNamespace(path=types.SimpleNamespace(exists=lambda p: False)),
+           "shutil": types.SimpleNamespace(copytree=lambda *a, **k: None), "OVERLAY_MERGED": "merged", "FINALIZED": str(stage),
+           "cloudlog": types.SimpleNamespace(info=lambda *a: None), "run": lambda *a: None,
+           "set_consistent_flag": lambda value: events.append(value)}
+    with patch.object(mf, "check_staged", side_effect=lambda *a: events.append("precheck")):
+      exec(compile(ast.Module(body=[fn], type_ignores=[]), "updated.py", "exec"), env)
+      env["finalize_update"]()
+    if events != [False, "precheck", True]:
+      errors.append(f"P43 update activation ordering/blocked: {events}")
+    path.write_text((ROOT / "openpilot/tesla/manifest.py").read_text())
+    mf.check_staged(stage, p)
+    if ParamsView(p, mf.UPDATE_SPECS).get(mf.UPDATE_COMPAT_PARAM):
+      errors.append("P43 resolved warning not cleared")
+    path.unlink()
+    mf.check_staged(stage, p)
+    if not ParamsView(p, mf.UPDATE_SPECS).get(mf.UPDATE_COMPAT_PARAM):
+      errors.append("P43 failed precheck silently ignored")
+
+    events = []
+    tree = ast.parse((ROOT / "openpilot/selfdrive/car/card.py").read_text())
+    init = next(n for c in tree.body if isinstance(c, ast.ClassDef) and c.name == "Car"
+                for n in c.body if isinstance(n, ast.FunctionDef) and n.name == "__init__")
+    snapshot_calls = [n for n in ast.walk(init) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "log_snapshot"]
+    if len(snapshot_calls) != 1:
+      errors.append("P44 card does not log once per drive initialization")
+    active_plugin = real[0]
+    off = type("Off", (Plugin,), {"NAME": "off", "ENABLE_PARAM": "OffKey"})
+    loser = type("Loser", (Plugin,), {"NAME": "loser", "PRIORITY": 20000, "CLAIMS": active_plugin.CLAIMS})
+    p.put("XpilotPandaRules", {"crc32": 12345})
+    with patch.object(plugins, "PLUGINS", (active_plugin, off, loser)), patch.object(plugins.cloudlog, "event", side_effect=lambda name, **kw: events.append((name, kw))), \
+         patch.object(mf, "compiled_param_keys", return_value={"XpilotPandaRules"}):
+      if snapshot_calls:
+        exec(compile(ast.Expression(snapshot_calls[0]), "card.py", "eval"), {"log_snapshot": plugins.log_snapshot,
+             "self": types.SimpleNamespace(params=p)})
+    if len(events) != 1 or events[0][0] != "xpilot.drive_snapshot":
+      errors.append(f"P44 missing drive event: {events}")
+    else:
+      snapshot = events[0][1]
+      (ARTIFACTS / "drive-snapshot.json").write_text(json.dumps(snapshot, indent=2))
+      expected = [{"id": active_plugin.NAME, "version": active_plugin.MANIFEST.version, "sha256": active_plugin.SHA256}]
+      if snapshot.get("plugins") != expected or len(snapshot.get("system_commit", "")) != 40 or snapshot.get("rule_table_crc32") != 12345:
+        errors.append(f"P44 incomplete snapshot: {snapshot}")
+    (installed / "__init__.py").write_text("")
+    code = installed / "plugin.py"
+    code.write_text("from openpilot.tesla.plugin import Plugin\nclass P(Plugin):\n  pass\n")
+    def digest():
+      return next(c.SHA256 for c in plugins._discover()[0] if c.NAME == installed.name)
+    first = digest()
+    cache = installed / "__pycache__"
+    cache.mkdir(exist_ok=True)
+    (cache / "ignored.pyc").write_bytes(b"cache")
+    if digest() != first:
+      errors.append("P44 content hash depends on import cache")
+    code.write_text(code.read_text() + "\nCHANGED = 1\n")
+    if digest() == first or len(first) != 64:
+      errors.append("P44 content hash misses source changes")
+  return errors
 
 
 def required_role_checks(plugins, real) -> list[str]:
@@ -343,7 +454,8 @@ def required_role_checks(plugins, real) -> list[str]:
         errors.append(f"P39 disabled fallback permits switching off {role}")
 
   combined = type("Combined", (Plugin,), {"NAME": "combined", "ENABLE_PARAM": "CombinedOn", "CLAIMS": roles[:2]})
-  incoming = type("Incoming", (Plugin,), {"NAME": "incoming", "ENABLE_PARAM": "IncomingOn", "CLAIMS": roles[:1]})
+  incoming = type("Incoming", (Plugin,), {"NAME": "incoming", "ENABLE_PARAM": "IncomingOn", "CLAIMS": roles[:1],
+                                          "MANIFEST": real[0].MANIFEST})
   p = Params({"CombinedOn": True})
   with patch.object(offroad, "PLUGINS", (combined, incoming)):
     if offroad.switch_plugin(incoming, True, p) != f"required role {roles[1]}" or p.writes:

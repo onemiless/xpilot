@@ -136,7 +136,7 @@ def check_plugins(errors: list) -> None:
     errors.append("O3 next_choice does not wrap or recover from an unknown value")
 
   def fake(name, claims, param):
-    return type(name, (), {"NAME": name, "PRIORITY": 0, "CLAIMS": claims, "ENABLE_PARAM": param})
+    return type(name, (), {"NAME": name, "PRIORITY": 0, "CLAIMS": claims, "ENABLE_PARAM": param, "MANIFEST": PLUGINS[0].MANIFEST})
   a, b, c, d = fake("a", ["x.claim"], "ExtAOn"), fake("b", ["x.claim"], "ExtBOn"), fake("c", ["y.claim"], "ExtCOn"), fake("d", ["x.claim"], None)
   saved = offroad.PLUGINS
   offroad.PLUGINS = (a, b, c, d)

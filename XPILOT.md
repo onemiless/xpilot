@@ -103,10 +103,17 @@ opendbc_repo/opendbc/safety/plugins/
 | `claims` | 要用的资源，见下表；没声明的一律被拒绝 |
 | `settings` | 设置项：只有 key 和 label 是开关；带 `range: [最小, 最大, 步长, 单位, 除数]` 或 `choices: [[标签, 值], ...]` 是选择项 |
 | `params` | 参数声明，格式见 `gen_params.py`；改完运行 `python3 openpilot/tesla/plugins/gen_params.py` |
+| `requires` | 可选能力需求：`{"hooks": ["setup"], "msg": ["lanes.hint"], "rule_abi": 1, "native": {"machine": "aarch64", "python": "cpython-312"}}`；每项可省略 |
 
 清单有错（id 不对、类别未知、use 缺失或无效、api 不匹配、资源格式错、JSON 坏了）或代码导入失败的插件会被跳过，在 Plugins 页顶部显示 "Failed: <id>"，不影响其他插件。
 
 磁贴声明须与 `use` 一致：`onroad` 不能有 `show="offroad"`，`offroad` 不能有 `show="onroad"`，`show="always"` 必须配 `both`。`manifest.tile_problems()` 是清单检查、商店安装和插件仓库检查共用的源码校验；安装拒绝不一致的包且保留旧版本。`use` 不授予或门控任何运行钩子。
+
+能力预检统一调用 `manifest.compatible(manifest, HOST_CAPS)`，`api` 仍是 1，没写 `requires` 的旧插件继续有效。`hooks` 是 `Plugin` 方法名；`msg` 当前用 `*` 表示支持所有合法 kind 的 JSON 传输，不承诺 payload schema 或多发布者 broker。`native` 必须等于现有 `host_platform()` 的 machine/Python tag，旧 `platform` 字段也继续检查。未知能力、格式错误或不匹配都带原因拒绝安装、启用或加载；发现失败写进 `LOAD_ERRORS`，启用失败不改任何开关或故障标记。`RULE_ABI` 和 `HOST_CAPS["rule_abi"]` 当前为 `None`，G1 固件规则引擎交付并验证前拒绝要求 ABI 1 的插件。
+
+系统 updater 在 finalized 树置为可激活之前，用该树自己的清单解析器和 `HOST_CAPS` 检查已安装插件，不导入插件代码。不相容列表（含原因）写入文件参数 `XpilotUpdateIncompatiblePlugins`（`/data/xpilot_plugins/.params/`，沿用 `ParamsView`），停车页逐项提示；不阻断系统更新。预检本身失败也提示，后续成功预检会清除旧提示。
+
+card 每次启动用 `cloudlog.event("xpilot.drive_snapshot", ...)` 记录本行程的 system commit、active winners 的 id/version/sha256，以及存在时 `XpilotPandaRules` 的 `crc32`。插件 sha256 在发现时固定，按相对路径排序，对每个普通文件依次哈希 `路径 UTF-8 + NUL + 8 字节大端长度 + 内容`，排除 `__pycache__` 和 `.pyc`；它是内容摘要，不是商店压缩包摘要。快照不会证明 Panda 已加载或设备已部署。
 
 ### 4.2 类别（`manifest.CATEGORIES`，按控制链路顺序）
 
