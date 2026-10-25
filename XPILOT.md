@@ -377,6 +377,8 @@ Tesla 接管例外（用户 2026-10-25 决定）：`safety.h` 的最低频率检
 
 - **仓库**：`github.com/onemiless/xpilot-plugins`。`plugins/<id>/` 是源码，`tools/build_index.py` 生成可复现的 `dist/<id>-<版本>.tar.gz` 和 `index.json`（每个插件的 url 和 sha256）。第三方提 PR，维护者审核后合并。**暂不签名**：sha256 只防下载损坏或被替换，可信度来自审核过的仓库。
 - **设备端**：Plugins 磁贴就是插件市场（见第 9 节），左下角 Refresh 拉取索引（第一次打开时自动拉一次）。只能停车时安装、更新、删除，重启后生效。
+- **Install & enable**：两套商店入口的新包按钮明确说明停车自动重启。只启用用户选择的包，清单默认值不变；更新仍保留已有开关/设置。`store.install(entry, activate=True, offroad=...)` 校验后从新磁盘清单读取开关/claims，复用冲突与必需角色检查，关闭可关闭的冲突项，保留内置 `sp_models` 的 null 开关，写 `DoReboot` 前同时重查 `IsOffroad` 和 UI 停车状态。旧版本和涉及开关的原始文件保留到重启请求写入成功；失败恢复原版、开关和原有重启请求，UI 只报失败。恢复本身失败则保留并报告事务备份路径。安装探测在独立 Python 进程导入新入口，不热加载到当前 manager。
+- **本机准备与状态**：持有 `role:perception.model` 的包要在入口类实现 `@classmethod prepare_install() -> bool`，在不等待手机、不写用户设置的情况下验证/准备本机模型及相机 warp，确认可用才返回 `True`；缺少方法、返回非 True、抛异常或超过 30 秒均拒绝激活并回滚。包的入口导入负责显式依赖宿主 ABI；不引入依赖求解。运行插件以临时文件加 `os.replace` 原子更新 `<INSTALL_DIR>/.data/<id>/status.json`：`{"state":"Local ready|Phone warming|Phone active|Local fallback","version":"<包版本>","updated_at":<time.time()>}`，至少每秒刷新。UI 只接受同版本、过去 5 秒内的已知状态，否则显示 `Installed`；落盘和安装探测成功不代表 Phone active。插件缺席/导入失败仍由宿主发现内置 `sp_models`。这是主机事务合同，真实重启和首次 onroad 仍须设备验证。
 - **安装位置**：`/data/xpilot_plugins/<id>/`（可用环境变量 `XPILOT_PLUGINS_DIR` 改），系统更新不会动它。安装过程：限制大小下载 → 校验 sha256 → 只解出普通文件（拒绝 `../`、绝对路径、链接）→ 校验清单（id、api、入口模块、不能和内置插件同 id、参数名不能重复）→ 用改名的方式整体替换。任何一步失败，原来装的版本保持不变。
 - **下载插件的代码**：作为包 `xpilot_ext.<id>` 导入，插件内部要用相对导入（`from .controller import X`）。
 - **下载插件的参数**：不编译进 Params，而是存在 `/data/xpilot_plugins/.params/<key>`，支持 BOOL、INT、FLOAT、STRING、JSON。宿主把交给插件、开关判断和设置页的 params 都包了一层（`plugin_params.ParamsView`），插件照常用 `params.get/get_bool/put`。删除插件时参数值保留，重装后设置还在。
@@ -469,6 +471,7 @@ python3 tools/sp_tesla_e2e/phase3_check.py                            # 可替�
 python3 tools/sp_tesla_e2e/phase4_check.py                            # 可替换的接管和安全兜底：宿主底线、出错锁定、card 门控
 python3 tools/sp_tesla_e2e/panda_rules_check.py --output /tmp/panda-rules # C++ host → T32 真实 C loader；先 scons 构建 pandad/tests/test_panda_rules
 python3 tools/sp_tesla_e2e/store_check.py                             # 插件商店：下载、校验、安装、代码结构、参数（本机 HTTP 服务）
+python3 tools/sp_tesla_e2e/store_activation_e2e.py --output /tmp/xpilot-s2 # HTTP安装/激活/停车重启请求/新manager发现注册、失败回滚；保存包/参数快照/result.json/SHA256SUMS
 python3 tools/sp_tesla_e2e/offroad_pages_check.py                     # 大屏停车页面：页面模块、参数名、插件行、商店行、视口、触摸映射
 python3 tools/sp_tesla_e2e/store_e2e.py --repo ~/xpilot-plugins       # 插件仓库端到端：索引 → 安装 → 发现 → 钩子生效
 python3 tools/dev_sp_release/upstream_watch.py                        # 列出值得 cherry-pick 的上游提交

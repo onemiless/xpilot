@@ -78,6 +78,9 @@ class CoreParams:  # stands in for the compiled Params: knows only core and buil
   def put_bool(self, key, value, block=False):
     self.put(key, bool(value), block)
 
+  def remove(self, key):
+    self.values.pop(key, None)
+
 
 try:
   import openpilot.common.params  # noqa: F401

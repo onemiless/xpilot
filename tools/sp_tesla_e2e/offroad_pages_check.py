@@ -158,13 +158,13 @@ def check_store(errors: list) -> None:
                                                                           "0" * 64, None, installable)
   saved = store.installed_versions, store.install, store.uninstall
   store.installed_versions = lambda: {"same": "1.0.0", "old": "0.9.0", "gone": "1.0.0"}
-  store.install = lambda e: calls.append(("install", e.id))
+  store.install = lambda e, **kw: calls.append(("install", e.id, kw.get("activate", False)))
   store.uninstall = lambda pid: calls.append(("uninstall", pid))
   try:
     offroad_now = [True]
     jobs = offroad.StoreJobs(lambda: offroad_now[0])
     jobs.entries = [entry("new"), entry("same"), entry("old"), entry("api", installable=False), entry("gone", installable=False)]
-    want = {"new": ("INSTALL", "v1.0.0", True), "same": ("REMOVE", "v1.0.0 installed", True), "old": ("UPDATE", "v0.9.0 -> v1.0.0", True),
+    want = {"new": ("INSTALL & ENABLE", "v1.0.0", True), "same": ("REMOVE", "v1.0.0 Installed", True), "old": ("UPDATE", "v0.9.0 -> v1.0.0", True),
             "api": ("N/A", f"needs api {mf.API_VERSION}", False), "gone": ("REMOVE", "v1.0.0 installed", True)}
     for e in jobs.entries:
       got = (jobs.action(e), jobs.row_value(e), jobs.can_act(e.id))
@@ -185,7 +185,7 @@ def check_store(errors: list) -> None:
     jobs.run(lambda: jobs.act("same"), wait=True)
     jobs.run(lambda: jobs.act("old"), wait=True)
     jobs.run(lambda: jobs.act("api"), wait=True)
-    if calls != [("install", "new"), ("uninstall", "same"), ("install", "old")]:
+    if calls != [("install", "new", True), ("uninstall", "same"), ("install", "old", False)]:
       errors.append(f"O5 store actions: {calls}")
     jobs.entries = []
     if jobs.action(None, "old") != "REMOVE" or jobs.action(None, "nope") != "N/A" or not jobs.can_act("old"):

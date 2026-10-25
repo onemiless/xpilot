@@ -1,11 +1,12 @@
 """Plugins page (native): the plugin market. Left: one button per manifest category (plus "Failed" when a plugin failed to
 load) and the store Refresh button. Right: the selected category's rows: a switch per plugin (version, author and
 description below the title; tapping the row opens its page with settings, info and Update/Remove for downloaded plugins),
-then the store entries not loaded this boot with Install. The index is fetched once on first show (offroad.StoreJobs);
+then the store entries not loaded this boot with Install & enable. The index is fetched once on first show (offroad.StoreJobs);
 install and remove apply after a restart. Switching a plugin on switches off its conflicts (offroad.switch_plugin)."""
 import pyray as rl
 
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.button import Button, ButtonStyle
 from openpilot.system.ui.widgets.list_view import ITEM_PADDING, ButtonAction, ListItem, TextAction, text_item, toggle_item
@@ -96,6 +97,10 @@ class PluginPage(ListPage):
   def show_event(self):
     super().show_event()
 
+  def _update_state(self):
+    if gui_app.frame % gui_app.target_fps == 0:
+      self.switches.refresh()
+
 
 class PluginsPage(Widget):
   def __init__(self):
@@ -105,7 +110,8 @@ class PluginsPage(Widget):
     self.pages: dict[str, PluginPage] = {}
     self.selected = 0
     self.fetched = False
-    self.refresh_button = Button(lambda: "working..." if jobs.busy else f"Refresh ({'failed' if jobs.failed else jobs.status})", lambda: jobs.run(jobs.fetch), font_size=40)
+    self.refresh_button = Button(lambda: "working..." if jobs.busy else f"Refresh ({'failed' if jobs.failed else jobs.status})",
+                                 lambda: jobs.run(jobs.fetch), font_size=40)
     self.refresh_button.set_enabled(lambda: not jobs.busy)
     self._build()
 
@@ -127,7 +133,8 @@ class PluginsPage(Widget):
         page.add(self.switches.make(p, summary, on_tap=lambda p=p: self._open_plugin(p)))
       for e in entries:
         use = e.use.replace("both", "onroad + offroad") if e.use in ("onroad", "offroad", "both") else "use not declared"
-        page.add(InfoRow(lambda e=e: f"{e.name} - {jobs.row_value(jobs.current(e.id) or e)}", f"{use} - v{e.version} - {e.author} - {e.description}",
+        page.add(InfoRow(lambda e=e: f"{e.name} - {jobs.row_value(jobs.current(e.id) or e)}",
+                         f"{use} - v{e.version} - {e.author} - {e.description}\nInstall & enable restarts while parked.",
                          ButtonAction(lambda e=e: jobs.action(jobs.current(e.id) or e), enabled=lambda e=e: jobs.can_act(e.id)),
                          callback=lambda e=e: jobs.run(lambda: jobs.act(e.id))))
       self.sections.append((title, page))
@@ -163,6 +170,8 @@ class PluginsPage(Widget):
       self._shown.hide_event()
 
   def _update_state(self):
+    if gui_app.frame % gui_app.target_fps == 0:
+      self.switches.refresh()
     if self.jobs.dirty:
       self.jobs.dirty = False
       self._build()

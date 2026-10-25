@@ -55,6 +55,8 @@ jobs:
           python3 tools/sp_tesla_e2e/$check.py > /tmp/xpilot-ci/$check.json
           echo "::endgroup::"
         done
+    - name: Store activation transaction end to end
+      run: python3 tools/sp_tesla_e2e/store_activation_e2e.py --output /tmp/xpilot-ci/store-activation
     - name: Plugin repository end to end
       run: |
         set -o pipefail

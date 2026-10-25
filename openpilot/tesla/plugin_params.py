@@ -81,11 +81,15 @@ class ParamsView:
     path = self._path(key)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{key}.")
-    with os.fdopen(fd, "w") as f:
-      f.write(_encode(self._specs[key]["type"], value))
-      f.flush()
-      os.fsync(f.fileno())
-    os.replace(tmp, path)
+    try:
+      with os.fdopen(fd, "w") as f:
+        f.write(_encode(self._specs[key]["type"], value))
+        f.flush()
+        os.fsync(f.fileno())
+      os.replace(tmp, path)
+    finally:
+      if os.path.exists(tmp):
+        os.unlink(tmp)
 
   def put_bool(self, key, value, block=False):
     if key not in self._specs:
