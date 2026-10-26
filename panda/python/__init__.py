@@ -515,14 +515,32 @@ class Panda:
   def call_control_api(self, msg):
     self._handle.controlWrite(Panda.REQUEST_OUT, msg, 0, 0, b'')
 
+  def request_long_owner(self, target):
+    if self.health_version != self.HEALTH_PACKET_VERSION or self.HEALTH_STRUCT.size != 54:
+      raise RuntimeError("Tesla owner health ABI unavailable")
+    if type(target) is not int or target not in (0, 1):
+      raise ValueError("owner must be STOCK=0 or SP=1")
+    reply = bytes(self._handle.controlRead(Panda.REQUEST_IN, 0xa5, target, 0, 8))
+    if len(reply) != 8:
+      raise RuntimeError("Short owner reply; resolve by health readback")
+    abi, owner, pending, reason, age, reserved = struct.unpack("<BBBBHH", reply)
+    if abi != 1 or owner > 1 or pending not in (0, 1, 255) or reason > 19 or reserved:
+      raise RuntimeError("Invalid owner reply; resolve by health readback")
+    return {"owner": owner, "pending": pending, "refusal": reason, "pending_age_ms": age}
+
   # ******************* health *******************
 
-  @ensure_health_packet_version
   def health(self):
-    dat = self._handle.controlRead(Panda.REQUEST_IN, 0xd2, 0, 0, self.HEALTH_STRUCT.size)
-    a = self.HEALTH_STRUCT.unpack(dat)
+    if self.health_version == self.HEALTH_PACKET_VERSION:
+      layout = self.HEALTH_STRUCT
+    elif self.health_version == 3398409903:  # pre-G8 49-byte health.h
+      layout = struct.Struct("<IHHIIIIIHBBHBHBBHHHHBB")
+    else:
+      raise RuntimeError("Unknown health version")
+    dat = self._handle.controlRead(Panda.REQUEST_IN, 0xd2, 0, 0, layout.size)
+    a = layout.unpack(dat)
     flags = a[8]
-    return {
+    health = {
       "uptime": a[0],
       "voltage": a[1],
       "current": a[2],
@@ -555,6 +573,11 @@ class Panda:
       "controls_allowed_lateral": a[21] & 1,
       "controls_allowed_longitudinal": (a[21] >> 1) & 1,
     }
+
+    if layout.size == 54:
+      health.update(tesla_long_owner=a[22], tesla_long_pending=a[23],
+                    tesla_long_pending_age_ms=a[24], tesla_long_refusal=a[25])
+    return health
 
   @ensure_health_packet_version
   def can_health(self, can_number):

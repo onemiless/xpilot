@@ -573,6 +573,12 @@ struct PandaState @0xa7649e2575e4591e {
 
   nmiReset @40 :Bool;
   hardfaultReset @41 :Bool;
+  longOwnerAvailable @42 :Bool;
+  longOwner @43 :UInt8;
+  longOwnerPending @44 :UInt8 = 255;
+  longOwnerPendingAgeMs @45 :UInt16;
+  longOwnerRefusal @46 :UInt8;
+  healthVersion @47 :UInt32;
 
   enum FaultStatus {
     none @0;

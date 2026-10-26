@@ -227,6 +227,12 @@ std::optional<bool> send_panda_states(PubMaster *pm, Panda *panda, bool is_onroa
 
   auto ps = pss[0];
   fill_panda_state(ps, panda->hw_type, health);
+  ps.setLongOwnerAvailable(panda->long_owner_supported);
+  ps.setLongOwner(panda->long_owner);
+  ps.setLongOwnerPending(panda->long_pending);
+  ps.setLongOwnerPendingAgeMs(panda->long_pending_age_ms);
+  ps.setLongOwnerRefusal(panda->long_refusal);
+  ps.setHealthVersion(panda->health_version);
 
   auto cs = std::array{ps.initCanState0(), ps.initCanState1(), ps.initCanState2()};
   for (uint32_t j = 0; j < PANDA_CAN_CNT; j++) {
@@ -382,13 +388,15 @@ void pandad_run(Panda *panda) {
   std::thread send_thread(can_send_thread, panda, fake_send);
 
   RateKeeper rk("pandad", 100);
-  SubMaster sm({"selfdriveState", "deviceState", "selfdriveStateSP"});
+  SubMaster sm({"selfdriveState", "deviceState", "selfdriveStateSP", "carControlSP"});
   PubMaster pm({"can", "pandaStates", "peripheralState"});
   PandaSafety panda_safety(panda);
   bool engaged = false;
   bool engaged_mads = false;
   bool is_onroad = false;
   bool always_offroad = false;
+
+  uint8_t last_owner_request = 255;
 
   // Main loop: receive CAN first, then process lower priority panda and peripheral state.
   while (!do_exit && check_connected(panda)) {
@@ -410,6 +418,14 @@ void pandad_run(Panda *panda) {
       always_offroad = panda_safety.getOffroadMode();
       process_panda_state(panda, &pm, engaged, engaged_mads, is_onroad, spoofing_started, always_offroad);
       panda_safety.configureSafetyMode(is_onroad);
+      auto owner_control = sm["carControlSP"].getCarControlSP();
+      if (sm.allAliveAndValid({"carControlSP"})) {
+        uint8_t target = owner_control.getLongOwnerRequest();
+        if (target != last_owner_request && target <= 1 && engaged && is_onroad) {
+          panda->request_long_owner(target);
+        }
+        last_owner_request = target;
+      }
     }
 
     panda_safety.updateRules();

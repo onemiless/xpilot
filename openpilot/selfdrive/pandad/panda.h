@@ -86,9 +86,17 @@ public:
   bool can_receive(std::vector<can_frame>& out_vec);
   void can_reset_communications();
   std::vector<uint8_t> rules_control(uint8_t request, uint16_t param1=0, uint16_t param2=0);
+  bool long_owner_supported = false;
+  uint32_t health_version = 0;
+  uint8_t long_owner = 0, long_pending = 255, long_refusal = 0;
+  uint16_t long_pending_age_ms = 0;
+  bool request_long_owner(uint8_t target);
   bool rules_write(std::array<uint8_t, 64> &record);
 
 protected:
+  bool packet_versions_checked = false;
+  bool long_owner_capable = false;
+
   // for unit tests
   uint8_t receive_buffer[RECV_SIZE + sizeof(can_header) + 64];
   uint32_t receive_buffer_size = 0;

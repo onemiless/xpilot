@@ -534,3 +534,10 @@ CI（`.github/workflows/xpilot.yaml`）在每个 PR 上跑以上检查（`upstre
 ```
 
 加完后重启会话。safety 的改动必须先编译并跑测试，再上车。
+
+### G8 host wire consumer (X-20261026-49, step 1)
+
+pandad/cereal transport contract and limits: [host design](docs/design/xpilot-long-owner-host.md).
+Only exact jointly built owner-health version plus a valid 54-byte packet enables app A5;
+legacy 49-byte firmware gets no requests. Lost replies resolve through health, never reversal.
+No policy hook/HOST_CAPS/claim is published by this transport-only step.

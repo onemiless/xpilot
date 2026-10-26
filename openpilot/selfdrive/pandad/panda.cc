@@ -114,10 +114,43 @@ void Panda::set_ir_pwr(uint16_t ir_pwr) {
   handle->control_write(0xb0, ir_pwr, 0);
 }
 
+bool Panda::request_long_owner(uint8_t target) {
+  if (!long_owner_supported || !long_owner_capable || target > 1) return false;
+  std::array<uint8_t, 8> reply{};
+  int n = handle->control_read(0xa5, target, 0, reply.data(), reply.size(), 5);
+  return n == reply.size() && reply[0] == 1 && reply[1] <= 1 &&
+         (reply[2] <= 1 || reply[2] == 255) && reply[3] <= 19 && reply[6] == 0 && reply[7] == 0;
+}
+
 std::optional<health_t> Panda::get_state(unsigned int timeout) {
-  health_t health {0};
-  int err = handle->control_read(0xd2, 0, 0, (unsigned char*)&health, sizeof(health), timeout);
-  return err == sizeof(health) ? std::make_optional(health) : std::nullopt;
+  long_owner_supported = false;
+  long_owner_capable = false;
+  if (!packet_versions_checked) {
+    std::array<uint32_t, 2> versions{};
+    if (handle->control_read(0xdd, 0, 0, reinterpret_cast<uint8_t *>(versions.data()), sizeof(versions), timeout) != sizeof(versions)) {
+      return std::nullopt;
+    }
+    health_version = versions[0];
+    packet_versions_checked = true;
+  }
+  std::array<uint8_t, 64> raw{};
+  int n = handle->control_read(0xd2, 0, 0, raw.data(), raw.size(), timeout);
+  bool owner_abi = XPILOT_LONG_HEALTH_VERSION != 0 && health_version == XPILOT_LONG_HEALTH_VERSION;
+  if (n != (owner_abi ? 54 : 49)) return std::nullopt;
+  if (owner_abi && (raw[49] > 1 || (raw[50] > 1 && raw[50] != 255) || raw[53] > 19 ||
+                   (raw[50] == 255 && (raw[51] != 0 || raw[52] != 0)))) return std::nullopt;
+  health_t health{};
+  memcpy(&health, raw.data(), std::min(sizeof(health), size_t(n)));
+  long_owner_supported = owner_abi;
+  long_owner_capable = owner_abi && health.safety_mode_pkt == uint8_t(cereal::CarParams::SafetyModel::TESLA) &&
+                       (health.safety_param_pkt & 2U) != 0;
+  if (owner_abi) {
+    long_owner = raw[49];
+    long_pending = raw[50];
+    long_pending_age_ms = raw[51] | (uint16_t(raw[52]) << 8);
+    long_refusal = raw[53];
+  }
+  return health;
 }
 
 std::optional<can_health_t> Panda::get_can_state(uint16_t can_number) {

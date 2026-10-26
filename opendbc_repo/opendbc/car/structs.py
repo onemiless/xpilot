@@ -139,6 +139,13 @@ class LeadData:
 
 @auto_dataclass
 class CarControlSP:
+  longOwner: str = 'stock'
+  longOwnerRequest: int = 255
+  longOwnerAvailable: bool = False
+  longOwnerRefusal: str = ''
+  longOwnerLocked: bool = False
+  longActive: bool = False
+  controlMonoTime: int = 0
   mads: 'ModularAssistiveDrivingSystem' = field(default_factory=lambda: ModularAssistiveDrivingSystem())
   params: list['CarControlSP.Param'] = auto_field()
   leadOne: 'LeadData' = field(default_factory=lambda: LeadData())
