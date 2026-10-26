@@ -20,7 +20,6 @@ from opendbc.safety.tests.common import CANPackerSafety, MAX_SPEED_DELTA, MAX_WR
 
 from opendbc.sunnypilot.car.tesla.values import TeslaSafetyFlagsSP
 
-libsafety_py.ffi.cdef('extern safety_config current_safety_config; extern bool safety_rx_checks_invalid;')
 
 MSG_DAS_steeringControl = 0x488
 MSG_APS_eacMonitor = 0x27d
@@ -405,6 +404,11 @@ class TestTeslaLongitudinalSafety(TestTeslaSafetyBase):
 
   RELAY_MALFUNCTION_ADDRS = {0: (MSG_DAS_steeringControl, MSG_APS_eacMonitor, MSG_DAS_Control)}
   FWD_BLACKLISTED_ADDRS = {2: [MSG_DAS_steeringControl, MSG_APS_eacMonitor, MSG_DAS_Control]}
+
+  def setUp(self):
+    super().setUp()
+    # Limit-only fixtures start in SP; G8 E2E exercises the actual request/handshake.
+    self.safety.test_long_fixture_sp()
 
   def test_no_aeb(self):
     for aeb_event in range(4):

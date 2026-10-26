@@ -1,6 +1,8 @@
 #include "opendbc/safety/safety.h"
 #include "../../../../../panda/board/crc.h"
 #include "../../../../../panda/board/xpilot_rules.h"
+#include "../../../../../panda/board/health.h"
+#include "../../../../../panda/board/tesla_long.h"
 
 // this file is checked by cppcheck
 
@@ -38,3 +40,9 @@ SAFETY_UNUSED(alternative_experience);
 SAFETY_UNUSED(xpilot_rules_control);
 SAFETY_UNUSED(xpilot_rules_upload);
 SAFETY_UNUSED(crc32_init);
+
+SAFETY_UNUSED(safety_rx_fwd_hook);
+SAFETY_UNUSED(tesla_long_control);
+SAFETY_UNUSED(tesla_long_health);
+
+SAFETY_UNUSED(sizeof(can_health_t));

@@ -212,6 +212,7 @@ bool safety_rx_hook(const CANPacket_t *msg) {
     heartbeat_engaged_mismatches = 0;
   }
 
+  tesla_long_update();
   return valid;
 }
 
@@ -227,6 +228,7 @@ static bool tx_msg_safety_check(const CANPacket_t *msg, const CanMsg msg_list[],
 }
 
 bool safety_tx_hook(CANPacket_t *msg) {
+  tesla_long_update();
   bool whitelisted = tx_msg_safety_check(msg, current_safety_config.tx_msgs, current_safety_config.tx_msgs_len);
   if ((current_safety_mode == SAFETY_ALLOUTPUT) || (current_safety_mode == SAFETY_ELM327)) {
     whitelisted = true;
@@ -277,6 +279,33 @@ int safety_fwd_hook(int bus_num, int addr) {
   }
 
   return blocked ? -1 : destination_bus;
+}
+
+// Tesla long needs current-payload AEB and validated counters before forwarding.
+int safety_rx_fwd_hook(const CANPacket_t *msg, bool *valid, bool tx_available) {
+  int bus_fwd;
+  if ((current_safety_mode == SAFETY_TESLA) && (msg->addr == 0x2b9U) && (msg->bus == 2U)) {
+    bool well_formed = (GET_LEN(msg) == 8U) && (msg->extended == 0U);
+    if (well_formed) {
+      tesla_stock_aeb = (msg->data[2] & 0x03U) == 1U;
+    }
+    if (well_formed) {
+      *valid = safety_rx_hook(msg);
+    } else {
+      *valid = false;
+      tesla_long_oem.valid = false;
+    }
+    if (!*valid) {
+      if (tesla_long_pending != TESLA_LONG_NONE) {
+        tesla_long_clear(TESLA_LONG_RX_INVALID);
+      }
+    }
+    bus_fwd = well_formed ? tesla_long_route(msg, *valid, tx_available) : -1;
+  } else {
+    bus_fwd = safety_fwd_hook(msg->bus, msg->addr);
+    *valid = safety_rx_hook(msg);
+  }
+  return bus_fwd;
 }
 
 // Given a CRC-8 poly, generate a static lookup table to use with a fast CRC-8
@@ -338,6 +367,7 @@ void safety_tick(void) {
   }
 
   safety_rx_checks_invalid = rx_checks_invalid;
+  tesla_long_update();
 }
 
 static void relay_malfunction_set(void) {
@@ -398,6 +428,7 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
   };
 
   xpilot_rules_reset();
+  tesla_long_reset();
 
   // reset state set by safety mode
   safety_mode_cnt = 0U;

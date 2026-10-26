@@ -196,7 +196,10 @@ static void can_rx(uint8_t can_number) {
     can_set_checksum(&to_push);
 
     // forwarding
-    int bus_fwd_num = safety_fwd_hook(bus_number, to_push.addr);
+    ENTER_CRITICAL();
+    bool rx_valid;
+    bool tx_available = can_slots_empty(can_queues[(bus_number == 0U) ? 2U : 0U]) > 0U;
+    int bus_fwd_num = safety_rx_fwd_hook(&to_push, &rx_valid, tx_available);
     if (bus_fwd_num >= 0) {
       CANPacket_t to_send;
 
@@ -218,7 +221,8 @@ static void can_rx(uint8_t can_number) {
     body_can_rx(&to_push);
     #endif
 
-    safety_rx_invalid += safety_rx_hook(&to_push) ? 0U : 1U;
+    safety_rx_invalid += rx_valid ? 0U : 1U;
+    EXIT_CRITICAL();
     ignition_can_hook(&to_push);
 
     led_set(LED_BLUE, true);

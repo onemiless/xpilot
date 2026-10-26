@@ -554,6 +554,10 @@ class Panda:
       "temperature": None if self.get_type() in self.F4_DEVICES else a[20] - 40.0,
       "controls_allowed_lateral": a[21] & 1,
       "controls_allowed_longitudinal": (a[21] >> 1) & 1,
+      "tesla_long_owner": a[22],
+      "tesla_long_pending": a[23],
+      "tesla_long_pending_age_ms": a[24],
+      "tesla_long_refusal": a[25],
     }
 
   @ensure_health_packet_version

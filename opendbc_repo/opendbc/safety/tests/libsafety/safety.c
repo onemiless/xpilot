@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 // TODO: time should just be passed into the hooks we expose
 uint32_t timer_cnt = 0;
@@ -308,3 +309,22 @@ void init_tests(void){
 }
 
 #include "xpilot_rules.c"
+
+#include "../../../../../panda/board/health.h"
+#include "../../../../../panda/board/tesla_long.h"
+int test_long_request(uint16_t target, uint16_t param2, uint8_t *resp) {
+  return tesla_long_control(target, param2, resp);
+}
+void test_long_snapshot(uint8_t *resp) { tesla_long_reply(resp); }
+int test_long_health(uint8_t *resp) {
+  struct health_t h = {0};
+  tesla_long_health(&h);
+  memcpy(resp, &h, sizeof(h));
+  return sizeof(h);
+}
+bool test_long_mode_owned(uint32_t addr, unsigned int bus, unsigned int length) {
+  (void)bus;
+  (void)length;
+  return xpilot_mode_owned(addr);
+}
+void test_long_fixture_sp(void) { tesla_long_owner = 1U; }

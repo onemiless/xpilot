@@ -1,6 +1,7 @@
 #pragma once
 
 #include "board/xpilot_rules.h"
+#include "board/tesla_long.h"
 
 extern int _app_start[0xc000]; // Only first 3 sectors of size 0x4000 are used
 
@@ -11,6 +12,7 @@ bool is_car_safety_mode(uint16_t mode);
 static int get_health_pkt(void *dat) {
   COMPILE_TIME_ASSERT(sizeof(struct health_t) <= USBPACKET_MAX_SIZE);
   struct health_t * health = (struct health_t*)dat;
+  ENTER_CRITICAL();
 
   health->uptime_pkt = uptime_cnt;
   health->voltage_pkt = (uint16_t)MIN(current_board->read_voltage_mV(), 0xFFFFU);
@@ -60,6 +62,8 @@ static int get_health_pkt(void *dat) {
 
   health->controls_allowed_sp_pkt = (uint8_t)(((controls_allowed || controls_allowed_lateral) ? 1U : 0U) | (controls_allowed ? 2U : 0U));
 
+  tesla_long_health(health);
+  EXIT_CRITICAL();
   return sizeof(*health);
 }
 
@@ -79,6 +83,11 @@ int comms_control_handler(ControlPacket_t *req, uint8_t *resp) {
     case 0xa3:
     case 0xa4:
       resp_len = xpilot_rules_control(req->request, req->param1, req->param2, resp);
+      break;
+    case 0xa5:
+      ENTER_CRITICAL();
+      resp_len = tesla_long_control(req->param1, req->param2, resp);
+      EXIT_CRITICAL();
       break;
     // **** 0xa8: get microsecond timer
     case 0xa8:

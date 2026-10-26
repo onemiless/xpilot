@@ -64,6 +64,8 @@ class CANPacket:
 
 # Functions not captured by cdef_from_file (macros, non-standard formatting, or generated)
 ffi.cdef("""
+extern safety_config current_safety_config;
+extern bool safety_rx_checks_invalid;
 int get_alternative_experience(void);
 int get_desired_angle_last(void);
 void set_ignition_can(bool c);

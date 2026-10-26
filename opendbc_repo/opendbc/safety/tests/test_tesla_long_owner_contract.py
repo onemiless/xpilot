@@ -1,33 +1,25 @@
-"""G8 failure matrix, fixed BEFORE firmware implementation.
+"""G8 failure matrix fixed before firmware code; real libsafety RX/FWD/TX + app ABI.
 
-L1 request accepted while disengaged / not capable / non-Tesla / malformed.
-L2 same-frame OEM AEB blocked or SP TX admitted during AEB.
-L3 gas / brake / raw Autopark while engaged fails to clear pending.
-L4 invalid/missing RX, checksum/counter/quality failure, stale OEM permits commit.
-L5 deadline >=250 ms changes owner or retry extends deadline.
-L6 stock->SP accepts counter other than last forwarded OEM+1 modulo 8.
-L7 stock->SP accepts SNA/reversed/out-of-envelope/unsafe accel candidate.
-L8 SP->stock commits without OEM counter == last accepted SP+1 or envelope match.
-L9 SP->stock forwards duplicate OEM or admits SP after commit.
-L10 handoff duplicates/skips counter or violates the inclusive 5..80 ms gap.
-L11 pending is cleared by a <5 ms candidate instead of waiting for retry.
-L12 random OEM RX/SP TX interleaving duplicates/skips bus-0 counter or changes
-    owner without all gates; include modulo wrap and uint32 timer wrap.
-L13 tesla_init/mode set/SILENT retains owner/pending/counter/envelope state.
-L14 lost reply/health read/repeated request blindly reverses or renews pending.
-L15 health offsets/size/version/reason/age differ across firmware and host.
-L16 RELEASE=1 ignores Tesla long capability bit.
-L17 runtime rules grant mode-owned 0x2B9 (any bus/length).
-L18 IRQ preemption or queue admission races invalidate owner/source decision.
-L19 healthy 25 Hz OEM / 100 Hz OEM+1 host makes stock request expire.
-L20 unqualified source exclusivity suppresses mandatory AEB passthrough.
+L1 malformed/non-Tesla/not-capable/disengaged/standstill request grants ownership.
+L2 same-frame OEM AEB suppressed or SP accepted during AEB.
+L3 gas/brake/raw Autopark doesn't abort pending/DRAIN.
+L4 invalid/missing/stale RX, checksum/counter/quality or stale OEM permits commit.
+L5 250ms deadline/retry renews or commits late; DRAIN >=50ms doesn't abort.
+L6 stock->SP wrong counter commits; L7 SNA/reversed/envelope/long-limit violation.
+L8 stock takeover without duplicate DRAIN then next counter/envelope.
+L9 duplicate OEM forwarded or SP TX accepted during DRAIN/after stock commit.
+L10 counter continuity and 5..80ms gap; L11 early SP candidate clears pending.
+L12 randomized schedules, modulo8 and uint32 timer wrap break I1/I2.
+L13 init/mode/SILENT retains state. L14 lost replies/retries reverse/extend.
+L15 firmware/host health layout/version/snapshot diverge.
+L16 release ignores capability. L17 rules grant 2B9 on any bus/length.
+L18 IRQ or full queue lets owner decision race queue admission.
+L19 healthy OEM25Hz/host100Hz at phase0..40ms+jitter0..10ms expires.
+L20 AEB incorrectly subject to normal I1/I2.
 
-ONLY L10/L19/L20 schedule reasoning and L15 base layout facts are checked
-here. This is a requirements reproducer, NOT libsafety/firmware E2E coverage of
-L1-L20. Firmware implementation has not started; continuation is in handoff/X-20261026-48.md.
-Set XPILOT_LONG_OWNER_CONTRACT_ARTIFACT to save repeatable JSON evidence.
+DRAIN abort restores SP (counter jump allowed only there); failures keep owner.
+Artifact: XPILOT_LONG_OWNER_CONTRACT_ARTIFACT=<path> python -m unittest <module>
 """
-
 import hashlib
 import json
 import os
@@ -37,65 +29,436 @@ import re
 import struct
 import unittest
 
+from opendbc.car.structs import CarParams
+from opendbc.safety.tests.common import CANPackerSafety
+from opendbc.safety.tests.libsafety import libsafety_py as lib
 
 ROOT = Path(__file__).resolve().parents[4]
-EVIDENCE = {"kind": "requirements-counterexample-not-firmware", "cases": {}}
+EVIDENCE = {"kind": "real-libsafety", "cases": {}}
+STOCK, SP, NONE = 0, 1, 255
+OK, MODE, ARGUMENT, NOT_CAPABLE, DISENGAGED, STANDSTILL, AEB, GAS, BRAKE, AUTOPARK = range(10)
+RX_INVALID, OEM_STALE, OEM_INACTIVE, DEADLINE, COUNTER, ENVELOPE, LONG_LIMIT, RELAY, BUSY, SP_STALE, DRAIN_TIMEOUT = range(10, 21)
+
+
+def long_msg(counter, bus=2, lo=375, hi=375, state=4, aeb=0):
+  data = bytearray(8)
+  data[1] = state << 4
+  data[2] = aeb
+  data[4] = (lo & 31) << 3
+  data[5] = (lo >> 5) | ((hi & 15) << 4)
+  data[6] = (hi >> 4) | ((counter & 7) << 5)
+  data[7] = (0x2B9 + 2 + sum(data)) & 255
+  return lib.make_CANPacket(0x2B9, bus, data)
+
+
+class OwnerDrive:
+  """Drive the production dispatcher, with only the CAN peer and clock simulated."""
+  def __init__(self, safety=None, start=0, param=1):
+    self.s = safety if safety is not None else lib.libsafety
+    self.s.set_safety_hooks(CarParams.SafetyModel.tesla, param)
+    self.s.init_tests()
+    self.packer = CANPackerSafety("tesla_model3_party")
+    self.now = start
+    self.outputs = []
+    self.set_time(start)
+    self.peers()
+    self.rx(long_msg(0))
+
+  def set_time(self, ts):
+    self.now = ts
+    self.s.set_timer(ts & 0xffffffff)
+
+  def rx(self, msg, available=True):
+    valid = lib.ffi.new('bool *')
+    fwd = self.s.safety_rx_fwd_hook(msg, valid, available)
+    if fwd == 0 and msg.addr == 0x2B9:
+      self.outputs.append((self.now, STOCK, int(msg.data[6] >> 5)))
+    return fwd, bool(valid[0])
+
+  def peer(self, name, values):
+    return self.rx(self.packer.make_can_msg_safety(name, 2 if name == 'DAS_steeringControl' else 0, values))
+
+  def peers(self):
+    for name, values in (
+      ('DI_speed', {'DI_vehicleSpeed': 36}),
+      ('ESP_B', {'ESP_vehicleSpeed': 36, 'ESP_wheelSpeedsQF': 1, 'ESP_vehicleStandstillSts': 0}),
+      ('EPAS3S_sysStatus', {}), ('DI_systemStatus', {}),
+      ('ESP_status', {'ESP_driverBrakeApply': 1}),
+      ('DI_state', {'DI_cruiseState': 2}), ('UI_warning', {}), ('DAS_steeringControl', {}),
+    ):
+      self.peer(name, values)
+
+  def reply(self, target=None, p2=0):
+    buf = lib.ffi.new('uint8_t[8]')
+    if target is None:
+      self.s.test_long_snapshot(buf)
+    else:
+      assert self.s.test_long_request(target, p2, buf) == 8
+    return struct.unpack('<BBBBHH', bytes(buf))
+
+  @property
+  def owner(self):
+    return self.reply()[1]
+
+  def tx(self, counter, **kw):
+    msg = long_msg(counter, bus=0, **kw)
+    accepted = self.s.safety_tx_hook(msg)
+    if accepted:
+      self.outputs.append((self.now, SP, counter & 7))
+    return bool(accepted)
+
+  def takeover(self):
+    assert self.reply(SP)[2] == SP
+    self.set_time(self.now + 10_000)
+    assert self.tx(1)
+    assert self.owner == SP
+
+
+def assert_handoffs(case, outputs):
+  for a, b in zip(outputs, outputs[1:]):
+    case.assertEqual(b[2], (a[2] + 1) % 8, (a, b))
+    if a[1] != b[1]:
+      case.assertTrue(5_000 <= b[0] - a[0] <= 80_000, (a, b))
 
 
 class TestTeslaLongOwnerContract(unittest.TestCase):
-  def test_L10_allowed_phase_advance_preserves_counter_and_bounded_gap(self):
-    rng = random.Random(48)
-    traces = []
-    for delay_us in [5_000, 10_000, *(rng.randrange(5_000, 10_001) for _ in range(100))]:
-      output = [(0, "stock", 0), (delay_us, "sp", 1), (40_000 + delay_us, "sp", 2)]
-      self.assertTrue(all(b[2] == (a[2] + 1) % 8 for a, b in zip(output, output[1:])))
-      self.assertGreaterEqual(delay_us, 5_000)
-      self.assertLessEqual(delay_us, 80_000)
-      traces.append({"bus0": output, "gaps_us": [b[0] - a[0] for a, b in zip(output, output[1:])]})
-    EVIDENCE["cases"]["L10"] = traces
+  def setUp(self):
+    self.d = OwnerDrive()
 
-  def test_L19_OEM_plus_one_host_can_keep_stock_request_pending_forever(self):
-    last_sp_counter = 1
-    trace = [{"time_us": 10_000, "source": "sp", "counter": last_sp_counter}]
-    request_us = 11_000
-    for oem_us in range(40_000, request_us + 250_000, 40_000):
-      oem_counter = (oem_us // 40_000) % 8
-      self.assertEqual(oem_counter, last_sp_counter)
-      self.assertNotEqual(oem_counter, (last_sp_counter + 1) % 8)
-      trace.append({"time_us": oem_us, "source": "stock", "counter": oem_counter, "admit": False})
-      last_sp_counter = (oem_counter + 1) % 8
-      trace.append({"time_us": oem_us + 10_000, "source": "sp", "counter": last_sp_counter, "admit": True})
-    EVIDENCE["cases"]["L19"] = {"request_us": request_us, "deadline_us": request_us + 250_000,
-                                  "stock_candidates_admitted": 0, "no_expiry_requirement_satisfied": False, "trace": trace}
+  def test_L1_request_boundaries(self):
+    d = self.d
+    for target, p2 in ((2, 0), (65535, 0), (SP, 1)):
+      self.assertEqual(d.reply(target, p2)[1:4], (STOCK, NONE, ARGUMENT))
+    d.s.set_safety_hooks(CarParams.SafetyModel.silent, 0)
+    self.assertEqual(d.reply(SP)[1:4], (STOCK, NONE, MODE))
+    d = OwnerDrive(param=0)
+    self.assertEqual(d.reply(SP)[3], NOT_CAPABLE)
+    d = OwnerDrive()
+    d.peer('DI_state', {'DI_cruiseState': 0})
+    self.assertEqual(d.reply(SP)[3], DISENGAGED)
+    d.peer('DI_state', {'DI_cruiseState': 2})
+    d.peer('ESP_B', {'ESP_wheelSpeedsQF': 1, 'ESP_vehicleStandstillSts': 1})
+    self.assertEqual(d.reply(SP)[3], STANDSTILL)
 
-  def test_L20_AEB_is_an_explicit_exception_to_normal_source_exclusivity(self):
-    output = [(0, "sp", "normal"), (10_000, "stock", "AEB")]
-    self.assertEqual({source for time, source, _ in output if time < 40_000}, {"stock", "sp"})
-    EVIDENCE["cases"]["L20"] = output
+  def test_L2_L20_same_frame_AEB_production_order(self):
+    d = self.d
+    d.takeover()
+    self.assertEqual(d.reply(STOCK)[2], STOCK)
+    d.set_time(40_000)
+    self.assertEqual(d.rx(long_msg(1, aeb=1)), (0, True))
+    self.assertEqual(d.reply()[1:4], (SP, NONE, AEB))
+    self.assertFalse(d.tx(2))
+    self.assertEqual(d.outputs[-2][1:], (SP, 1))
+    self.assertEqual(d.outputs[-1][1:], (STOCK, 1))
+    EVIDENCE['cases']['L2_L20'] = d.outputs
 
-  def test_L15_base_health_layout_and_DBC_active_states(self):
-    health = ROOT / "panda/board/health.h"
-    dbc = ROOT / "opendbc_repo/opendbc/dbc/tesla_model3_party.dbc"
-    body = health.read_text().split("struct __attribute__((packed)) health_t {", 1)[1].split("};", 1)[0]
-    formats = {"uint8_t": "B", "uint16_t": "H", "uint32_t": "I"}
-    fields = re.findall(r"(uint\d+_t)\s+(\w+);", body)
-    base_format = "<" + "".join(formats[kind] for kind, _ in fields)
-    self.assertEqual(struct.calcsize(base_format), 49)
-    self.assertEqual(struct.calcsize(base_format + "BBHB"), 54)
-    states = re.search(r"^VAL_ 697 DAS_accState (.*);", dbc.read_text(), re.MULTILINE)[1]
-    values = {name: int(value) for value, name in re.findall(r'(\d+) "([^"]+)"', states)}
-    self.assertEqual({name: values[name] for name in ("ACC_HOLD", "ACC_ON", "ACC_CANCEL_RADAR_BLIND", "APC_BACKWARD")},
-                     {"ACC_HOLD": 3, "ACC_ON": 4, "ACC_CANCEL_RADAR_BLIND": 2, "APC_BACKWARD": 5})
-    EVIDENCE["cases"]["L15"] = {"base_health_bytes": 49, "proposed_health_bytes": 54, "acc_states": values}
+  def test_L3_veto_pending_and_DRAIN(self):
+    for drain in (False, True):
+      for name, values, reason in (
+        ('DI_systemStatus', {'DI_accelPedalPos': 10}, GAS),
+        ('ESP_status', {'ESP_driverBrakeApply': 2}, BRAKE),
+        *(( 'DI_state', {'DI_cruiseState': 2, 'DI_autoparkState': state}, AUTOPARK) for state in (3, 4, 9)),
+      ):
+        with self.subTest(drain=drain, reason=reason, values=values):
+          d = OwnerDrive()
+          if drain:
+            d.takeover()
+            d.reply(STOCK)
+            d.set_time(40_000)
+            d.rx(long_msg(1))
+          else:
+            d.reply(SP)
+          d.peer(name, values)
+          self.assertEqual(d.reply()[1:4], (SP if drain else STOCK, NONE, reason))
+
+  def test_L4_RX_failures(self):
+    d = self.d
+    cfg = d.s.current_safety_config
+    for i in range(cfg.rx_checks_len):
+      for member, value in (('msg_seen', False), ('valid_checksum', False), ('valid_quality_flag', False),
+                            ('wrong_counters', 5), ('lagging', True)):
+        with self.subTest(index=i, member=member):
+          status = cfg.rx_checks[i].status
+          old = getattr(status, member)
+          setattr(status, member, value)
+          self.assertEqual(d.reply(SP)[3], RX_INVALID)
+          setattr(status, member, old)
+    d.reply(SP)
+    bad = long_msg(1)
+    bad.data[7] ^= 1
+    d.set_time(40_000)
+    self.assertFalse(d.rx(bad)[1])
+    self.assertEqual(d.reply()[2:4], (NONE, RX_INVALID))
+    d = OwnerDrive()
+    d.set_time(60_001)
+    d.peers()
+    self.assertEqual(d.reply(SP)[3], OEM_STALE)
+    d = OwnerDrive()
+    d.set_time(100_001)
+    d.rx(long_msg(1))
+    self.assertEqual(d.reply(SP)[3], RX_INVALID)
+
+  def test_L5_L14_deadline_retry_snapshot_and_lost_reply(self):
+    d = self.d
+    self.assertEqual(d.reply(SP)[1:4], (STOCK, SP, OK))
+    d.set_time(20_000)
+    self.assertEqual(d.reply(SP)[4], 20)
+    self.assertEqual(d.reply(STOCK)[2], SP)
+    for ts in range(40_000, 240_001, 40_000):
+      d.set_time(ts)
+      d.peers()
+      d.rx(long_msg(ts // 40_000))
+    d.set_time(249_999)
+    self.assertEqual(d.reply()[2], SP)
+    d.set_time(250_000)
+    self.assertEqual(d.reply()[1:5], (STOCK, NONE, DEADLINE, 0))
+    d = OwnerDrive()
+    d.takeover()
+    self.assertEqual(d.reply()[1:4], (SP, NONE, OK))
+    d.reply(STOCK)
+    d.set_time(40_000)
+    d.rx(long_msg(1))
+    d.set_time(89_999)
+    d.peers()
+    self.assertEqual(d.reply()[2], STOCK)
+    d.set_time(90_000)
+    self.assertEqual(d.reply()[1:4], (SP, NONE, DRAIN_TIMEOUT))
+    self.assertTrue(d.tx(3))  # sole allowed I1 exception after DRAIN abort
+    EVIDENCE['cases']['DRAIN_abort_counter_jump'] = d.outputs
+
+  def test_L6_L7_stock_to_SP_candidates(self):
+    for counter, lo, hi, reason in ((2, 375, 375, None), (1, 511, 511, ENVELOPE),
+                                    (1, 376, 375, ENVELOPE), (1, 369, 375, ENVELOPE),
+                                    (1, 375, 381, ENVELOPE), (1, 375, 426, LONG_LIMIT)):
+      with self.subTest(counter=counter, lo=lo, hi=hi):
+        d = OwnerDrive()
+        # long limit is tested within the envelope of an unsafe OEM request
+        if reason == LONG_LIMIT:
+          d.rx(long_msg(1, hi=426))
+          counter = 2
+        d.reply(SP)
+        d.set_time(10_000)
+        self.assertFalse(d.tx(counter, lo=lo, hi=hi))
+        self.assertEqual(d.owner, STOCK)
+        if reason is None:
+          self.assertEqual(d.reply()[2], SP)
+        else:
+          self.assertEqual(d.reply()[2:4], (NONE, reason))
+    for lo, hi in ((370, 380), (375, 375)):
+      d = OwnerDrive()
+      d.reply(SP)
+      d.set_time(5_000)
+      self.assertTrue(d.tx(1, lo=lo, hi=hi))
+
+  def test_L8_L9_DRAIN_commit_and_abort(self):
+    d = self.d
+    d.takeover()
+    d.reply(STOCK)
+    d.set_time(40_000)
+    self.assertEqual(d.rx(long_msg(1))[0], -1)
+    self.assertEqual(d.owner, SP)
+    d.set_time(50_000)
+    self.assertFalse(d.tx(2))
+    d.set_time(80_000)
+    d.peers()
+    self.assertEqual(d.rx(long_msg(2))[0], 0)
+    self.assertEqual(d.reply()[1:4], (STOCK, NONE, OK))
+    self.assertFalse(d.tx(3))
+    assert_handoffs(self, d.outputs)
+    EVIDENCE['cases']['DRAIN_commit'] = d.outputs
+    for kw, reason in (({'counter': 3}, COUNTER), ({'counter': 2, 'lo': 369}, ENVELOPE),
+                       ({'counter': 2, 'state': 2}, OEM_INACTIVE), ({'counter': 2, 'aeb': 1}, AEB)):
+      d = OwnerDrive()
+      d.takeover()
+      d.reply(STOCK)
+      d.set_time(40_000)
+      d.rx(long_msg(1))
+      d.set_time(80_000)
+      d.peers()
+      d.rx(long_msg(**kw))
+      self.assertEqual(d.reply()[1:4], (SP, NONE, reason))
+      if reason != AEB:
+        self.assertTrue(d.tx(3))
+    for state in range(16):
+      d = OwnerDrive()
+      d.takeover()
+      d.set_time(40_000)
+      d.rx(long_msg(1, state=state))
+      self.assertEqual(d.reply(STOCK)[3], OK if state in (3, 4) else OEM_INACTIVE)
+
+  def test_L10_L11_early_candidate_and_timer_wrap(self):
+    for start in (0, 0xffffd000):
+      d = OwnerDrive(start=start)
+      d.reply(SP)
+      d.set_time(start + 4_999)
+      self.assertFalse(d.tx(1))
+      self.assertEqual(d.reply()[2], SP)
+      d.set_time(start + 5_000)
+      self.assertTrue(d.tx(1))
+      d.reply(STOCK)
+      d.set_time(start + 40_000)
+      d.peers()
+      d.rx(long_msg(1))
+      d.set_time(start + 80_000)
+      d.peers()
+      self.assertEqual(d.rx(long_msg(2))[0], 0)
+      assert_handoffs(self, d.outputs)
+
+  def test_L12_L19_all_phases_jitter_and_random_interleavings(self):
+    summaries = []
+    for phase in range(0, 40_001, 1_000):
+      for jitter in range(0, 10_001, 1_000):
+        d = OwnerDrive()
+        rng = random.Random(phase * 13 + jitter)
+        d.reply(SP)
+        request_ts = 0
+        switched_sp = False
+        last_oem = 0
+        last_sent = None
+        # healthy host cycles at 100Hz; scheduling delay 0..jitter follows a new OEM.
+        ready = phase % 10_000 + rng.randint(0, jitter)
+        host_delay = 0
+        for ts in range(1_000, 601_000, 1_000):
+          d.set_time(ts)
+          if ts % 20_000 == 0:
+            d.peers()
+          if ts % 40_000 == 0:
+            last_oem = (last_oem + 1) % 8
+            host_delay = rng.randint(0, jitter)
+            ready = ts + host_delay
+            d.rx(long_msg(last_oem))
+          if ts >= phase and (ts - phase) % 10_000 == 0 and ts >= ready and last_sent != last_oem:
+            if d.tx((last_oem + 1) % 8):
+              last_sent = last_oem
+          if d.owner == SP and not switched_sp:
+            self.assertLess(ts - request_ts, 250_000)
+            switched_sp = True
+            request_ts = ts
+            self.assertEqual(d.reply(STOCK)[2], STOCK)
+          elif switched_sp and d.owner == STOCK:
+            self.assertLess(ts - request_ts, 250_000)
+            break
+          self.assertEqual(d.reply()[3], OK, (phase, jitter, ts, d.reply()))
+        self.assertTrue(switched_sp and d.owner == STOCK, (phase, jitter, d.outputs, d.reply()))
+        assert_handoffs(self, d.outputs)
+        summaries.append({'phase_us': phase, 'jitter_us': jitter, 'stock_commit_us': ts,
+                          'max_handoff_gap_us': max(b[0]-a[0] for a,b in zip(d.outputs,d.outputs[1:]) if a[1]!=b[1])})
+    EVIDENCE['cases']['L12_L19'] = summaries
+
+  @unittest.skipUnless(os.environ.get('XPILOT_LONG_OWNER_CAPTURE'), 'capture path not configured')
+  def test_capture_replay_with_injected_requests(self):
+    capture = Path(os.environ['XPILOT_LONG_OWNER_CAPTURE'])
+    inventory = json.loads(capture.read_text())
+    frames = inventory['bus2_frames']
+    self.assertEqual(len(frames), 1743)
+    d = OwnerDrive()
+    t0 = frames[0]['t_ns'] // 1000
+    commits = []
+    refusals = {}
+    requested = False
+    for i, frame in enumerate(frames):
+      ts = frame['t_ns'] // 1000 - t0 + 40_000
+      d.set_time(ts)
+      d.peers()  # isolated replay: healthy simulated other ECUs, captured OEM unchanged
+      msg = lib.make_CANPacket(0x2B9, 2, bytes.fromhex(frame['data']))
+      before = d.owner
+      self.assertTrue(d.rx(msg)[1], i)
+      if d.owner != before:
+        commits.append({'index':i,'owner':d.owner})
+      before = d.owner
+      if i % 20 == 0:
+        reply = d.reply(SP if before == STOCK else STOCK)
+        requested = reply[2] != NONE
+        if reply[3]:
+          refusals[str(reply[3])] = refusals.get(str(reply[3]), 0) + 1
+      lo = ((msg.data[5] & 15) << 5) | (msg.data[4] >> 3)
+      hi = ((msg.data[6] & 31) << 4) | (msg.data[5] >> 4)
+      d.set_time(ts + 10_000)
+      d.tx((frame['counter']+1)%8,lo=lo,hi=hi)
+      after = d.owner
+      if after != before:
+        commits.append({'index':i,'owner':after})
+      if requested and d.reply()[3]:
+        reason = str(d.reply()[3])
+        refusals[reason] = refusals.get(reason,0)+1
+        requested=False
+    self.assertTrue(commits)
+    self.assertTrue(any(c['owner']==SP for c in commits))
+    # OEM capture is ~40Hz, not the synthetic 25Hz liveness premise.
+    EVIDENCE['cases']['capture']={'frames':len(frames),'capture_sha256':inventory['sha256'],
+      'inventory_sha256':hashlib.sha256(capture.read_bytes()).hexdigest(),'commits':commits,'refusals':refusals,
+      'scope':'all OEM payloads unchanged; other ECUs and SP peer simulated'}
+
+  def test_L13_reset_SILENT(self):
+    for mode in (CarParams.SafetyModel.tesla, CarParams.SafetyModel.silent, CarParams.SafetyModel.noOutput):
+      d = OwnerDrive()
+      d.takeover()
+      d.reply(STOCK)
+      d.set_time(40_000)
+      d.rx(long_msg(1))
+      d.s.set_safety_hooks(mode, 1 if mode == CarParams.SafetyModel.tesla else 0)
+      self.assertEqual(d.reply()[1:5], (STOCK, NONE, OK, 0))
+      self.assertFalse(d.tx(2))
+
+  def test_L15_health_ABI_and_DBC(self):
+    d = self.d
+    d.reply(SP)
+    d.set_time(12_345)
+    buf = lib.ffi.new('uint8_t[54]')
+    self.assertEqual(d.s.test_long_health(buf), 54)
+    self.assertEqual(struct.unpack('<BBHB', bytes(buf)[49:]), (STOCK, SP, 12, OK))
+    text = (ROOT/'panda/board/health.h').read_text()
+    fields = re.findall(r'(uint\d+_t)\s+(\w+);', text.split('struct __attribute__((packed)) health_t {')[1].split('};')[0])
+    self.assertEqual(struct.calcsize('<'+''.join({'uint8_t':'B','uint16_t':'H','uint32_t':'I'}[t] for t,n in fields)),54)
+    version = int.from_bytes(hashlib.sha256(text.encode()).digest()[:4], 'little')
+    import subprocess
+    old = subprocess.check_output(['git','show','1b52d017f:panda/board/health.h'],cwd=ROOT)
+    self.assertNotEqual(hashlib.sha256(old).digest()[:4], hashlib.sha256(text.encode()).digest()[:4])
+    EVIDENCE['cases']['L15'] = {'health_size':54, 'health_version':f'0x{version:08x}', 'offsets':[49,50,51,53]}
+    states = re.search(r'^VAL_ 697 DAS_accState (.*);',(ROOT/'opendbc_repo/opendbc/dbc/tesla_model3_party.dbc').read_text(),re.M)[1]
+    values = {name:int(val) for val,name in re.findall(r'(\d+) "([^"]+)"',states)}
+    self.assertEqual((values['ACC_HOLD'],values['ACC_ON']),(3,4))
+
+  def test_L16_release_real_libsafety(self):
+    safety = lib.ffi.dlopen(lib._build_libsafety(release=True))
+    d = OwnerDrive(safety=safety)
+    d.takeover()
+    d.s.set_safety_hooks(CarParams.SafetyModel.tesla, 0)
+    self.assertEqual(d.reply(SP)[3], NOT_CAPABLE)
+
+  def test_L17_mode_owned_inventory(self):
+    for bus in range(3):
+      for length in range(1,9):
+        self.assertTrue(self.d.s.test_long_mode_owned(0x2B9, bus, length))
+
+  def test_L18_forward_queue_unavailable_does_not_commit(self):
+    d = self.d
+    d.takeover()
+    d.reply(STOCK)
+    d.set_time(40_000)
+    d.rx(long_msg(1))
+    d.set_time(80_000)
+    d.peers()
+    self.assertEqual(d.rx(long_msg(2),available=False)[0], -1)
+    self.assertEqual(d.owner, SP)
+    # Board critical regions cover the production dispatcher and queue admission.
+    for name in ('bxcan','fdcan'):
+      text=(ROOT/f'panda/board/drivers/{name}.h').read_text()
+      pos=text.index('safety_rx_fwd_hook(')
+      self.assertGreater(text.rfind('ENTER_CRITICAL()',0,pos),text.rfind('EXIT_CRITICAL()',0,pos))
+      self.assertLess(text.index('can_send(',pos),text.index('EXIT_CRITICAL()',pos))
+    text=(ROOT/'panda/board/drivers/can_common.h').read_text().split('void can_send(')[1]
+    self.assertLess(text.index('ENTER_CRITICAL()'),text.index('safety_tx_hook('))
+    self.assertLess(text.index('can_push('),text.index('EXIT_CRITICAL()'))
 
   @classmethod
   def tearDownClass(cls):
-    if path := os.environ.get("XPILOT_LONG_OWNER_CONTRACT_ARTIFACT"):
-      paths = [Path(__file__), ROOT / "docs/design/xpilot-long-owner.md", ROOT / "panda/board/health.h",
-               ROOT / "opendbc_repo/opendbc/dbc/tesla_model3_party.dbc"]
-      EVIDENCE["sha256"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
-      Path(path).write_text(json.dumps(EVIDENCE, indent=2, sort_keys=True) + "\n")
+    if path := os.environ.get('XPILOT_LONG_OWNER_CONTRACT_ARTIFACT'):
+      paths=[Path(__file__),ROOT/'docs/design/xpilot-long-owner.md',ROOT/'panda/board/health.h',
+             ROOT/'opendbc_repo/opendbc/safety/modes/tesla.h',ROOT/'opendbc_repo/opendbc/safety/safety.h']
+      EVIDENCE['sha256']={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+      Path(path).write_text(json.dumps(EVIDENCE,indent=2,sort_keys=True)+'\n')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
   unittest.main()
