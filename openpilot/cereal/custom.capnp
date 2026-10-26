@@ -497,6 +497,15 @@ struct CarStateSP @0xb86e6369214c01c8 {
   teslaRoadContext @2 :TeslaRoadContext;
   teslaTrafficControl @3 :TeslaTrafficControl;
   teslaBattery @4 :TeslaBattery;
+  teslaLongControl @5 :TeslaLongControl;
+}
+
+struct TeslaLongControl {
+  monoTime @0 :UInt64;
+  accState @1 :UInt8;
+  accelMin @2 :Float32;
+  accelMax @3 :Float32;
+  counter @4 :UInt8;
 }
 
 struct TeslaBattery {

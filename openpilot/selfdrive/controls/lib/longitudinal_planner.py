@@ -9,6 +9,7 @@ from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.accel_boost import AccelBoost
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
+from openpilot.selfdrive.controls.lib.long_owner import sp_longitudinal
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, LongitudinalPlanSource
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_from_plan, should_stop
@@ -37,6 +38,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.CP = CP
     self.mpc = LongitudinalMpc(dt=dt)
     LongitudinalPlannerSP.__init__(self, self.CP, CP_SP, self.mpc)
+    self.owner_sp_prev = None
     self.fcw = False
     self.dt = dt
     self.accel_boost = AccelBoost()
@@ -59,18 +61,29 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     if sm['controlsState'].forceDecel:
       v_cruise = 0.0
 
+    owner_sp = sp_longitudinal(self.CP, sm['carControlSP'])
+    g8 = self.CP.brand == 'tesla' and sm['carControlSP'].longOwnerAvailable
+    takeover = g8 and owner_sp and self.owner_sp_prev is False
+    self.owner_sp_prev = owner_sp
     long_control_off = sm['controlsState'].longControlState == LongCtrlState.off
 
     # Reset current state when not engaged, or user is controlling the speed
-    reset_state = long_control_off if self.CP.openpilotLongitudinalControl else not sm['selfdriveState'].enabled
+    reset_state = long_control_off if owner_sp else not sm['selfdriveState'].enabled
     # PCM cruise speed may be updated a few cycles later, check if initialized
     v_cruise_initialized = sm['carState'].vCruise != V_CRUISE_UNSET
-    reset_state = reset_state or not v_cruise_initialized
+    reset_state = reset_state or not v_cruise_initialized or (g8 and not owner_sp) or takeover
 
     if reset_state:
       self.v_desired_filter.x = v_ego
       self.output_a_target = np.clip(sm['carState'].aEgo, ACCEL_MIN, ACCEL_MAX)
       self.a_cruise = self.output_a_target
+
+    if takeover:
+      self.mpc.reset()
+      self.mpc.set_cur_state(v_ego, sm['carState'].aEgo)
+      self.mpc.a_prev[:] = sm['carState'].aEgo
+      for i in range(len(self.mpc.a_solution)):
+        self.mpc.solver.set(i, 'x', self.mpc.x0)
 
     # Prevent divergence, smooth in current v_ego
     self.v_desired_filter.x = max(0.0, self.v_desired_filter.update(v_ego))
@@ -82,7 +95,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     v_cruise, self.output_a_target = LongitudinalPlannerSP.update_targets(self, sm, self.v_desired_filter.x, self.output_a_target, v_cruise)
 
     self.mpc.set_weights(prev_accel_constraint, personality=sm['selfdriveState'].personality)
-    if self.CP.openpilotLongitudinalControl:
+    if owner_sp and not takeover:
       self.mpc.set_cur_state(self.v_desired_filter.x, self.output_a_target)
     else:
       self.mpc.set_cur_state(v_ego, sm['carState'].aEgo)

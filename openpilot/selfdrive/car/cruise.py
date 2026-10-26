@@ -42,7 +42,7 @@ class VCruiseHelper(VCruiseHelperSP):
   def v_cruise_initialized(self):
     return self.v_cruise_kph != V_CRUISE_UNSET
 
-  def update_v_cruise(self, CS, enabled, is_metric):
+  def update_v_cruise(self, CS, enabled, is_metric, stock_owner=False):
     self.v_cruise_kph_last = self.v_cruise_kph
 
     self.get_minimum_set_speed(is_metric)
@@ -50,7 +50,7 @@ class VCruiseHelper(VCruiseHelperSP):
     _enabled = self.update_enabled_state(CS, enabled)
 
     if CS.cruiseState.available:
-      if not self.CP.pcmCruise or (not self.CP_SP.pcmCruiseSpeed and _enabled):
+      if not stock_owner and (not self.CP.pcmCruise or (not self.CP_SP.pcmCruiseSpeed and _enabled)):
         # if stock cruise is completely disabled, then we can use our own set speed logic
         self._update_v_cruise_non_pcm(CS, _enabled, is_metric)
         self.update_speed_limit_assist_v_cruise_non_pcm()

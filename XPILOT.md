@@ -374,29 +374,34 @@ app 固件专用 CAPS/STATUS/BEGIN/COMMIT/CLEAR 及 EP2 64 字节记录见合同
 
 Tesla 接管例外（用户 2026-10-25 决定）：`safety.h` 的最低频率检查遵守 `ignore_frequency_check`，时效、校验和、计数器和质量检查不变；G4（用户 2026-10-26 决定）移除 SP 扩展的全局 `invalidLkasSetting=False`，CarState 保留真实原车 Autosteer 设置。仅开启 `tesla_mixed_control` 时由其 `event.filter` 删除该事件，关闭或未安装插件即恢复 SP 行为。插件 1.1.0 声明 `requires.hooks=["event_filter"]`；旧宿主拒绝未知 claim，必须同一次 offroad 会话先更新系统再安装插件。此任务不实现 AP owner/交接（G3），不改上游 `carstate.py` 或 panda 安全逻辑。
 
-### G8 动态纵向 owner（X-20261026-48，合同阶段）
+### G8 动态纵向 owner（X-20261026-49A，host control path）
 
-线协议草案和时序合同见 [`docs/design/xpilot-long-owner.md`](docs/design/xpilot-long-owner.md)：
-Panda 唯一裁决 STOCK/SP，拟用 app-only `0xA5` 请求、health 追加 owner/pending/age/refusal；
-能力位不等于运行时 owner，规则引擎仍不能授予 0x2B9。计数器交接连续 +1 mod 8；交接源间隔
-限定 5–80 ms，允许一次相位变化。原车 AEB 优先，心跳丢失 SILENT 行为不变，G3 横向未实现。
+线协议和 DRAIN 时序见 [wire contract](docs/design/xpilot-long-owner.md)，主机实现、
+reader audit 和验证限制见 [host contract](docs/design/xpilot-long-owner-host.md)。Panda
+独占 STOCK/SP 裁决；能力位不是 owner，runtime rules 不能授予 0x2B9。A5 仍必须通过匹配的
+54 字节 health ABI/hash 门控；本基线依赖仍是 49 字节，因此实际请求关闭，旧固件保持原行为。
 
-本分支目前只固定合同、失败矩阵和可重复时序反例，**尚未实现 G8 固件或健康包字段**。
-SP→stock 按协调者 DRAIN 决定：收到与最后 SP 同计数器的 OEM 时阻断并暂停 SP TX；
-下一 OEM（SP+1）通过检查后提交 STOCK 并转发。DRAIN 最长 50 ms，失败则清 pending、
-保留 SP owner 并恢复 SP TX；仅此中止路径允许 SP 计数器跳跃。请求总期限仍为 250 ms。
-真实 libsafety 回归必须保留全部中间 SP 帧并验证 25 Hz/100 Hz 全相位与抖动下的活性。
-未发布新的 HOST_CAPS/claim；X-49/X-50 尚不能依此文档启用实际控制。
+49A 已实现 controlsd owner/请求/veto、配对 CC_SP、OEM+1 counter lock（OEM 缺失 60 ms 后
+恢复 40 ms cadence）、从 aEgo 开始最长 1 s 的 +0.6/-1.5 m/s³ ramp，以及 planner/LongControl
+切入初始化。STOCK 不发 ACC_ON/accel；显式 pending SP 的候选帧是交接所需例外。
+longActive/override/cancel 和 CAN 分支读同一 CC_SP owner。card 拒绝不配对的 CC/CC_SP。
 
-X-49 已实现第 1 步 host transport：cereal owner/request/health 字段、pandad/Python
-版本门控和 A5 解析，见 [host design](docs/design/xpilot-long-owner-host.md)。只有匹配
-X-48 最终 health.h hash 和 54 字节布局才启用请求；当前 published header 仍是 49 字节，
-因此 A5 保持关闭。DRAIN_TIMEOUT=20 可解析。controlsd owner、shadow、手动设置和 HUD
-尚未实现；`role:long.owner` / `long_owner(ctx, CS)` 仍未注册、未发布 HOST_CAPS。
+Host floor：目标确认 1 s，完成/拒绝后 cooldown 2 s；gas/brake/standstill/stockAeb/accFault、
+|aEgo|≥0.35、lead TTC<3 s、OEM 不活跃/过期及对应 accel 两端差>0.20 均拒绝。
+两次连续拒绝、request/ack 不符>0.5 s、健康包/策略故障后锁定切换直到 disengage；拒绝保持
+ack owner，Panda reset 跟随 STOCK。SP→STOCK pending/DRAIN 时保持全部正常 host TX，
+Panda 在 DRAIN 阻断 SP 并等待下一 OEM；50 ms 中止保留 SP，仅此路径允许 counter jump。
 
-`tools/sp_tesla_e2e/long_owner_check.py` 的 LO1–LO16 失败矩阵仍可参考，但 executable
-模型是 pre-DRAIN，当前因合同条款变化返回 1，必须重写后才可验证 DRAIN liveness；
-不能把它称为现合同的活锁证据。状态与限制见 `docs/reports/X-20261026-49.md`。
+普通函数 `selfdrive/controls/lib/long_owner.py:desired_owner(ctx, CS)` 返回 None/stock/sp；
+当前生产实现只返回 None，检查使用 stub。**49A 不发布 HOST_CAPS、hook 或 claim**；
+`role:long.owner` 的独占注册、插件 hook、manifest/required-hook 校验和 HOST_CAPS 由 49B
+在 `openpilot/tesla/` 同步实现后才可宣称可用。现有通用 role 格式不授予此运行时能力。
+shadow、手动设置、HUD 属于 49B；G3 横向、X-50 车速策略不在本改动内。
+
+`tools/sp_tesla_e2e/long_owner_check.py` 已改为 DRAIN Python Panda 模型，执行 451 组
+phase/jitter 双向交接和 host 回放。result.json 保存 rc、源文件 hash 和 trace。
+Mac 原生 MPC QP 在不含 owner 改动的独立路径也失败；已验证 pre-solve seed，求解轨迹
+仍是明确 gap。Python 模型和确定性 host 回放均不等于 libsafety、IPC 或实车证明。
 
 ## 7. 雷达接入接口
 
@@ -540,9 +545,12 @@ CI（`.github/workflows/xpilot.yaml`）在每个 PR 上跑以上检查（`upstre
 
 加完后重启会话。safety 的改动必须先编译并跑测试，再上车。
 
-### G8 host wire consumer (X-20261026-49, step 1)
+### G8 host wire consumer (X-20261026-49 / 49A)
 
-pandad/cereal transport contract and limits: [host design](docs/design/xpilot-long-owner-host.md).
-Only exact jointly built owner-health version plus a valid 54-byte packet enables app A5;
-legacy 49-byte firmware gets no requests. Lost replies resolve through health, never reversal.
-No policy hook/HOST_CAPS/claim is published by this transport-only step. DRAIN_TIMEOUT=20 is parsed; DRAIN never changes the host pending-stock cadence.
+Exact jointly built owner-health version plus a valid 54-byte packet enables A5;
+legacy 49-byte firmware receives no requests and retains its pinned behavior.
+Runtime owner, veto, paired CC_SP, CAN cadence and reader audit:
+[host contract](docs/design/xpilot-long-owner-host.md). The plain desired_owner
+hook returns None until 49B wires the exclusive policy. HOST_CAPS/claims/manifest
+registration are explicitly deferred to 49B, not advertised by 49A. DRAIN never
+changes pending-STOCK host cadence. No device, firmware or physical proof here.

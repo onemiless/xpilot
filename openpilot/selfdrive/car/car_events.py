@@ -5,6 +5,7 @@ from opendbc.car.car_helpers import interfaces
 from opendbc.car.interfaces import MAX_CTRL_SPEED
 
 from openpilot.selfdrive.selfdrived.events import Events
+from openpilot.selfdrive.controls.lib.long_owner import sp_longitudinal
 
 ButtonType = structs.CarState.ButtonEvent.Type
 GearShifter = structs.CarState.GearShifter
@@ -19,19 +20,20 @@ class CarEvents:
     self.no_steer_warning = False
     self.silent_steer_warning = True
 
-  def update(self, CS: car.CarState, CS_prev: car.CarState, CC: car.CarControl):
+  def update(self, CS: car.CarState, CS_prev: car.CarState, CC: car.CarControl, CC_SP):
     if self.CP.brand == 'mock':
       return Events()
 
-    events = self.create_common_events(CS, CS_prev)
+    events = self.create_common_events(CS, CS_prev,
+                                       sp_longitudinal(self.CP, CC_SP))
 
     return events
 
-  def create_common_events(self, CS: structs.CarState, CS_prev: car.CarState):
+  def create_common_events(self, CS: structs.CarState, CS_prev: car.CarState, op_long):
     events = Events()
 
     CI = interfaces[self.CP.carFingerprint]
-    pcm_enable = self.CP.pcmCruise
+    pcm_enable = self.CP.pcmCruise or (self.CP.brand == 'tesla' and not op_long)
     allow_button_cancel = True
 
     if CS.doorOpen:
@@ -58,7 +60,7 @@ class CarEvents:
       events.add(EventName.speedTooHigh)
     if CS.cruiseState.nonAdaptive:
       events.add(EventName.wrongCruiseMode)
-    if CS.brakeHoldActive and self.CP.openpilotLongitudinalControl:
+    if CS.brakeHoldActive and op_long:
       events.add(EventName.brakeHold)
     if CS.parkingBrake:
       events.add(EventName.parkBrake)

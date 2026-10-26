@@ -8,6 +8,7 @@ import openpilot.cereal.messaging as messaging
 from openpilot.cereal import log, custom
 from opendbc.car.structs import car
 from openpilot.common.constants import CV
+from openpilot.selfdrive.controls.lib.long_owner import sp_longitudinal
 from openpilot.sunnypilot.selfdrive.selfdrived.events_base import EventsBase, Priority, ET, Alert, \
   NoEntryAlert, ImmediateDisableAlert, EngagementAlert, AlertCallbackType, wrong_car_mode_alert
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import PCM_LONG_REQUIRED_MAX_SET_SPEED, CONFIRM_SPEED_THRESHOLD
@@ -50,7 +51,7 @@ def speed_limit_pre_active_alert(CP: car.CarParams, CS: car.CarState, sm: messag
   alert_1_str = ""
   alert_size = AlertSize.small
 
-  if CP.openpilotLongitudinalControl and CP.pcmCruise:
+  if sp_longitudinal(CP, sm['carControlSP']) and CP.pcmCruise:
     # PCM long
     cst_low, cst_high = PCM_LONG_REQUIRED_MAX_SET_SPEED[metric]
     pcm_long_required_max = cst_low if speed_limit_final_last_conv < CONFIRM_SPEED_THRESHOLD[metric] else cst_high
@@ -267,5 +268,5 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
   },
 }
 
-from openpilot.tesla.alerts import EVENTS as XPILOT_PLUGIN_EVENTS  # noqa: E402  xpilot plugin alerts
+from openpilot.tesla.alerts import EVENTS as XPILOT_PLUGIN_EVENTS  # xpilot plugin alerts
 EVENTS_SP.update(XPILOT_PLUGIN_EVENTS)

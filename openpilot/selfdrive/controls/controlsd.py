@@ -16,6 +16,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
 from openpilot.selfdrive.controls.lib.longcontrol import LongControl
+from openpilot.selfdrive.controls.lib.long_owner import LongOwner, sp_longitudinal
 from openpilot.selfdrive.modeld.modeld import LAT_SMOOTH_SECONDS
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
 
@@ -43,7 +44,8 @@ class Controls(ControlsExt):
 
     self.sm = messaging.SubMaster(['lateralDelay', 'vehicleParameters', 'modelV2', 'selfdriveState',
                                    'extrinsicsCalibration', 'deviceMotion', 'longitudinalPlan', 'lateralManeuverPlan', 'carState', 'carOutput',
-                                   'driverMonitoringState', 'onroadEvents', 'driverAssistance'] + self.sm_services_ext + plugins.services(),
+                                   'driverMonitoringState', 'onroadEvents', 'driverAssistance', 'pandaStates', 'carStateSP'] +
+                                  self.sm_services_ext + plugins.services(),
                                   poll='selfdriveState', ignore_alive=plugins.services(), ignore_avg_freq=plugins.services(),
                                   ignore_valid=plugins.services())
     self.pm = messaging.PubMaster(['carControl', 'controlsState'] + self.pm_services_ext)
@@ -55,6 +57,7 @@ class Controls(ControlsExt):
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
 
+    self.long_owner = LongOwner(self.CP)
     self.LoC = LongControl(self.CP, self.CP_SP)
     self.VM = VehicleModel(self.CP)
     self.LaC: LatControl
@@ -87,6 +90,14 @@ class Controls(ControlsExt):
 
     CC = car.CarControl.new_message()
     CC.enabled = self.sm['selfdriveState'].enabled
+    self.CC_SP = self.state_control_ext(self.sm)
+    previous_owner = self.long_owner.owner
+    self.long_owner.update(self, CS, self.CC_SP, self.sm.logMonoTime['carState'] / 1e9)
+    op_long = sp_longitudinal(self.CP, self.CC_SP)
+    if self.CC_SP.longOwnerAvailable and previous_owner != 'sp' and op_long:
+      self.LoC.reset()
+      self.LoC.last_output_accel = CS.aEgo
+      self.LoC.pid.i = CS.aEgo - long_plan.aTarget
 
     # Check which actuators can be enabled
     standstill = abs(CS.vEgo) <= max(self.CP.minSteerSpeed, 0.3) or CS.standstill
@@ -97,7 +108,7 @@ class Controls(ControlsExt):
     CC.latActive = _lat_active and not CS.steerFaultTemporary and not CS.steerFaultPermanent and \
                    (not standstill or self.CP.steerAtStandstill)
     CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in self.sm['onroadEvents']) and \
-                    (self.CP.openpilotLongitudinalControl or not self.CP_SP.pcmCruiseSpeed)
+                    (op_long or (not self.CC_SP.longOwnerAvailable and not self.CP_SP.pcmCruiseSpeed))
 
     actuators = CC.actuators
     actuators.longControlState = self.LoC.long_control_state
@@ -145,6 +156,7 @@ class Controls(ControlsExt):
         cloudlog.error(f"actuators.{p} not finite {actuators.to_dict()}")
         setattr(actuators, p, 0.0)
 
+    self.CC_SP.longActive = CC.longActive
     return CC, lac_log
 
   def publish(self, CC, lac_log):
@@ -157,8 +169,10 @@ class Controls(ControlsExt):
       CC.orientationNED = self.calibrated_pose.orientation.xyz.tolist()
       CC.angularVelocity = self.calibrated_pose.angular_velocity.xyz.tolist()
 
-    CC.cruiseControl.override = CC.enabled and not CC.longActive and (self.CP.openpilotLongitudinalControl or not self.CP_SP.pcmCruiseSpeed)
-    CC.cruiseControl.cancel = CS.cruiseState.enabled and (not CC.enabled or not self.CP.pcmCruise)
+    op_long = sp_longitudinal(self.CP, self.CC_SP)
+    CC.cruiseControl.override = CC.enabled and not CC.longActive and (op_long or (not self.CC_SP.longOwnerAvailable and not self.CP_SP.pcmCruiseSpeed))
+    CC.cruiseControl.cancel = CS.cruiseState.enabled and (not CC.enabled or (not self.CP.pcmCruise and
+                                                                               (op_long or not self.CC_SP.longOwnerAvailable)))
     CC.cruiseControl.resume = CC.enabled and CS.cruiseState.standstill and not self.sm['longitudinalPlan'].shouldStop
 
     hudControl = CC.hudControl
@@ -213,6 +227,8 @@ class Controls(ControlsExt):
     cc_send = messaging.new_message('carControl')
     cc_send.valid = CS.canValid
     cc_send.carControl = CC
+    self.CC_SP.controlMonoTime = cc_send.logMonoTime
+    self.publish_ext(self.CC_SP, self.sm, self.pm)
     self.pm.send('carControl', cc_send)
 
   def run(self):
@@ -222,7 +238,6 @@ class Controls(ControlsExt):
       CC, lac_log = self.state_control()
       self.publish(CC, lac_log)
       self.get_params_sp(self.sm)
-      self.run_ext(self.sm, self.pm)
       rk.monitor_time()
 
 

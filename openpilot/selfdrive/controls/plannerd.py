@@ -33,7 +33,7 @@ def main():
   longitudinal_planner.plugin_long_targets = plugins.long_targets(CP, params)  # xpilot plugin speed targets (may raise)
   longitudinal_planner.plugin_long_planner = plugins.long_planners(CP, CP_SP, params)  # xpilot replaceable planner
   pm = messaging.PubMaster(['longitudinalPlan', 'driverAssistance', 'longitudinalPlanSP'])
-  sm = messaging.SubMaster(['carControl', 'carState', 'controlsState', 'radarState', 'modelV2', 'selfdriveState',
+  sm = messaging.SubMaster(['carControl', 'carControlSP', 'carState', 'controlsState', 'radarState', 'modelV2', 'selfdriveState',
                             'liveMapDataSP', 'carStateSP', 'selfdriveStateSP', gps_location_service, *plugin_services],
                            poll='modelV2', ignore_alive=ignore_services, ignore_avg_freq=ignore_services, ignore_valid=ignore_services)
 

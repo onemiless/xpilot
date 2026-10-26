@@ -9,6 +9,7 @@ from openpilot.cereal import messaging, custom
 from opendbc.car import structs
 from openpilot.common.constants import CV
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX
+from openpilot.selfdrive.controls.lib.long_owner import sp_longitudinal
 from openpilot.sunnypilot.selfdrive.controls.lib.e2e_alerts_helper import E2EAlertsHelper
 from openpilot.sunnypilot.selfdrive.controls.lib.smart_cruise_control.smart_cruise_control import SmartCruiseControl
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import SpeedLimitAssist
@@ -41,7 +42,9 @@ class LongitudinalPlannerSP:
     v_cruise_cluster_kph = min(CS.vCruiseCluster, V_CRUISE_MAX)
     v_cruise_cluster = v_cruise_cluster_kph * CV.KPH_TO_MS
 
-    long_enabled = sm['carControl'].enabled
+    owner_sp = sp_longitudinal(self.CP, sm['carControlSP'])
+    self.sla.pcm_op_long = owner_sp and self.CP.pcmCruise
+    long_enabled = sm['carControl'].enabled and (owner_sp or self.CP.brand != 'tesla')
     long_override = sm['carControl'].cruiseControl.override
 
     # Smart Cruise Control

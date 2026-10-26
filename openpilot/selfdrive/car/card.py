@@ -12,11 +12,11 @@ from openpilot.common.params import Params
 from openpilot.common.realtime import config_realtime_process, Priority, Ratekeeper
 from openpilot.common.swaglog import cloudlog, ForwardingHandler
 
-from opendbc.car import DT_CTRL, structs
+from opendbc.car import Bus, DT_CTRL, structs
 from opendbc.car.can_definitions import CanData, CanRecvCallable, CanSendCallable
 from opendbc.car.carlog import carlog
 from opendbc.car.fw_versions import ObdCallback
-from opendbc.car.car_helpers import get_car, interfaces
+from opendbc.car.car_helpers import get_car
 from opendbc.car.interfaces import CarInterfaceBase, RadarInterfaceBase
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.selfdrive.car.cruise import VCruiseHelper
@@ -179,6 +179,13 @@ class Car:
     # Update carState from CAN
     CS, CS_SP = self.CI.update(can_list)
     CS_SP = convert_to_capnp(CS_SP)
+    if self.CP.brand == 'tesla':
+      oem = self.CI.CS.das_control
+      mono_time = self.CI.can_parsers[Bus.ap_party].ts_nanos['DAS_control']['DAS_controlCounter']
+      self.CI.CS.das_control_mono_time = mono_time
+      CS_SP.teslaLongControl = {'monoTime': mono_time, 'accState': int(oem['DAS_accState']),
+                               'accelMin': oem['DAS_accelMin'], 'accelMax': oem['DAS_accelMax'],
+                               'counter': int(oem['DAS_controlCounter'])}
     self.plugins.publish_state(CS_SP)
 
     # Update radar tracks from CAN
@@ -196,7 +203,9 @@ class Car:
       self.can_log_mono_time = messaging.log_from_bytes(can_strs[0]).logMonoTime
 
     self.v_cruise_helper.update_speed_limit_assist(self.is_metric, self.sm['longitudinalPlanSP'])
-    self.v_cruise_helper.update_v_cruise(CS, self.sm['carControl'].enabled, self.is_metric)
+    cc_sp = self.sm['carControlSP']
+    stock_owner = self.CP.brand == 'tesla' and cc_sp.longOwnerAvailable and cc_sp.longOwner == 'stock'
+    self.v_cruise_helper.update_v_cruise(CS, self.sm['carControl'].enabled, self.is_metric, stock_owner)
     if self.sm['carControl'].enabled and not self.CC_prev.enabled:
       # Use CarState w/ buttons from the step selfdrived enables on
       self.v_cruise_helper.initialize_v_cruise(self.CS_prev, self.initial_cruise_speed)
@@ -258,6 +267,10 @@ class Car:
       self.CI.init(self.CP, self.CP_SP, *self.can_callbacks)
       # signal pandad to switch to car safety mode
       self.params.put_bool("ControlsReady", True)
+
+    if self.CP.brand == 'tesla' and (not self.sm.all_checks(['carControlSP']) or
+                                     CC_SP.controlMonoTime != self.sm.logMonoTime['carControl']):
+      return
 
     if self.sm.all_alive(['carControl']) and self.plugins.core_alive():  # xpilot: stop on a hung replaced selfdrived
       # send car controls over can

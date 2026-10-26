@@ -229,3 +229,11 @@ The timing reproducer and failure matrix live in
 It is a requirements check, not a replacement for firmware/libsafety E2E.
 Safety, MISRA, mutation, build-size and capture replay results must identify
 the exact source and actual gate status; DRAIN liveness and abort exceptions must be exercised explicitly.
+
+## X-20261026-49A host integration
+
+Host controlsd/card/CAN owner and veto implementation, runtime reader audit,
+49B hook/claim/HOST_CAPS boundary and verification limits are documented in
+[xpilot-long-owner-host.md](xpilot-long-owner-host.md). The executable Python
+model now implements DRAIN, including intervening host sends, abort and AEB
+exceptions; it does not replace the firmware's actual RX/TX/FWD tests.
