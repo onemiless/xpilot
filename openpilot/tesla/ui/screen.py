@@ -235,7 +235,8 @@ class BigScreenHost:
   @staticmethod
   def _is_modal(widget) -> bool:
     """tici dialogs (system/ui/widgets: ConfirmDialog, alert_dialog, Keyboard) pushed by the native pages."""
-    return type(widget).__module__.startswith("openpilot.system.ui.widgets")
+    from openpilot.tesla.ui.setting_keyboard import SettingKeyboard
+    return isinstance(widget, SettingKeyboard) or type(widget).__module__.startswith("openpilot.system.ui.widgets")
 
   def _hook_modal(self) -> None:
     top = gui_app.get_active_widget()
