@@ -28,7 +28,7 @@ import time
 import urllib.request
 
 from openpilot.common.utils import atomic_write
-from openpilot.tesla import manifest as mf
+from openpilot.tesla import host_api, manifest as mf
 from openpilot.tesla.plugin_params import ParamsView, STORE_TYPES
 
 INDEX_URL = "https://raw.githubusercontent.com/onemiless/xpilot-plugins/main/index.json"
@@ -242,7 +242,7 @@ def install(entry: IndexEntry, *, activate: bool = False, offroad=None) -> str |
   from openpilot.common.params import Params
   params = Params()
   def parked():
-    return params.get_bool("IsOffroad") and (offroad is None or offroad())
+    return host_api.parked(params) and (offroad is None or offroad())
   if not parked():
     return "park first"
   if not entry.installable:

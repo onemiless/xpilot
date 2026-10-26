@@ -181,6 +181,11 @@ card 每次启动用 `cloudlog.event("xpilot.drive_snapshot", ...)` 记录本行
 | `role:perception.model` | 整体替换模型（下载、选择、缓存、推理）。宿主 `ROLE_PROCESSES` 保留 `models_manager`、`modeld`、`modeld_tinygrad`、`modeld_warmup` 四个名字，`fork_processes.py` 把原进程对象交给宿主；只有声明该 role 的插件会收到 `role_processes(role, procs)`，可返回全部、部分或不返回，且必须是传入字典里的原对象（按身份校验）。返回的进程只在该插件持有 role 且原 `should_run` 条件成立时运行；无人持有时四个都不运行。默认 `sp_models`（优先级 10000、一直开启）返回全部；替换插件也可保持空选择、用 `processes()` 自带进程，不能借此占用这四个保留名。hook 抛异常或返回外来对象时记录故障、拒绝本次选择，其他插件继续注册。必须按原语义发布 `modelV2`、`drivingModelData`、`cameraOdometry`、`modelDataV2SP`。替换插件优先级要小于 10000；切换只在停车时改开关、下次启动进程时生效 | 是 |
 | `role:engagement.state` | 用 `engagement(selfdrive)` 整体替换接管：普通状态机和 MADS。默认 `sp_engagement`（优先级 10000、一直开启） | 是 |
 | `role:safety.fallback` | 用 `safety_fallback(ctx)` 整体替换兜底策略（哪些事件触发退出、禁止接管、软退出）。默认 `sp_safety_fallback` | 是 |
+| `power` | 通过 `host_api` 请求重启或关机，只能停车时使用 | 否 |
+| `net.wifi` | 通过 `host_api` 连接、忘记 Wi-Fi 或开关热点，只能停车时使用 | 是 |
+| `sound` | 通过 `host_api` 播放插件自带的短 WAV，只能停车且未打开驾驶员摄像头时使用 | 否 |
+| `display` | 独占显示资源；当前只做资源声明和冲突裁决 | 是 |
+| `camera:road` / `camera:wide` / `camera:driver` | 声明使用对应摄像头；当前只做声明，不授予额外访问能力 | 否 |
 | `msg:<类型>` | 发布这一类 `pluginMsg` 消息（见 8d 节），如 `msg:lanes.hint` | 否，多个插件可发同一类，用 `source` 区分 |
 
 - **冲突裁决**：两个已开启的插件声明了同一个独占资源时，`priority` 小的生效（相同则按 id），另一个整体不生效，Plugins 页显示 "conflict"。在 Plugins 页打开一个插件，会自动关掉和它冲突的插件。
@@ -344,6 +349,22 @@ class MyTile(Tile):
 - 文件超过限制就按职责拆分，不要压缩代码、删注释或合并行来凑行数。
 - 检查：核心插件由 `manifest_check.py` M11 检查（`manifest.layout_problems`）；商店插件在安装时检查，不符合就拒绝安装（`store_check.py` S16）。
 
+### 5.4 宿主系统 API（host_api）
+
+插件是受信任的审核代码，`openpilot.tesla.host_api` 是带安全底线的宿主契约，不是沙箱。动作函数的第一个参数都是插件类或实例，宿主用它的 `NAME` 和 `CLAIMS` 检查该插件当前是否 active 且已声明所需 claim；越权会写入 `XpilotPluginFaults`。`None` 表示请求已受理，字符串是拒绝原因，不表示异步动作已经完成。
+
+| 函数 | claim | 门控和结果 |
+|---|---|---|
+| `parked(params=None) -> bool` | 无 | 只读取 `IsOffroad`，供插件和宿主共用停车判断 |
+| `reboot(plugin) -> str \| None` | `power` | 只在停车时写 `DoReboot`；否则返回 `"park first"` |
+| `shutdown(plugin) -> str \| None` | `power` | 只在停车时写 `DoShutdown`；否则返回 `"park first"` |
+| `wifi_connect(plugin, ssid, password) -> str \| None` | `net.wifi` | 只在停车时异步交给 `WifiManager`；不记录密码。D-Bus 不可用返回 `"unsupported"` |
+| `wifi_forget(plugin, ssid) -> str \| None` | `net.wifi` | 同一停车门控，异步忘记已保存网络 |
+| `hotspot(plugin, on: bool) -> str \| None` | `net.wifi` | 同一停车门控，异步开关设备热点 |
+| `play_sound(plugin, path) -> str \| None` | `sound` | 无音频输出返回 `"unsupported"`；必须停车且 `IsDriverViewEnabled` 未设置；只接受插件 `.data/<id>/` 或安装目录内、最长 10 秒的 WAV，并以非阻塞方式播放 |
+| `data_dir(plugin) -> pathlib.Path` | 无 | 创建并返回 `INSTALL_DIR/.data/<插件 id>`，插件持久数据统一放这里 |
+
+插件清单可用 `requires.host_api` 列出依赖的函数名。宿主只接受 `HOST_CAPS["host_api"]` 中的名字；还不认识 `host_api` 的旧宿主会把它当作未知 `requires` 键并干净地拒绝该插件。
 ### 5.5 系统功能的官方读法
 
 以下合同只开放读取或宿主已经明确门控的操作；插件不得直接操作系统实现细节。
