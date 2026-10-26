@@ -388,12 +388,15 @@ SP→stock 按协调者 DRAIN 决定：收到与最后 SP 同计数器的 OEM �
 真实 libsafety 回归必须保留全部中间 SP 帧并验证 25 Hz/100 Hz 全相位与抖动下的活性。
 未发布新的 HOST_CAPS/claim；X-49/X-50 尚不能依此文档启用实际控制。
 
-X-49 的宿主失败矩阵与 LO16 合同反例在 `tools/sp_tesla_e2e/long_owner_check.py`。
-运行 `python3 tools/sp_tesla_e2e/long_owner_check.py --output <新目录>` 保存每个中间 SP
-发送的 `timeline.csv`、`result.json` 和 `SHA256SUMS`；当前返回 1（BLOCKED），不代表
-libsafety 或 card/controlsd 已执行。完整限制见 `docs/reports/X-20261026-49.md`。
-`role:long.owner` / `long_owner(ctx, CS)` 仍是拟议 API，未注册、未发布 HOST_CAPS，
-无运行时 owner 字段、shadow observer 或手动切换设置；不能据此安装或启用 G8 插件。
+X-49 已实现第 1 步 host transport：cereal owner/request/health 字段、pandad/Python
+版本门控和 A5 解析，见 [host design](docs/design/xpilot-long-owner-host.md)。只有匹配
+X-48 最终 health.h hash 和 54 字节布局才启用请求；当前 published header 仍是 49 字节，
+因此 A5 保持关闭。DRAIN_TIMEOUT=20 可解析。controlsd owner、shadow、手动设置和 HUD
+尚未实现；`role:long.owner` / `long_owner(ctx, CS)` 仍未注册、未发布 HOST_CAPS。
+
+`tools/sp_tesla_e2e/long_owner_check.py` 的 LO1–LO16 失败矩阵仍可参考，但 executable
+模型是 pre-DRAIN，当前因合同条款变化返回 1，必须重写后才可验证 DRAIN liveness；
+不能把它称为现合同的活锁证据。状态与限制见 `docs/reports/X-20261026-49.md`。
 
 ## 7. 雷达接入接口
 
