@@ -365,6 +365,18 @@ app 固件专用 CAPS/STATUS/BEGIN/COMMIT/CLEAR 及 EP2 64 字节记录见合同
 
 Tesla 接管例外（用户 2026-10-25 决定）：`safety.h` 的最低频率检查遵守 `ignore_frequency_check`，时效、校验和、计数器和质量检查不变；SP 扩展允许原车 Autosteer 设置（mixed AP），以后由 mixed AP 插件接管，不改上游 `carstate.py` 或 panda 的 Autosteer 安全逻辑。
 
+### G8 动态纵向 owner（X-20261026-48，合同阶段）
+
+线协议草案和时序合同见 [`docs/design/xpilot-long-owner.md`](docs/design/xpilot-long-owner.md)：
+Panda 唯一裁决 STOCK/SP，拟用 app-only `0xA5` 请求、health 追加 owner/pending/age/refusal；
+能力位不等于运行时 owner，规则引擎仍不能授予 0x2B9。计数器交接连续 +1 mod 8；交接源间隔
+限定 5–80 ms，允许一次相位变化。原车 AEB 优先，心跳丢失 SILENT 行为不变，G3 横向未实现。
+
+本分支目前只固定合同、失败矩阵和可重复时序反例，**尚未实现 G8 固件或健康包字段**。
+SP→stock 的 OEM+1 条件与持续发送 OEM+1 的主机可能活锁，必须保留真实 libsafety 回归，不能
+通过省略中间 SP 帧宣称健康主机请求不超时。后续范围和验证清单在 `handoff/X-20261026-48.md`。
+未发布新的 HOST_CAPS/claim；X-49/X-50 尚不能依此文档启用实际控制。
+
 ## 7. 雷达接入接口
 
 写一个声明 `source:radar` 的插件，实现 `radar_interface` 钩子（见 4.4）。插件关闭、没有声明或出错时用原车雷达。外接雷达如果需要发送报文，还要声明 `can.tx` 并携带 panda 运行时规则。
