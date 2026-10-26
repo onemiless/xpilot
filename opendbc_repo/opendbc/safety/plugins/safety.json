@@ -1,4 +1,0 @@
-{
-  "ambient_light": {"header": "ambient_light.h", "param_bit": "0x2000", "tx": ["0x679:1"]},
-  "auto_speed": {"header": "auto_speed.h", "param_bit": "0x4000", "tx": ["0x3C2:1"]}
-}

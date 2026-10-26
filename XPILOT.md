@@ -49,7 +49,7 @@ C3/C3XL 保留各自锁定的 mr-one 引导链和写前白名单校验，禁止�
 12. **车端数据只读、只经插件**：插件在 card 里用 `observe_can` 自己解析，再写进 `carStateSP` 里自己的字段（cereal 规则见第 7 条）；UI 和其他进程只读这些消息，不直接读 CAN。
 13. **UI**：文字只用英文和 ASCII（设备字体没有 `‹ › · —` 等字）；磁贴只读消息、不写参数（设置写在详情页）；`hz` 按需要取最低值。
 14. **不加新依赖**：只用标准库和仓库里已有的库。商店插件需要编译的部分以预编译二进制发布（见 8c）。
-15. **推送分流**：插件的改动（`plugins/<id>/`、它的测试、`dist/`、`index.json`）只推到 `onemiless/xpilot-plugins`；系统的改动（宿主、商店、UI、核心插件、panda safety、`safety.json`、检查脚本、文档）只推到 `onemiless/xpilot`。一个功能两边都要改时分成两个提交、两个 PR，先合系统仓库。两个仓库的默认分支都受保护：走 PR，CI 通过才能合并（管理员可以直接推）。
+15. **推送分流**：插件的改动（`plugins/<id>/`、它的测试、`dist/`、`index.json`）只推到 `onemiless/xpilot-plugins`；系统的改动（宿主、商店、UI、核心插件、panda safety、检查脚本、文档）只推到 `onemiless/xpilot`。一个功能两边都要改时分成两个提交、两个 PR，先合系统仓库。两个仓库的默认分支都受保护：走 PR，CI 通过才能合并（管理员可以直接推）。
 
 ## 3. 目录
 
@@ -62,15 +62,12 @@ openpilot/tesla/
   plugins/gen_params.py     把各插件清单里的 params 生成到 common/plugin_params.inc
   plugins/sp_models/        默认模型：SP 的模型管理器和 modeld（role:perception.model）
   plugins/sp_engagement/ sp_safety_fallback/   默认接管和安全兜底
-  plugins/gen_safety.py     旧 registry 生成器，仅保留作迁移参考（第 6 节）
   store.py                  插件商店：下载、校验、安装；首次启动自动安装 DEFAULTS 里的显示插件（8c）
   ui/screen.py ui/tile.py ui/tiles.py ui/slots/   大屏磁贴宿主、磁贴基类、布局模型（无 pyray）、内置磁贴（slots/settings.py 设置页磁贴）
   ui/plugin_ui.py           UI 侧插件加载：找到 Tile、HudOverlay 和 ScreenOverlay，插件关闭时隐藏
   ui/plugins_page.py ui/store_page.py   mici 设置里的"Plugins"页和商店页（小屏用）
   ui/offroad.py ui/pages/   大屏停车时的详情页（见第 9 节）
   ui/settings_page.py ui/settings_meta.py        Tesla 设置页（上游 Tesla 选项、DM、地图）
-opendbc_repo/opendbc/safety/plugins/
-  plugin.h registry.h auto_speed.h ambient_light.h safety.json   旧测试 oracle/迁移参考
 opendbc_repo/opendbc/safety/xpilot_rules.h   运行时引擎与验证器（第 6 节）
 panda/board/xpilot_rules.h   app EP2 loader
 .github/workflows/xpilot.yaml   CI：第 11 节的本机检查 + 插件仓库端到端
@@ -250,7 +247,7 @@ SP 里的调用位置：`selfdrive/car/card.py`（`CarPlugins`、`radar_interfac
    - 只显示：一个 `ui.py` 磁贴或叠加层，读已有的消息。`claims` 为空，可以默认开启。
    - 读车端数据再显示：card 钩子 `observe_can` 解析 + `publish_state` 写到 `carStateSP` 的新字段，`ui.py` 磁贴订阅 `carStateSP`。参考插件仓库的 `plugins/bms/`。
    - 影响驾驶：用第 4.4 节的规划/控制钩子，声明对应 claim；能"只收紧"的就不要"替换"。
-   - 发 CAN：`control_sends` + `can.tx` claim + panda 运行时规则（第 6 节）。参考插件仓库的 `plugins/auto_speed/`、`plugins/ambient_light/`。
+   - 发 CAN：`control_sends` + `can.tx` claim + panda 运行时规则（第 6 节）。规则数据和实现都放在插件仓库。
    - 独立进程：`processes()` + `process:<名字>` claim。参考插件仓库的 `plugins/traffic_light/`、`plugins/external_compute/`。
 2. **写失败模式**（在检查脚本或模块 docstring 里列出），再写检查：纯逻辑放进 `tools/sp_tesla_e2e/` 里已有的 `*_check.py`（或插件自己的 `tests/`），渲染和触摸只能在设备上用 `big_screen_e2e.py` 确认。
 3. **建目录**：在插件仓库建 `plugins/<id>/`（只有核心插件放系统仓库的 `openpilot/tesla/plugins/<id>/`）：空的 `__init__.py`、`plugin.json`（4.1）、`plugin.py`、可选的 `ui.py`：
@@ -286,7 +283,7 @@ class MyTile(Tile):
 
 4. **新消息字段**：加在 `cereal/custom.capnp`（只追加，见规则 7），设备上要重新编译（scons）。
 5. **参数**：写进 `plugin.json` 的 `params` 和 `settings`。商店插件的参数存在 `/data/xpilot_plugins/.params`（8c），不用生成；核心插件才运行 `python3 openpilot/tesla/plugins/gen_params.py`，把 `common/plugin_params.inc` 一起提交。
-6. **跑本机检查**（第 11 节），全部通过后按功能拆分提交；有 CAN 发送的在插件声明固件 ABI 支持的规则（第 6 节），先完成宿主装载、差分 safety 测试、MISRA 和固件构建；插件的 `plugin.json` 携带规则；最后上设备实测，报告设备上的 commit。
+6. **跑本机检查**（第 11 节），全部通过后按功能拆分提交；有 CAN 发送的在插件声明固件 ABI 支持的规则（第 6 节），先完成宿主装载、规则引擎 safety 测试、MISRA 和固件构建；插件的 `plugin.json` 携带规则；最后上设备实测，报告设备上的 commit。
 7. **不用注册**：插件自动被发现，插件市场按类别显示它的开关、版本、作者、简介和设置。插件仓库运行 `tools/build_index.py` 后发布（8c）。
 
 ### 5.2 API 一览
@@ -330,7 +327,7 @@ class MyTile(Tile):
 
 **消息**（插件可以读或发布）：`carStateSP` 里插件自己的字段（例 `teslaBattery`）、`liveMapDataSP` 和 `navInstruction`（地图和导航，第 8 节）、`externalIn` / `externalOut`（外接算力，8b），以及 SP 的所有服务（`carState`、`radarState`、`longitudinalPlan`、`deviceState` 等）。
 
-**panda safety**：插件声明 ABI v1 规则，固件统一验证和执行，见第 6 节；旧 C 插件接口只供差分测试。
+**panda safety**：插件声明 ABI v1 规则，固件统一验证和执行，见第 6 节，系统不编译商店插件专用头文件。
 
 **商店**（8c）：插件包和内置插件同样格式；代码按 `xpilot_ext.<id>` 导入、内部用相对导入；参数存在 `.params` 文件里；二进制要在清单写 `platform`。
 
@@ -355,25 +352,25 @@ class MyTile(Tile):
 
 Tesla 自有地址按地址独占，与 bus/length 无关（包括 0x488、0x2B9、0x27D、0x3DF 和 RX/转发列表）。它们只走原模式白名单和 hook，规则不能接管；其他地址有匹配规则才可能发送。规则全局门：Tesla 模式、有 vehicle bus、bus 1、无 relay malfunction、非 silent/noOutput。默认必须 `controls_allowed`。只有所有 field 值均声明为 exempt 的帧，才同时豁免接管门和会话预算；其余模板、TTL、内容、counter、checksum、间隔和全局门仍生效。
 
-- auto_speed：0x3C2，idle mux-1 模板，TTL 1.5 秒，间隔 250 ms，每会话 50 格，空闲 3 秒重开；无豁免。
-- ambient_light：0x679，TTL 1 秒，红色、亮度及 (zone,side) 元组，间隔 80 ms，每会话 150 帧/15 秒，空闲 1 秒重开；无豁免，必须接管。旧文档“允许未接管时告警”与旧头文件不符，已纠正。
+商店插件的地址、模板、时效、频率和预算由各自 `plugin.json` 的规则声明；系统不维护按插件命名的清单。
+
 - navassist：0x3E9，idle 模板、TTL 1.5 秒、模板 counter+1、通用 TESLA_SUM8、间隔 100 ms、首帧起 60 秒窗口最多 200 帧。(request,reason) 只能 (1,8)/(2,8)/(3,4)。cancel=(3,4) 只释放转向灯，允许未接管时发送；用户 2026-10-25 决定 cancel 不占用且不受会话预算限制。它仍受模板、校验和、counter、间隔、relay 和 noOutput 限制。
 
 app 固件专用 CAPS/STATUS/BEGIN/COMMIT/CLEAR 及 EP2 64 字节记录见合同。主机必须先验证 CAPS 是 app，绝不向 bootstub EP2 写规则。BEGIN 立即撤销旧表，CRC/格式/上传失败后空表；只允许非 car mode 提交。启动和每次切入非 car mode 清表，每次设置模式重置模板和预算，切入 car mode 中止未完成上传。表为空或失败不改变基础 Tesla 接管条件。
 
 宿主衔接（X-20261025-33）：card 编译已启用且裁决胜出的规则到 `XpilotPandaRules`；pandad 每循环只发一条 EP2 记录，保留心跳和总截止时间，在 0xDF/0xDC 前 COMMIT 并核对 STATUS CRC/count。失败 CLEAR、记录功能故障，基础模式仍正常 arming。无故障且没有规则时也显式装载空表；功能故障锁定时只撤权，不上传任何表。插件不再分配 safetyParam 位；G14 固定位保留。旧 `safety.profile` 插件必须发布新版本替代，系统不提供翻译层；主机实现和模型验证不代表设备已部署。
 
-`XpilotPandaRules` 是 BYTES：完整表紧接 4 字节 little-endian CRC32（只计算表，参数总长 20–4100）；没有 JSON 或额外长度前缀。唯一编码器为 `openpilot/tesla/panda_rules.py`，固件测试 fixture 也导入它。card 在 setup 后、CP/SP 发布前同步写入；没有规则也写空表。跨插件重复地址或总量超限，只丢弃当前插件并记录 `card.rules`，其他规则保留。旧 generator 读取入口只供旧 oracle 检查，生产发现、安装与编译均不读取 safety.json。
+`XpilotPandaRules` 是 BYTES：完整表紧接 4 字节 little-endian CRC32（只计算表，参数总长 20–4100）；没有 JSON 或额外长度前缀。唯一编码器为 `openpilot/tesla/panda_rules.py`，固件测试 fixture 也导入它。card 在 setup 后、CP/SP 发布前同步写入；没有规则也写空表。跨插件重复地址或总量超限，只丢弃当前插件并记录 `card.rules`，其他规则保留。发现、安装与编译只读取清单里的 rules，不读取旧 profile 注册表。
 
 功能故障参数 `XpilotPandaRulesFault`（BOOL）由 manager 启动清除；pandad 只在同一进程观察到 onroad→offroad 边沿时清除，启动时暂未收到 deviceState 的 false 不清除。规则持有者运行期**任一 hook 异常**均视作关键故障，同步置位，此策略不变；初始化/setup/编译拒绝发生在表写入之前，只停用该插件。故障锁定时不上传任何表，只撤权并继续本次正常的基础模式初始化。撤权须独立 STATUS 读回确认空表（count/length/CRC 均为零），或 NO_OUTPUT 的 health 读回确认；CLEAR 与 NO_OUTPUT 均失败时，在后续 10 Hz 检查继续重试，不提前标记完成。
 
 已配置后的行驶中不自动重新 arming，也不因 Panda 退到 SILENT、复位或 NO_OUTPUT 而重装；模式不匹配继续交给 selfdrived 处理。规则变更只在正常 offroad→onroad 初始化序列装载，包含停车期间的 Panda 复位。observe_can 的即时发送和控制发送都受 `core_alive` 门控。arming、行程状态和故障检查保留 10 Hz；只有上传进行中才在 100 Hz 推进一步，每循环最多一条 EP2 记录，空闲快速入口直接返回，不读 health/Params。心跳保持 10 Hz；总期限两秒，相关传输限时 5 ms。SPI 的单次传输计时排除等待总线锁的时间，总上传期限仍计算实际墙钟时间。CAPS 失败绝不写 EP2；STATUS 要独立核对 state/error/CRC/length/count。
 
-生产固件只包含 `xpilot_rules.h` 引擎。`auto_speed.h`、`ambient_light.h`、`registry.h`、`gen_safety.py`、`safety.json` 暂留作测试 oracle/迁移参考，不再授予生产发送权限。X-33 落地、差分门通过后另行删除，不能在本任务删除。navassist oracle 固定为 Sniper-Eon/xpilot `ab3535b5a4acbf318c55005868d37ed19e2cf77d` 的测试 fixture，故意差异包括 cancel 会话豁免、tick 锁定过期状态以避免整圈计时器回绕后复活或停顿，以及拒绝 CAN ID 类型不匹配的帧。
+生产固件只包含 `xpilot_rules.h` 引擎。X-32 已证明的旧头文件差分路径在 X-20261026-57 删除，包括旧接口、注册表和生成器；商店插件只通过插件/API 和规则数据接入。保留纯规则数据的确定性重放、精确边界和 R1–R17 引擎检查。cancel 会话豁免、tick 锁定过期状态以及标准/扩展 CAN ID 匹配仍由引擎验证。
 
 1 Hz `safety_tick` 将过期模板置为无效，达到最小间隔后清除 TX 标记，idle/window 到期后清零会话计数；时间戳保留用于 tick 之间的边界检查。模板只能由匹配的车端 RX 刷新，宿主不能刷新。RX/TX 的标准帧或扩展帧类型必须与地址范围一致。
 
-检查：`test_xpilot_rules.py`（失败矩阵 R1–R17、真实 C 引擎和 app loader、旧头文件差分）、`test_xpilot_plugins.py`、全部 opendbc safety、cppcheck MISRA、可用时 mutation、F4/H7/body 构建与 RAM/flash 对照。运行 `XPILOT_RULES_ARTIFACT=<路径> PYTHONPATH=opendbc_repo python -m unittest opendbc.safety.tests.test_xpilot_rules` 保存可重复的流摘要。主机检查、固件构建、设备 active commit 和刷写分别报告；本任务无设备访问。
+检查：`test_xpilot_rules.py`（失败矩阵 R1–R17、真实 C 引擎和 app loader、确定性重放）、`test_xpilot_rule_data.py`、全部 opendbc safety、cppcheck MISRA、可用时 mutation、F4/H7/body 构建与 RAM/flash 对照。运行 `XPILOT_RULES_ARTIFACT=<路径> PYTHONPATH=opendbc_repo python -m unittest opendbc.safety.tests.test_xpilot_rules` 保存可重复的流摘要。主机检查、固件构建、设备 active commit 和刷写分别报告；本任务无设备访问。
 
 Tesla 接管例外（用户 2026-10-25 决定）：`safety.h` 的最低频率检查遵守 `ignore_frequency_check`，时效、校验和、计数器和质量检查不变；G4（用户 2026-10-26 决定）移除 SP 扩展的全局 `invalidLkasSetting=False`，CarState 保留真实原车 Autosteer 设置。仅开启 `tesla_mixed_control` 时由其 `event.filter` 删除该事件，关闭或未安装插件即恢复 SP 行为。插件 1.1.0 声明 `requires.hooks=["event_filter"]`；旧宿主拒绝未知 claim，必须同一次 offroad 会话先更新系统再安装插件。此任务不实现 AP owner/交接（G3），不改上游 `carstate.py` 或 panda 安全逻辑。
 
@@ -381,7 +378,9 @@ Tesla 接管例外（用户 2026-10-25 决定）：`safety.h` 的最低频率检
 
 线协议和 DRAIN 时序见 [wire contract](docs/design/xpilot-long-owner.md)，主机实现、
 reader audit 和验证限制见 [host contract](docs/design/xpilot-long-owner-host.md)。本分支包含
-X-48 固件，Panda 独占 STOCK/SP 裁决；能力位不是 owner，runtime rules 不能授予 0x2B9。
+X-48 固件，Panda 独占 STOCK/SP 裁决；X-20261026-57 恢复行程初始规则：
+`tesla_init` 读取纵向能力位后，有能力则初始 owner 为 SP，否则为 STOCK；无需策略插件或手动请求。
+后续 owner 仍经确认切换，runtime rules 不能授予 0x2B9。非 Tesla 模式清除能力、pending 和缓存；SILENT 仍是物理继电器旁路。
 仅 health.h hash `0x25f8efcd`（637071309）和 54 字节有效包启用 A5；旧 49 字节固件保持
 CP 选定的 owner 和原 CAN 行为，不发送 A5。见过新 ABI 后丢失 ABI 会锁定切换，不回退旧 SP 路径。
 
@@ -401,7 +400,7 @@ controlsd 启动时只调用一次 `plugins.long_owner_policy(params, CP, CP_SP)
 Host floor：目标确认 1 s，完成/拒绝后 cooldown 2 s；gas/brake/standstill/stockAeb/accFault、
 |aEgo|≥0.35、lead TTC<3 s、OEM 不活跃/过期及对应 accel 两端差>0.20 均拒绝。
 两次连续拒绝、request/ack 不符>0.5 s、健康包/策略故障后锁定切换直到 disengage；拒绝保持
-ack owner，Panda reset 跟随 STOCK。CC_SP 与 CC 同周期配对；longActive/override/cancel、
+ack owner，Panda reset 跟随其确认后的初始 owner。CC_SP 与 CC 同周期配对；longActive/override/cancel、
 planner/LongControl 和 CAN 使用同一 owner，card 拒绝不配对消息。
 
 STOCK 不发 ACC_ON/accel；pending SP 候选帧是交接例外。SP OEM+1 counter lock 在 OEM
@@ -529,18 +528,7 @@ X-50 自动速度策略和 G3 横向均未实现；刷写和实车接合测试�
 | `sp_engagement` / `sp_safety_fallback` | 默认接管和兜底：返回 SP 已建好的状态机/MADS 和事件列表，与其他实现走相同宿主底线；装一个持有 `role:engagement.state` / `role:safety.fallback` 的插件并打开即替换，宿主底线见第 4.4 节 | 无（一直开启） | 无发送 |
 | `sp_models` | 默认模型：SP 的模型管理器和 modeld 原样运行，只是归到插件下；装一个持有 `role:perception.model` 的插件（如 OP、Jetlink、Chipmunk 模型）并打开即替换 | 无（一直开启） | 无发送 |
 
-其他插件（auto_speed、traffic_light、ambient_light、external_compute、bms 和大屏显示插件）的列表和说明在插件仓库的 `README.md`。它们保留原来的参数名，从旧版本升级的设备要把旧参数值复制到 `/data/xpilot_plugins/.params/`。panda 生产权限由第 6 节运行时规则提供；旧 `auto_speed.h` / `ambient_light.h` 只保留作测试 oracle。
-
-### 插件仓库 use 补齐清单（2026-10-25）
-
-只读检查 `onemiless/xpilot-plugins/main@9d713ffc99cfc1a90e281a239047069e9cfde26a`：以下 17 个源码清单均缺少 `use`，本任务不修改插件仓库。推荐值按钩子和现有磁贴的 `show` 推导；其中 op_models 兼有行驶模型角色和 offroad 设置磁贴，必须是 both。
-
-| 建议 use | 插件 |
-|---|---|
-| `onroad` | ambient_light、auto_speed、blindspot_edges、external_compute、overspeed_warning、tesla_mixed_control、tn_long、traffic_light |
-| `both` | bms、car_tile、clock_tile、ip_tile、lead_card、map_tile、op_models、speed_card、speed_limit_card |
-
-商店索引目前含上述 16 个（tn_long 尚未发布），包内清单同样缺失 use。`store_e2e` 应以 E9/E1 报缺失声明、以 E2 报其安装失败导致的未发现；补齐源码后还须重建 dist/index 才能通过。索引未带 use 时市场显示 use not declared，已加载插件按经校验的清单显示。
+商店插件的列表和说明只在插件仓库的 `README.md`。它们保留原来的参数名，从旧版本升级的设备要把旧参数值复制到 `/data/xpilot_plugins/.params/`。panda 生产权限由第 6 节运行时规则提供。
 
 ## 11. 本机可以跑的检查
 
@@ -562,7 +550,7 @@ python3 tools/sp_tesla_e2e/store_e2e.py --repo ~/xpilot-plugins       # 插件�
 python3 tools/dev_sp_release/upstream_watch.py                        # 列出值得 cherry-pick 的上游提交
 ```
 
-CI（`.github/workflows/xpilot.yaml`）在每个 PR 上跑以上检查（`upstream_watch` 除外）和 `gen_params.py`/`gen_safety.py --check`。环境：Python 3.12，`pip install pyzmq numpy pycapnp pytest zstandard setproctitle cython scons setuptools`，`git submodule update --init msgq_repo`，在 `msgq_repo` 里 `scons msgq/ipc_pyx.so`，`PYTHONPATH=msgq_repo`。插件自己的测试和外接算力 TCP 桥接检查在插件仓库的 CI 里。
+CI（`.github/workflows/xpilot.yaml`）在每个 PR 上跑以上检查（`upstream_watch` 除外）和 `gen_params.py --check`。环境：Python 3.12，`pip install pyzmq numpy pycapnp pytest zstandard setproctitle cython scons setuptools`，`git submodule update --init msgq_repo`，在 `msgq_repo` 里 `scons msgq/ipc_pyx.so`，`PYTHONPATH=msgq_repo`。插件自己的测试和外接算力 TCP 桥接检查在插件仓库的 CI 里。
 
 编译、safety 测试、UI 渲染和上车验证只能在 Mac 或设备上做。
 

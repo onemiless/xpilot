@@ -426,7 +426,7 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
   };
 
   xpilot_rules_reset();
-  tesla_long_reset();
+  tesla_long_reset(false);
 
   // reset state set by safety mode
   safety_mode_cnt = 0U;

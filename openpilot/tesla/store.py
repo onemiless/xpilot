@@ -8,7 +8,7 @@ guards against corrupt or swapped downloads, trust comes from the reviewed repos
 
 Install: download (size-capped), check sha256, extract regular files only into a staging directory next to the
 target, validate the manifest (id, api, entry module, no built-in id, no clashing or unsupported param keys, can.tx
-and safety only as declared in the firmware's safety.json) and the code
+and runtime rules supported by the firmware ABI) and the code
 layout (manifest.layout_problems), then
 swap it into INSTALL_DIR/<id> with renames. Any failure leaves the installed version as it was. Changes apply after
 a restart (plugins are discovered at process start). Call only while offroad.

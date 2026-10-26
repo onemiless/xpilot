@@ -164,10 +164,10 @@ def main() -> int:
   publish("ext_dup", archive("ext_dup", good_files("ext_dup", params={"IsMetric": {"type": "BOOL"}})))
   safe = [sample_rule()]
   tx = ['can.tx:0x600:1']
-  for pid in ('auto_speed', 'ambient_light', 'ext_tx'):
+  for pid in ('sender_a', 'sender_b', 'ext_tx'):
     publish(pid, archive(pid, good_files(pid, claims=tx, rules=safe, priority=10 if pid == 'ext_tx' else 100)))
   bad_safety = {
-    'old_profile': ('S40', dict(safety={'profile': 'auto_speed'}, claims=tx)),
+    'old_profile': ('S40', dict(safety={'profile': 'sender_a'}, claims=tx)),
     'old_legacy': ('S40', dict(safety={}, claims=tx)),
     'wrong_tx': ('S41', dict(rules=safe, claims=['can.tx:0x601:1'])),
     'owned': ('S41', dict(rules=[{**safe[0], 'tx_address': 0x488}], claims=['can.tx:0x488:1'])),
@@ -219,7 +219,7 @@ def main() -> int:
       errors.append(f"{code} {pid} installed")
   if (TMP / "evil.txt").exists() or (TMP / "installed" / "evil.txt").exists():
     errors.append("S2 file written outside the plugin directory")
-  for pid, code in (("auto_speed", "S18"), ("ambient_light", "S18"), ("ext_tx", "S18")):
+  for pid, code in (("sender_a", "S18"), ("sender_b", "S18"), ("ext_tx", "S18")):
     if (r := install(pid)) is not None:
       errors.append(f"{code} declared safety plugin {pid} refused: {r}")
   for pid, (code, _) in bad_safety.items():
@@ -294,7 +294,7 @@ def main() -> int:
   for pid in bad_safety:
     if pid in names or not plugins.LOAD_ERRORS.get(pid):
       errors.append(f"S31 {pid} not skipped with a reason")
-  for pid, code in (("ext_tx", "S18"), ("auto_speed", "S18"), ("ambient_light", "S18")):
+  for pid, code in (("ext_tx", "S18"), ("sender_a", "S18"), ("sender_b", "S18")):
     cls = next((c for c in plugins.PLUGINS if c.NAME == pid), None)
     if cls is None or cls.MANIFEST.rules != safe:
       errors.append(f"{code} {pid} not discovered with runtime rules")
@@ -312,15 +312,15 @@ def main() -> int:
   core = CoreParams()
   view = ParamsView(core)
   active, conflicts = plugins.resolve(core)
-  if active & {"ext_tx", "auto_speed", "ambient_light"} != {"ext_tx"} or \
-      any(conflicts.get(pid) != "ext_tx" for pid in ("auto_speed", "ambient_light")):
+  if active & {"ext_tx", "sender_a", "sender_b"} != {"ext_tx"} or \
+      any(conflicts.get(pid) != "ext_tx" for pid in ("sender_a", "sender_b")):
     errors.append(f"S29 profile claim arbitration: {active}, {conflicts}")
   host = plugins.CarPlugins(types.SimpleNamespace(brand="tesla"), core)
   cp_sp = types.SimpleNamespace(safetyParam=0)
   host.setup(cp_sp)
   if cp_sp.safetyParam != 0:
     errors.append(f"S18 setup changed base safetyParam {cp_sp.safetyParam:#x}")
-  if {p.NAME for p in host.plugins} & {"ext_tx", "auto_speed", "ambient_light"} != {"ext_tx"}:
+  if {p.NAME for p in host.plugins} & {"ext_tx", "sender_a", "sender_b"} != {"ext_tx"}:
     errors.append("S29 card built multiple profile claimants")
   try:
     if ext is not None and not plugins.is_enabled(ext, core):

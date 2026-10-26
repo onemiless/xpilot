@@ -1,4 +1,4 @@
-"""ABI v1 fixtures and app-loader harness; legacy headers are test-only oracles."""
+"""ABI v1 rule-data fixtures and app-loader harness."""
 import functools
 from pathlib import Path
 import struct
@@ -73,7 +73,6 @@ def configure(safety, rules=RULES, vehicle=True):
   safety.set_current_safety_param_sp(0x7001 if vehicle else 0x7000)
   assert safety.set_safety_hooks(10, 0) == 0
   safety.init_tests()
-  safety.test_old_reset()
   safety.set_current_safety_param_sp(0x7001 if vehicle else 0x7000)
 
 

@@ -2,8 +2,8 @@
 
 Legacy parameter constants select fixtures only; production ignores those bits.
 
-auto_speed (0x3C2, bus 1, 8 bytes):
-- Inactive outside SAFETY_TESLA, without an installed auto_speed rule, or without the vehicle bus.
+tick (0x3C2, bus 1, 8 bytes):
+- Inactive outside SAFETY_TESLA, without an installed tick rule, or without the vehicle bus.
 - Wrong address, bus, or length is not plugin-owned and remains blocked by stock Tesla safety.
 - TX is blocked before an idle mux-1 template exists or after that template is stale.
 - TX is blocked when any non-tick byte or the tick byte's non-tick bits differ from the template.
@@ -14,7 +14,7 @@ auto_speed (0x3C2, bus 1, 8 bytes):
 - Plugin RX does not change stock Tesla controls_allowed or relay-malfunction state.
 - At most 50 ticks per session; a 3-second idle gap starts a new session.
 
-ambient_light (0x679, bus 1, 7 bytes):
+palette (0x679, bus 1, 7 bytes):
 - Inactive outside SAFETY_TESLA, without an installed ambient rule, or without the vehicle bus.
 - Wrong address, bus, or length is not plugin-owned and remains blocked by stock Tesla safety.
 - TX is blocked before a template exists or after that template is stale.
@@ -34,20 +34,20 @@ from opendbc.safety.tests.xpilot_rules_helpers import AUTO, AMBIENT, harness, ta
 from opendbc.sunnypilot.car.tesla.values import TeslaSafetyFlagsSP
 
 
-AUTO_SPEED_PARAM = 0x4000
+TICK_PARAM = 0x4000
 AMBIENT_PARAM = 0x2000
-AUTO_SPEED_TEMPLATE = bytes((0xA5, 0x12, 0x34, 0xC0, 0x9A, 0xBC, 0xDE, 0xF0))
+TICK_TEMPLATE = bytes((0xA5, 0x12, 0x34, 0xC0, 0x9A, 0xBC, 0xDE, 0xF0))
 AMBIENT_TEMPLATE = bytes((0x01, 0x12, 0x34, 0x56, 0xA8, 0x06, 0xA0))
 AMBIENT_ALERT = bytes((0x03, 0xFF, 0x00, 0x00, 0x9E, 0xAE, 0xA0))
 
 
-class XpilotPluginSafetyBase(common.SafetyTestBase):
+class XpilotRuleSafetyBase(common.SafetyTestBase):
   SAFETY_MODEL = None
 
   def _set_mode(self, mode, param=0, param_sp=0):
     self.safety = harness()
     self.assertEqual(0, self.safety.set_safety_hooks(CarParams.SafetyModel.noOutput, 0))
-    rules = [rule for bit, rule in ((AUTO_SPEED_PARAM, AUTO), (AMBIENT_PARAM, AMBIENT)) if param_sp & bit]
+    rules = [rule for bit, rule in ((TICK_PARAM, AUTO), (AMBIENT_PARAM, AMBIENT)) if param_sp & bit]
     self.assertEqual(0, upload(self.safety, table(rules))[3])
     self.safety.set_current_safety_param_sp(param_sp & 0x1FFF)
     self.assertEqual(0, self.safety.set_safety_hooks(mode, param))
@@ -56,8 +56,8 @@ class XpilotPluginSafetyBase(common.SafetyTestBase):
     self._set_mode(CarParams.SafetyModel.tesla, param_sp=param_sp)
 
 
-class TestAutoSpeedPluginSafety(XpilotPluginSafetyBase):
-  ACTIVE_PARAM_SP = TeslaSafetyFlagsSP.HAS_VEHICLE_BUS | AUTO_SPEED_PARAM
+class TestTickRuleSafety(XpilotRuleSafetyBase):
+  ACTIVE_PARAM_SP = TeslaSafetyFlagsSP.HAS_VEHICLE_BUS | TICK_PARAM
 
   def setUp(self):
     super().setUp()
@@ -65,11 +65,11 @@ class TestAutoSpeedPluginSafety(XpilotPluginSafetyBase):
 
   @staticmethod
   def _template():
-    return common.make_msg(1, 0x3C2, dat=AUTO_SPEED_TEMPLATE)
+    return common.make_msg(1, 0x3C2, dat=TICK_TEMPLATE)
 
   @staticmethod
   def _tick(ticks=1, *, bus=1, addr=0x3C2, length=8):
-    data = bytearray(AUTO_SPEED_TEMPLATE[:length])
+    data = bytearray(TICK_TEMPLATE[:length])
     if length > 3:
       data[3] = (data[3] & 0xC0) | ticks
     return common.make_msg(bus, addr, length, data)
@@ -83,7 +83,7 @@ class TestAutoSpeedPluginSafety(XpilotPluginSafetyBase):
     for mode, param_sp in (
       (CarParams.SafetyModel.noOutput, self.ACTIVE_PARAM_SP),
       (CarParams.SafetyModel.tesla, TeslaSafetyFlagsSP.HAS_VEHICLE_BUS),
-      (CarParams.SafetyModel.tesla, AUTO_SPEED_PARAM),
+      (CarParams.SafetyModel.tesla, TICK_PARAM),
     ):
       with self.subTest(mode=mode, param_sp=param_sp):
         self._set_mode(mode, param_sp=param_sp)
@@ -110,12 +110,12 @@ class TestAutoSpeedPluginSafety(XpilotPluginSafetyBase):
     self._prime()
     for index in (0, 1, 2, 4, 5, 6, 7):
       with self.subTest(index=index):
-        data = bytearray(AUTO_SPEED_TEMPLATE)
+        data = bytearray(TICK_TEMPLATE)
         data[3] |= 1
         data[index] ^= 1
         self.assertFalse(self._tx(common.make_msg(1, 0x3C2, dat=data)))
 
-    data = bytearray(AUTO_SPEED_TEMPLATE)
+    data = bytearray(TICK_TEMPLATE)
     data[3] = (data[3] ^ 0x40) | 1
     self.assertFalse(self._tx(common.make_msg(1, 0x3C2, dat=data)))
 
@@ -179,7 +179,7 @@ class TestAutoSpeedPluginSafety(XpilotPluginSafetyBase):
     self.assertFalse(self.safety.get_relay_malfunction())
 
 
-class TestAmbientLightPluginSafety(XpilotPluginSafetyBase):
+class TestPaletteRuleSafety(XpilotRuleSafetyBase):
   ACTIVE_PARAM_SP = TeslaSafetyFlagsSP.HAS_VEHICLE_BUS | AMBIENT_PARAM
 
   def setUp(self):
@@ -303,7 +303,7 @@ class TestAmbientLightPluginSafety(XpilotPluginSafetyBase):
 
 
 @unittest.skip("TX inventory for common.SafetyTest's cross-mode scan")
-class XpilotPluginTxInventory(common.SafetyTest):
+class XpilotRuleTxInventory(common.SafetyTest):
   SAFETY_MODEL = None
   TX_MSGS = [[0x3C2, 1], [0x679, 1]]
 

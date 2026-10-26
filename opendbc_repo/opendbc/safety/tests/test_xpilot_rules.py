@@ -7,9 +7,9 @@ R4: EP2 before BEGIN, wrong upload/offset/flags/size, truncated upload or bad CR
 R5: car-mode BEGIN/COMMIT accepted; boot/non-car switch retains table; mode set retains runtime state.
 R6: non-Tesla/no-vehicle/relay/noOutput/silent/controls gates bypassed; rejected TX spends budget.
 R7: mode-owned TX dispatch falls through to rules; unknown or wrong bus/length TX accepted.
-R8: auto_speed/ambient/navassist verdict or budget differs on replay/random streams.
+R8: runtime rule verdict differs on deterministic replay/random streams.
 R9: TTL/interval/idle/span/window +/-1 us or uint32 timer wrap differs.
-R10: navassist cancel consumes or is blocked by session budget, or skips other gates.
+R10: exempt cancel consumes or is blocked by session budget, or skips other gates.
 R11: failed replacement leaves an active/partially loaded table; explicit empty table fails.
 R12: old profile bits still grant production TX; production includes legacy headers.
 R13: cross-mode inventory scan assumes every test module exports a car inventory.
@@ -171,15 +171,7 @@ class TestXpilotRules(unittest.TestCase):
     self.assertFalse(self.s.safety_tx_hook(packet(ADDRS[0], tx)))
     self.assertNotIn('plugins/registry.h', (ROOT / 'opendbc_repo/opendbc/safety/safety.h').read_text())
 
-  def compare(self, i, tx):
-    expected = self.s.test_old_tx(i, packet(ADDRS[i], tx))
-    actual = self.s.safety_tx_hook(packet(ADDRS[i], tx))
-    self.assertEqual(expected, actual, (i, bytes(tx).hex()))
-    for member in (0, 1, 2) if i else (0, 1):
-      self.assertEqual(self.s.test_old_state(i, member), self.s.test_state(i, member), (i, member))
-    return actual
-
-  def test_R8_R9_differential(self):
+  def test_R8_R9_replay(self):
     rng = random.Random(2026102532)
     digest = hashlib.sha256()
     n = 0
@@ -198,13 +190,12 @@ class TestXpilotRules(unittest.TestCase):
         if observed:
           if rng.randrange(8) == 0:
             rx[rng.randrange(len(rx))] ^= rng.randrange(1, 256)
-          self.s.test_old_rx(i, packet(ADDRS[i], rx))
           self.s.safety_rx_hook(packet(ADDRS[i], rx))
         controls = rng.randrange(4) != 0
         self.s.set_controls_allowed(controls)
         if rng.randrange(3) == 0:
           tx[rng.randrange(len(tx))] ^= rng.randrange(1, 256)
-        verdict = self.compare(i, tx)
+        verdict = self.s.safety_tx_hook(packet(ADDRS[i], tx))
         digest.update(struct.pack('<IIB', now, i, verdict) + rx + tx)
         trace.append([iteration == 0, now, i, observed, controls, rx.hex(), tx.hex(), verdict])
         n += 1
@@ -215,13 +206,10 @@ class TestXpilotRules(unittest.TestCase):
         configure(self.s)
       self.s.set_timer(now)
       if observed:
-        self.s.test_old_rx(i, packet(ADDRS[i], bytes.fromhex(rx)))
         self.s.safety_rx_hook(packet(ADDRS[i], bytes.fromhex(rx)))
       self.s.set_controls_allowed(controls)
-      self.assertEqual(verdict, self.compare(i, bytes.fromhex(tx)))
+      self.assertEqual(verdict, self.s.safety_tx_hook(packet(ADDRS[i], bytes.fromhex(tx))))
     artifact = {'seed': 2026102532, 'frames': n, 'verdict_sha256': digest.hexdigest(),
-                'navassist_source': 'Sniper-Eon/xpilot@ab3535b5a4acbf318c55005868d37ed19e2cf77d',
-                'deliberate_difference': 'cancel skips session budget; tick latches expired state; CAN ID type must match',
                 'replayed_frames': len(trace), 'trace_sha256': hashlib.sha256(replay_bytes).hexdigest()}
     output = os.environ.get('XPILOT_RULES_ARTIFACT')
     if output:
@@ -241,48 +229,42 @@ class TestXpilotRules(unittest.TestCase):
             configure(self.s)
             rx, tx = frames(i, rng)
             self.s.set_timer(start)
-            self.s.test_old_rx(i, packet(ADDRS[i], rx))
             self.s.safety_rx_hook(packet(ADDRS[i], rx))
             self.s.set_controls_allowed(True)
-            self.compare(i, tx)
+            self.assertTrue(self.s.safety_tx_hook(packet(ADDRS[i], tx)))
             self.s.set_timer((start + boundary + delta) & 0xFFFFFFFF)
             if boundary != ttl:
-              self.s.test_old_rx(i, packet(ADDRS[i], rx))
               self.s.safety_rx_hook(packet(ADDRS[i], rx))
-            self.compare(i, tx)
+            expected = delta <= 0 if boundary == ttl else (delta >= 0 if boundary == interval else True)
+            self.assertEqual(expected, self.s.safety_tx_hook(packet(ADDRS[i], tx)))
         for delta in (-1, 0, 1):
           configure(self.s)
           rx, tx = frames(i, rng)
           cap = (50, 150, 200)[i]
           for j in range(cap):
             self.s.set_timer((start + j * interval) & 0xFFFFFFFF)
-            self.s.test_old_rx(i, packet(ADDRS[i], rx))
             self.s.safety_rx_hook(packet(ADDRS[i], rx))
             self.s.set_controls_allowed(True)
-            self.assertTrue(self.compare(i, tx))
+            self.assertTrue(self.s.safety_tx_hook(packet(ADDRS[i], tx)))
           boundary = (start + span) if i == 2 else (start + (cap - 1) * interval + idle)
           self.s.set_timer((boundary + delta) & 0xFFFFFFFF)
-          self.s.test_old_rx(i, packet(ADDRS[i], rx))
           self.s.safety_rx_hook(packet(ADDRS[i], rx))
-          self.assertEqual(delta >= 0, self.compare(i, tx))
+          self.assertEqual(delta >= 0, self.s.safety_tx_hook(packet(ADDRS[i], tx)))
         if i == 1:
           for delta in (-1, 0, 1):
             configure(self.s)
             rx, tx = frames(i, rng)
             for j in range(100):
               self.s.set_timer((start + j * 150000) & 0xFFFFFFFF)
-              self.s.test_old_rx(i, packet(ADDRS[i], rx))
               self.s.safety_rx_hook(packet(ADDRS[i], rx))
               self.s.set_controls_allowed(True)
-              self.assertTrue(self.compare(i, tx))
+              self.assertTrue(self.s.safety_tx_hook(packet(ADDRS[i], tx)))
             self.s.set_timer((start + span + delta) & 0xFFFFFFFF)
-            self.s.test_old_rx(i, packet(ADDRS[i], rx))
             self.s.safety_rx_hook(packet(ADDRS[i], rx))
-            self.assertEqual(delta < 0, self.compare(i, tx))
+            self.assertEqual(delta < 0, self.s.safety_tx_hook(packet(ADDRS[i], tx)))
         self.s.set_safety_hooks(10, 0)
-        self.s.test_old_reset()
         self.s.set_controls_allowed(True)
-        self.assertFalse(self.compare(i, tx))
+        self.assertFalse(self.s.safety_tx_hook(packet(ADDRS[i], tx)))
 
   def test_R10_cancel(self):
     rng = random.Random(10)
@@ -291,19 +273,16 @@ class TestXpilotRules(unittest.TestCase):
     for j in range(200):
       self.s.set_timer(100 + j * 100000)
       self.s.safety_rx_hook(packet(ADDRS[2], rx))
-      self.s.test_old_rx(2, packet(ADDRS[2], rx))
       self.s.set_controls_allowed(True)
-      self.assertTrue(self.compare(2, tx))
+      self.assertTrue(self.s.safety_tx_hook(packet(ADDRS[2], tx)))
     self.s.set_timer(20000100)
     self.s.safety_rx_hook(packet(ADDRS[2], rx))
-    self.s.test_old_rx(2, packet(ADDRS[2], rx))
-    self.assertFalse(self.compare(2, tx))
+    self.assertFalse(self.s.safety_tx_hook(packet(ADDRS[2], tx)))
     cancel = bytearray(tx)
     cancel[1] = (cancel[1] & 252) | 3
     cancel[2] = (cancel[2] & 225) | 8
     cancel[7] = (sum(cancel[:7]) + 0xEC) & 255
     self.s.set_controls_allowed(False)
-    self.assertFalse(self.s.test_old_tx(2, packet(ADDRS[2], cancel)))
     self.assertTrue(self.s.safety_tx_hook(packet(ADDRS[2], cancel)))
     self.assertEqual(200, self.s.test_state(2, 0))
     self.s.set_timer(20100099)
@@ -326,14 +305,12 @@ class TestXpilotRules(unittest.TestCase):
         start = 100
         self.s.set_timer(start)
         self.s.safety_rx_hook(packet(ADDRS[0], rx))
-        self.s.test_old_rx(0, packet(ADDRS[0], rx))
         for elapsed in range(1000000, (1 << 32) + 1, 1000000):
           self.s.set_timer((start + elapsed) & 0xFFFFFFFF)
           self.s.safety_tick()
         self.s.set_timer(start + 100)
         self.s.safety_tick()
         self.s.set_controls_allowed(True)
-        self.assertTrue(self.s.test_old_tx(0, packet(ADDRS[0], tx)))
         self.assertFalse(self.s.safety_tx_hook(packet(ADDRS[0], tx)))
         self.assertFalse(self.s.test_state(0, 3))
         self.s.safety_rx_hook(packet(ADDRS[0], rx))
@@ -348,9 +325,8 @@ class TestXpilotRules(unittest.TestCase):
           start = 100
           self.s.set_timer(start)
           self.s.safety_rx_hook(packet(ADDRS[i], rx))
-          self.s.test_old_rx(i, packet(ADDRS[i], rx))
           self.s.set_controls_allowed(True)
-          self.assertTrue(self.compare(i, tx))
+          self.assertTrue(self.s.safety_tx_hook(packet(ADDRS[i], tx)))
           for tick in range(1000000, elapsed, 1000000):
             self.s.set_timer((start + tick) & 0xFFFFFFFF)
             self.s.safety_tick()
@@ -360,9 +336,7 @@ class TestXpilotRules(unittest.TestCase):
           self.assertEqual(int(elapsed < period), self.s.test_state(i, 0))
           if elapsed > (1 << 32):
             self.s.safety_rx_hook(packet(ADDRS[i], rx))
-            self.s.test_old_rx(i, packet(ADDRS[i], rx))
             self.s.set_controls_allowed(True)
-            self.assertFalse(self.s.test_old_tx(i, packet(ADDRS[i], tx)))
             self.assertTrue(self.s.safety_tx_hook(packet(ADDRS[i], tx)))
     # The idle boundary can arrive after tx_valid expired, before the next tick.
     for gap in (2999999, 3000000, 3000001):

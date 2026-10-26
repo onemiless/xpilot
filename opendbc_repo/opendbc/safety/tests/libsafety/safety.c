@@ -327,4 +327,4 @@ bool test_long_mode_owned(uint32_t addr, unsigned int bus, unsigned int length) 
   (void)length;
   return xpilot_mode_owned(addr);
 }
-void test_long_fixture_sp(void) { tesla_long_owner = 1U; }
+void test_long_fixture_stock(void) { tesla_long_owner = TESLA_LONG_STOCK; }
