@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import select
 import socket
+import stat
 import struct
 import sys
 import time
@@ -33,12 +34,15 @@ def socket_path() -> str:
 
 class Broker:
   def __init__(self):
+    self.path = Path(socket_path())
+    self.path.parent.mkdir(mode=0o700, exist_ok=True)
+    directory = self.path.parent.lstat()
+    if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.getuid() or directory.st_mode & 0o077:
+      raise PermissionError('pluginMsg socket requires a private directory owned by this user')
     from openpilot.cereal import messaging
     from openpilot.common.params import Params
     from openpilot.tesla import plugins
     self.messaging, self.plugins, self.params = messaging, plugins, Params()
-    self.path = Path(socket_path())
-    self.path.parent.mkdir(mode=0o700, exist_ok=True)
     self.lock = (self.path.parent / 'lock').open('w')
     fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     self.path.unlink(missing_ok=True)

@@ -6,6 +6,7 @@ Failure cases written before implementation:
 - Forged source, undeclared kind, unknown PID, malformed/truncated datagrams reach cereal.
 - Oversize, >100 Hz, >256 KiB/s/source or >1 MiB/s total pass; floods starve another source.
 - Repeated excess spams faults, or restarting the broker repeats the same drive's fault.
+- A pre-created public socket directory lets the broker follow an untrusted lock file.
 - A dead broker blocks senders; manager fails to restart it or stale socket prevents recovery.
 - TTL, TTL=0, latest(kind, source), sequence or original send time is lost.
 
@@ -17,6 +18,7 @@ import multiprocessing
 import os
 from pathlib import Path
 import socket
+import subprocess
 import sys
 import tempfile
 import time
@@ -25,6 +27,38 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / 'opendbc_repo')]
 from openpilot.cereal import custom, messaging
+
+
+class FileParams:
+  """CI has msgq but no libparams_c; only Params storage is replaced, IPC/credentials stay real."""
+  def __init__(self, path=None):
+    self.root = Path(os.environ['PARAMS_ROOT']) / ('memory' if path else 'default')
+    self.root.mkdir(parents=True, exist_ok=True)
+
+  def get(self, key, block=False, return_default=False):
+    path = self.root / key
+    return json.loads(path.read_text()) if path.exists() else None
+
+  def get_bool(self, key, block=False):
+    return bool(self.get(key))
+
+  def put(self, key, value, block=False):
+    path = self.root / key
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps(value))
+    temporary.replace(path)
+
+  def put_bool(self, key, value, block=False):
+    self.put(key, bool(value))
+
+
+try:
+  from openpilot.common.params import Params
+  PARAMS_MODE = 'native'
+except (ImportError, OSError):
+  Params = FileParams
+  PARAMS_MODE = 'file fixture (CI without libparams_c)'
+  sys.modules['openpilot.common.params'] = SimpleNamespace(Params=FileParams, UnknownKeyName=KeyError)
 
 
 def sender(connection):
@@ -214,7 +248,7 @@ def measure():
     assert send(0, 'undeclared_again', 'no', raw=True)
     time.sleep(.05)
     assert params.get(plugins.FAULTS_PARAM)['source0'] == fault_before, 'restart repeated drive fault'
-    return {'credential_mode': 'SCM_CREDENTIALS' if sys.platform == 'linux' else 'Darwin test-only PID',
+    return {'params_mode': PARAMS_MODE, 'credential_mode': 'SCM_CREDENTIALS' if sys.platform == 'linux' else 'Darwin test-only PID',
             'concurrent_publishers': 4, 'samples_delivered': delivered, 'fair_wire_bytes': byte_counts,
             'forgery_rejected': True, 'limits_and_fault_dedup': True, 'broker_restarted_by_manager': True,
             'down_100_sends_s': down_elapsed, 'ttl_and_latest': True, 'migration_ready': True}
@@ -249,7 +283,14 @@ def run():
     shm = Path('/tmp' if sys.platform == 'darwin' else '/dev/shm') / ('msgq_' + root.name)
     shm.mkdir()
     try:
+      socket_directory = Path('/tmp/xpilot-plugin-msg-' + root.name)
+      socket_directory.mkdir(mode=0o755)
+      refusal = subprocess.run([sys.executable, '-m', 'openpilot.tesla.plugin_msgd'], capture_output=True, text=True, timeout=5)
+      assert refusal.returncode != 0 and 'private directory' in refusal.stderr, refusal.stderr
+      assert not (socket_directory / 'lock').exists(), 'untrusted directory was used before validation'
+      socket_directory.chmod(0o700)
       result = measure()
+      result['untrusted_directory_rejected'] = True
       print(json.dumps(result, indent=2))
     finally:
       import shutil

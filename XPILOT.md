@@ -472,7 +472,7 @@ X-50 自动速度策略和 G3 横向均未实现；刷写和实车接合测试�
 
 ## 8d. 插件间消息 `pluginMsg`
 
-- **架构**：manager 始终运行 `plugin_msgd`（停车、行驶都运行）。所有发送进程经一个非阻塞 AF_UNIX / SOCK_DGRAM socket 交给 broker，只有 broker 发布 cereal `pluginMsg`；不再按发送进程占用 cereal 服务，没有发送进程数量上限。socket 是 `/tmp/xpilot-plugin-msg-<OPENPILOT_PREFIX>/socket`（默认 prefix 为空），目录权限 0700。进程锁防止第二个 broker 顶掉第一个，重启会回收旧 socket。
+- **架构**：manager 始终运行 `plugin_msgd`（停车、行驶都运行）。所有发送进程经一个非阻塞 AF_UNIX / SOCK_DGRAM socket 交给 broker，只有 broker 发布 cereal `pluginMsg`；不再按发送进程占用 cereal 服务，没有发送进程数量上限。socket 是 `/tmp/xpilot-plugin-msg-<OPENPILOT_PREFIX>/socket`（默认 prefix 为空），目录权限 0700；启动时拒绝符号链接、非本用户或权限过宽的既有目录。进程锁防止第二个 broker 顶掉第一个，重启会回收旧 socket。
 - **消息**：沿用 `log.capnp @139` 的 `Custom.ExternalData` 和原服务速率类别，不加字段或服务。`source` 是插件 id，`kind` 要声明 `msg:<kind>`，`payload` 是 JSON 文本，`validForMs` 为 0 表示不过期。broker 分配每个来源递增的 `seq`（重启从 1 开始），保留发送时的单调时钟时间和 TTL，不让排队或重启延长有效期。
 - **发送**：`plugins.send_msg(plugin, kind, payload, valid_for_ms=0)`，插件类或实例均可；仍接受旧的首个位置参数 `pm`，但会忽略它。发送端不再创建 `PubMaster(["pluginMsg"])`；所有实际 cereal 发布权只属于 broker。返回 True 仅表示 datagram 已进入本机 socket，不保证通过 broker 校验或送达。broker 不在、队列满、发送失败时返回 False，不等待、不重试、不产生传输故障日志。
 - **来源认证（Linux 设备）**：broker 开启 `SO_PASSCRED`，从 `SCM_CREDENTIALS` 获取真实 PID/UID，忽略 JSON 里的 PID；UID 必须等于 broker。用 managerState 中仍在运行的 PID → 进程名对照已启用且赢得 claims 的插件，再检查该插件的 `msg:<kind>`。managerState 不新鲜或未知 PID 时拒收；自报插件 id 不授予权限。插件自有进程必须持有对应的 `process:<name>` claim。同一宿主进程内的插件共享 PID，因此这不隔离同进程中的恶意 Python 代码，也不把具有同用户任意代码执行权的插件变成沙箱。
@@ -491,7 +491,7 @@ X-50 自动速度策略和 G3 横向均未实现；刷写和实车接合测试�
 - **超限/故障**：已认证来源的超大 payload、未声明 kind、非法时间/TTL 或限流只丢当前消息；每来源每行程最多写一次 `XpilotPluginFaults`，并在私有 socket 目录原子保存去重标记，broker 重启后沿用。行程由 deviceState.startedMonoTime 标识，停车阶段为 0。伪造/未知来源和无法归属的畸形封装直接丢弃。manager 检查已退出的 Python 进程并重新启动；broker 停止期间发送者直接丢弃，有有限 TTL 的接收缓存自然过期。TTL 0 的消息依约不过期，实时建议应设置有限 TTL。
 - **接收**：`plugins.PluginMsgs()` 非 conflate 地订阅唯一 `pluginMsg` 服务；`fresh(kind)` 返回 `{source: payload}`，每种 kind、每个来源只取最新未过期消息；`latest(kind, source)` 返回该来源最新未过期 payload，没有则为 None。
 - **只做建议**：消息只经接收方插件自己的钩子和限制生效。核心控制不等待 broker，也不以 pluginMsg 的存在或成功送达为接管条件。
-- **重复验证**：`python3 tools/sp_tesla_e2e/plugin_msg_e2e.py` 输出 JSON evidence；覆盖多进程、真实 Linux 凭据、伪造来源/越权 kind、流量与公平预算、TTL、manager 重启和 broker 停止时非阻塞发送。CI host-checks 同时运行。
+- **重复验证**：`python3 tools/sp_tesla_e2e/plugin_msg_e2e.py` 输出 JSON evidence；覆盖多进程、真实 Linux 凭据、伪造来源/越权 kind、流量与公平预算、TTL、manager 重启和 broker 停止时非阻塞发送。CI host-checks 同时运行；runner 缺少 native Params 库时仅参数存储使用隔离文件夹具，Linux socket、凭据、消息与重启均为真实执行。
 
 ## 9. UI（大屏，2160×1080，UI v4：磁贴）
 
