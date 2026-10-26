@@ -215,7 +215,12 @@ Fixed bounded state, no heap, no generic rules-engine forwarding permission.
 Future implementation touches Tesla safety, narrow safety dispatch, libsafety
 tests/bindings, app control/health, F4/H7 CAN receive and transmit admission,
 mode/tick critical sections, Python health keys, and XPILOT.md section 6.
-X-49 owns host consumers, shadow logging and manual engaged requests. X-50 owns
+X-49 owns host consumers, shadow logging and manual engaged requests. The
+X-49B optional `role:long.owner`/`long_owner` policy surface, offroad default-off
+wiper-first-detent manual proposal, ABI-gated HUD and 25 Hz rlog shadow
+observer are specified in [host design](xpilot-long-owner-host.md). Neither
+policy nor manual input bypasses host/Panda vetoes or changes DRAIN cadence.
+X-49A owns runtime integration; X-49B host checks are not firmware/vehicle proof. X-50 owns
 the speed policy. No source edits in selfdrive/, openpilot/, plugins or device.
 
 Old fork reference, read-only at

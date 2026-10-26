@@ -58,6 +58,9 @@ Run from the repo root with the openpilot python env. Native-only modules (Param
 - P46 aggregate rule/count overflow drops and faults only the offending plugin
 - P47 no rules or a disabled plugin explicitly replaces a stale table with an empty table
 - P48 a critical rule-owner fault raises the rules feature fault for pandad revocation
+- P49 long.owner constructor/desired raises, returns a bad value, runs again after fault or restart, or loses exclusivity
+- P50 manual off/old ABI/disengaged/held/unknown input requests a switch; a press toggles more than once
+- P51 shadow logs non-SP/old ABI/stale/wrong bus/malformed CAN or exceeds 25 Hz; OEM endpoints/counter or SP accel are lost
 """
 import ast
 import json
@@ -289,9 +292,122 @@ def main() -> int:
   errors += required_role_checks(plugins_mod, real)
   errors += capability_checks(plugins_mod, real)
   errors += rule_checks(plugins_mod)
+  errors += long_owner_checks(plugins_mod)
 
   print(json.dumps({"plugins": [c.NAME for c in real], "artifacts": str(ARTIFACTS), "errors": errors}, indent=1))
   return 1 if errors else 0
+
+
+def long_owner_checks(plugins):
+  from openpilot.tesla import long_owner
+  role, faults, trace = "role:long.owner", [], []
+  params = FakeParams()
+  ctx = types.SimpleNamespace(available=True, owner="stock", enabled=True, sp_accel=.24)
+  cs = types.SimpleNamespace()
+  batch = []
+  def drain(sock):
+    out = list(batch)
+    batch.clear()
+    return out
+  def can(address, data, bus, ms):
+    batch.append(types.SimpleNamespace(logMonoTime=ms * 1_000_000,
+      can=[types.SimpleNamespace(address=address, dat=data, src=bus)]))
+  def stalk(value, ms):
+    can(0x249, (value << 14).to_bytes(3, 'little'), 0, ms)
+  class Params(FakeParams):
+    def put(self, key, value, block=False):
+      self.values[key] = value
+    put_bool = put
+  def fault(name, where, exc):
+    faults.append((name, where))
+    params.values.setdefault(plugins.FAULTS_PARAM, {})[name] = where
+  def plugin(name, value, priority=100, claims=(role,)):
+    def desired(self, context, state):
+      trace.append(name)
+      if isinstance(value, Exception):
+        raise value
+      return value
+    return type(name, (Plugin,), {'NAME': name, 'CLAIMS': claims, 'PRIORITY': priority,
+      'long_owner': classmethod(lambda cls, *args: types.SimpleNamespace(desired=lambda c, s: desired(None, c, s)))})
+  messaging = types.SimpleNamespace(sub_sock=lambda *a, **kw: object(), drain_sock=drain)
+  with patch.object(long_owner, 'messaging', messaging), patch.object(plugins, 'record_fault', side_effect=fault), \
+       patch.object(long_owner.time, 'monotonic_ns', return_value=100_000_000):
+    for value in ('stock', 'sp', None, 1, True, [], 'SP', RuntimeError('desired')):
+      params = Params()
+      faults.clear()
+      trace.clear()
+      with patch.object(plugins, 'PLUGINS', (plugin('policy', value), plugin('loser', 'sp', 200))):
+        policy = plugins.long_owner_policy(params, CP, None)
+        expected = value if value in ('stock', 'sp', None) else None
+        assert policy(ctx, cs) == expected, ('P49', value)
+        assert policy(ctx, cs) == expected, ('P49 repeat', value)
+        bad = isinstance(value, Exception) or value not in ('stock', 'sp', None)
+        assert trace == ['policy'] * (1 if bad else 2), ('P49 trace', trace)
+        assert bool(faults) == bad, ('P49 fault', value, faults)
+        if bad:
+          assert plugins.long_owner_policy(params, CP, None)(ctx, cs) is None, 'P49 restart'
+          assert trace == ['policy'], 'P49 restart called faulted hook'
+    for classes in ((), (plugin('unclaimed', 'sp', claims=()),),
+                    (type('raising', (Plugin,), {'NAME': 'raising', 'CLAIMS': (role,),
+                      'long_owner': classmethod(lambda cls, *a: 1/0)}),)):
+      params = Params()
+      with patch.object(plugins, 'PLUGINS', classes):
+        assert plugins.long_owner_policy(params, CP, None)(ctx, cs) is None, 'P49 collection'
+    with patch.object(plugins, 'PLUGINS', ()):
+      params = Params({'XpLongOwnerManual': True})
+      policy = plugins.long_owner_policy(params, CP, None)
+      outputs = []
+      for value in (0, 1, 1, 2, 1, 0, 1):
+        stalk(value, 100)
+        outputs.append(policy(ctx, cs))
+      assert outputs == [None, 'sp', None, None, None, None, 'sp'], ('P50 press', outputs)
+      ctx.owner = 'sp'
+      stalk(0, 100)
+      policy(ctx, cs)
+      stalk(1, 100)
+      assert policy(ctx, cs) == 'stock', 'P50 reverse'
+      for available, enabled, on in ((False, True, True), (True, False, True), (True, True, False)):
+        ctx.available, ctx.enabled = available, enabled
+        params = Params({'XpLongOwnerManual': on})
+        policy = plugins.long_owner_policy(params, CP, None)
+        for value in (0, 1, 1, 0):
+          stalk(value, 100)
+          assert policy(ctx, cs) is None, 'P50 gate'
+      ctx.available, ctx.enabled, ctx.owner = True, True, 'stock'
+      params = Params({'XpLongOwnerManual': True})
+      policy = plugins.long_owner_policy(params, CP, None)
+      stalk(1, 100)
+      assert policy(ctx, cs) is None, 'P50 initial held'
+      stalk(3, 100)
+      policy(ctx, cs)
+      stalk(1, 100)
+      assert policy(ctx, cs) is None, 'P50 SNA is not release'
+      logs = []
+      with patch.object(long_owner.cloudlog, 'event', side_effect=lambda name, **kw: logs.append((name, kw))), \
+           patch.object(long_owner.time, 'monotonic_ns', return_value=1_000_000_000):
+        raw = (4 << 12) | (381 << 35) | (385 << 44) | (7 << 53)
+        for owner, available, bus, data in (('stock', True, 2, raw.to_bytes(8, 'little')),
+            ('sp', False, 2, raw.to_bytes(8, 'little')), ('sp', True, 0, raw.to_bytes(8, 'little')),
+            ('sp', True, 2, b'bad')):
+          ctx.owner, ctx.available = owner, available
+          can(0x2B9, data, bus, 1000)
+          policy(ctx, cs)
+        assert not logs, ('P51 gates', logs)
+        for ms in range(1000, 2000, 10):
+          ctx.owner, ctx.available = 'sp', True
+          can(0x2B9, raw.to_bytes(8, 'little'), 2, ms)
+          with patch.object(long_owner.time, 'monotonic_ns', return_value=ms * 1_000_000):
+            policy(ctx, cs)
+        assert len(logs) == 25, ('P51 cadence', len(logs))
+        name, row = logs[0]
+        assert name == 'xpilot.long_owner_shadow' and row['accState'] == 4 and row['counter'] == 7, 'P51 fields'
+        assert abs(row['accelMin'] - .24) < 1e-8 and abs(row['accelMax'] - .4) < 1e-8 and row['spAccel'] == .24, 'P51 accel'
+        can(0x2B9, raw.to_bytes(8, 'little'), 2, 0)
+        policy(ctx, cs)
+        assert len(logs) == 25, 'P51 stale'
+      (ARTIFACTS / 'long-owner.json').write_text(json.dumps({'manual': outputs, 'shadow': logs}, indent=2))
+    assert plugins.long_owner_policy(params, types.SimpleNamespace(brand='toyota'), None) is None, 'P49 non Tesla'
+  return []
 
 
 def rule_checks(plugins):

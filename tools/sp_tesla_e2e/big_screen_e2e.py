@@ -54,6 +54,7 @@ settings actions, store refresh/install, or reboot/reset/uninstall confirmation.
 29. Non-printable/non-ASCII/overlong touch or hardware input changes the keyboard/param instead of preserving it with an error.
 30. Secret content or its stored length appears in row/keyboard draw calls or logs, including immediately after typing.
 31. Onroad row entry or confirmation after an offroad->onroad transition writes a setting.
+33. Long owner chip draws without live/valid ABI, loses STOCK/SP/long active/refusal, or fails in big screen/mici rendering.
 32. Empty secret lacks Not set, Cancel changes storage, or existing BOOL/range/choices controls change.
 """
 import argparse
@@ -180,11 +181,14 @@ def host_check(output):
   state.started_frame, state.chestnut_state, state.is_metric, state.blindspot = 0, 1, True, True
   class SM(dict):
     recv_frame = {'carState': 1}
+    alive = {'carControlSP': True}
+    valid = {'carControlSP': True}
   state.sm = SM(carState=types.SimpleNamespace(vCruiseCluster=70, vEgoCluster=18, vEgo=18, steeringAngleDeg=0,
                                                leftBlindspot=True, rightBlindspot=True),
                 controlsState=types.SimpleNamespace(deprecated=types.SimpleNamespace(vCruise=70),
                   lateralControlState=types.SimpleNamespace(which=lambda: 'torqueState')),
                 selfdriveState=types.SimpleNamespace(enabled=True),
+                carControlSP=types.SimpleNamespace(longOwnerAvailable=False, longOwner='stock', longActive=False, longOwnerRefusal=''),
                 carOutput=types.SimpleNamespace(actuatorsOutput=types.SimpleNamespace(torque=.4)), onroadEvents=[])
 
   from openpilot.selfdrive.ui.sunnypilot.mici.onroad.hud_renderer import HudRendererSP
@@ -730,6 +734,48 @@ def host_check(output):
     drag(center(host._view), (center(host._view)[0] + tiles.PITCH, center(host._view)[1] + tiles.PITCH))
     check(host._hud == raw and builtin_draws.get('set_speed', [])[-1] == before, '21 moving view lost built-in fractions')
     cases.append({'id': 21, 'saved': raw, 'draws': builtin_draws, 'restart': True})
+
+    from openpilot.tesla.ui.slots.long_owner import LongOwnerChip
+    check(plugin_ui._classes('openpilot.tesla.ui.slots.long_owner', plugin_ui.HudOverlay) == [LongOwnerChip], '33 core discovery')
+    chip = LongOwnerChip()
+    chip.plugin_id = 'LongOwnerChip'
+    renderer.plugin_overlays._entries.append([None, chip, 0])
+    texts = []
+    original_text = rl.draw_text_ex
+    def capture_owner(font, text, *args):
+      texts.append(text)
+      return original_text(font, text, *args)
+    rl.draw_text_ex = capture_owner
+    host._hud = {}
+    cc = state.sm['carControlSP']
+    for label, owner, active, refusal in (('stock', 'stock', False, ''), ('sp', 'sp', True, 'GAS')):
+      cc.longOwnerAvailable, cc.longOwner, cc.longActive, cc.longOwnerRefusal = True, owner, active, refusal
+      texts.clear()
+      frame(name='long-owner-' + label)
+      check(any(owner.upper() in t for t in texts) and any(('ACTIVE' if active else 'IDLE') in t for t in texts), '33 chip state')
+      if refusal:
+        check(any(refusal in t for t in texts), '33 chip refusal')
+    for field in ('available', 'alive', 'valid'):
+      cc.longOwnerAvailable = field != 'available'
+      state.sm.alive['carControlSP'] = field != 'alive'
+      state.sm.valid['carControlSP'] = field != 'valid'
+      texts.clear()
+      frame()
+      check(not any('SP |' in t or 'STOCK |' in t for t in texts), '33 chip ABI/liveness gate ' + field)
+    cc.longOwnerAvailable = state.sm.alive['carControlSP'] = state.sm.valid['carControlSP'] = True
+    chip.update()
+    texts.clear()
+    rl.begin_texture_mode(logical)
+    rl.clear_background(rl.BLACK)
+    chip.render(chip.default_rect(rl.Rectangle(0, 0, *tiles.MICI)))
+    rl.end_texture_mode()
+    image = rl.load_image_from_texture(logical.texture)
+    rl.image_flip_vertical(image)
+    check(rl.export_image(image, str(output / 'long-owner-mici.png')), '33 export mici')
+    rl.unload_image(image)
+    check(any('SP | ACTIVE' in t for t in texts), '33 mici chip missing')
+    rl.draw_text_ex = original_text
+    cases.append({'id': 33, 'mici': texts, 'firmware_gate': True, 'live_valid_gate': True})
 
 
 

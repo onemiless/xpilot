@@ -165,6 +165,10 @@ def parse(path: Path) -> Manifest:
   claims = d.get("claims", [])
   if not isinstance(claims, list) or not all(isinstance(c, str) and _CLAIM_RE.fullmatch(c) for c in claims):
     raise ValueError(f"bad claims {claims!r}")
+  requires = d.get("requires", {})
+  if "role:long.owner" in claims and (not isinstance(requires, dict) or not isinstance(requires.get("hooks"), list)
+                                     or "long_owner" not in requires["hooks"]):
+    raise ValueError("role:long.owner requires hooks: [long_owner]")
   if "safety" in d:
     raise ValueError("safety is no longer supported; publish a new plugin version with rules")
   from openpilot.tesla.panda_rules import encode_rules
@@ -240,7 +244,7 @@ def platform_ok(plat: dict | None) -> bool:
 RULE_ABI = 1
 HOST_CAPS = {
   "hooks": ("__init__", "setup", "observe_can", "publish_state", "control_sends", "service_params", "processes",
-            "role_processes", "alert_source", "lane_change_policy", "lat_correction", "lat_controller", "long_planner",
+            "role_processes", "alert_source", "lane_change_policy", "lat_correction", "lat_controller", "long_owner", "long_planner",
             "long_target", "plan_filter", "event_filter", "engagement", "safety_fallback", "radar_interface", "external_provider"),
   "msg": ("*",),  # pluginMsg transports every valid kind; no payload schema or multi-publisher broker implied.
   "rule_abi": RULE_ABI,

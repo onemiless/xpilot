@@ -339,12 +339,14 @@ class PluginMsgs:
             if k == kind and (valid_ms == 0 or 0 <= now_ns - t <= valid_ms * 1_000_000)}
 
 
-def _collect(params, hook: str, claim: str, where: str, *args) -> list:
+def _collect(params, hook: str, claim: str, where: str, *args, skip=()) -> list:
   """Hook objects of the active plugins that return one; tagged with plugin_name. A plugin returning one without
   the claim, or raising, is recorded and skipped."""
   out, wrapped = [], view(params)
   args = tuple(wrapped if a is params else a for a in args)
   for cls in active(params):
+    if cls.NAME in skip:
+      continue
     try:
       if (obj := getattr(cls, hook)(*args)) is not None:
         if claim not in cls.CLAIMS:
@@ -365,6 +367,24 @@ def _call(objs: list, obj, method: str, where: str, *args):
       objs.remove(obj)
     record_fault(getattr(obj, "plugin_name", "?"), f"{where}.{method}", e)
     return False, None
+
+
+def long_owner_policy(params, CP, CP_SP):
+  """controlsd: a drive-frozen desired(ctx, CS) callable, including manual input and shadow observation."""
+  if CP.brand != "tesla":
+    return None
+  from openpilot.tesla.long_owner import LongOwnerPolicy
+  faults = view(params).get(FAULTS_PARAM) or {}
+  # A controlsd restart must not revive a faulted hook during the same drive.
+  policies = _collect(params, "long_owner", "role:long.owner", "controlsd", CP, CP_SP, params, skip=faults)
+  for obj in list(policies):
+    try:
+      if not callable(obj.desired):
+        raise TypeError("long_owner needs desired(ctx, CS)")
+    except Exception as e:
+      policies.remove(obj)
+      record_fault(obj.plugin_name, "controlsd.long_owner", e)
+  return LongOwnerPolicy(policies, view(params).get_bool("XpLongOwnerManual"))
 
 
 def long_targets(CP, params) -> list:

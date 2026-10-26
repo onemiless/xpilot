@@ -101,6 +101,12 @@ class Plugin:
     controller keeps running alongside and takes over for good if this one raises or returns a non-finite output."""
     return None
 
+  @classmethod
+  def long_owner(cls, CP, CP_SP, params):
+    """None, or an object with desired(ctx, CS) -> None | "stock" | "sp". Exclusive role:long.owner;
+    proposes ownership only. Host vetoes and Panda health remain authoritative; a fault disables this hook for the drive."""
+    return None
+
   # ---- plannerd (claim "role:long.planner", exclusive) ----
   @classmethod
   def long_planner(cls, CP, CP_SP, params):

@@ -28,6 +28,7 @@ Failure cases listed before implementation:
 - O15 secret label leaks content/length, empty secret lacks Not set, or new paths contain logging/fault output
 - O16 either settings page omits the text editor or its offroad entry/commit gates (GPU case 28 exercises both)
 - O17 existing BOOL/range/choices row kinds or labels change
+- O18 manual owner setting is absent, not BOOL/default-off, or either UI bypasses the offroad setting gate
 """
 import ast
 import json
@@ -326,9 +327,22 @@ def check_text_settings(errors: list) -> None:
       errors.append("O17 legacy row changed")
 
 
+def check_long_owner(errors):
+  from openpilot.tesla.ui.settings_meta import VEHICLE_SETTINGS
+  setting = next(s for s in VEHICLE_SETTINGS if s.key == 'XpLongOwnerManual')
+  assert offroad.setting_kind(setting) == 'toggle', 'O18 setting kind'
+  keys = (ROOT / 'openpilot/common/params_keys.h').read_text()
+  assert re.search(r'\{"XpLongOwnerManual", \{PERSISTENT \| BACKUP, BOOL, "0"\}\}', keys), 'O18 BOOL/default'
+  for path in ('settings_page.py', 'pages/tesla.py'):
+    assert 'VEHICLE_SETTINGS' in (PKG / 'tesla/ui' / path).read_text(), 'O18 shared settings'
+  assert 'if ui_state.is_offroad():' in (PKG / 'tesla/ui/settings_page.py').read_text(), 'O18 mici gate'
+  assert 'if ui_state.is_offroad():' in (PKG / 'tesla/ui/pages/base.py').read_text(), 'O18 native gate'
+
+
 def main() -> int:
   errors: list[str] = []
-  for check in (check_tiles, check_pages, check_plugins, check_store, check_market, check_models, check_view, check_alerts, check_sources, check_text_settings):
+  for check in (check_tiles, check_pages, check_plugins, check_store, check_market, check_models, check_view, check_alerts,
+                check_sources, check_text_settings, check_long_owner):
     try:
       check(errors)
     except Exception as e:

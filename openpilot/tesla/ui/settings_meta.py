@@ -3,6 +3,7 @@ Plugins page. Plugin settings live in each plugin's SETTINGS, not here."""
 from openpilot.tesla.plugin import Setting
 
 VEHICLE_SETTINGS = (
+  Setting('XpLongOwnerManual', 'Manual Long Owner (wiper first detent)'),
   Setting('TeslaCoopSteering', 'Cooperative Steering'),
   Setting('TeslaMadsScreenButton', 'MADS Screen Activation',
           choices=(('Off', 0), ('3-Finger', 1), ('4-Finger', 2), ('5-Finger', 3))),  # upstream MadsScreenButtonType

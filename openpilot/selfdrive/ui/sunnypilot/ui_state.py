@@ -34,7 +34,7 @@ class UIStateSP:
     self.is_sp_release: bool = self.params.get_bool("IsReleaseSpBranch")
     self.sm_services_ext = [
       "modelManagerSP", "selfdriveStateSP", "longitudinalPlanSP", "backupManagerSP",
-      "carStateSP", "liveMapDataSP", "carParamsSP", "lateralDelay"
+      "carStateSP", "carControlSP", "liveMapDataSP", "carParamsSP", "lateralDelay"
     ]
 
 

@@ -28,6 +28,7 @@ Failure cases listed before implementation:
 - M20 max_len zero, >256, bool, non-integer, or used without text/secret is accepted
 - M21 text/secret on an undeclared or non-STRING param is accepted
 - M22 text/secret default/cap length or existing BOOL/range/choices metadata changes
+- M23 long.owner without requires.hooks=long_owner loads, its exclusive claim is shared, or an old host accepts it
 """
 import json
 from pathlib import Path
@@ -142,8 +143,26 @@ def text_setting_checks() -> list[str]:
   return errors
 
 
+def long_owner_checks():
+  with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    for i, requires in enumerate(({}, {'hooks': []}, {'hooks': ['long_owner']})):
+      name = f'owner_{i}'
+      write(root, name, claims=['role:long.owner'], requires=requires)
+      try:
+        m = mf.parse(root / name / 'plugin.json')
+        assert i == 2, 'M23 missing hook requirement'
+      except ValueError:
+        assert i != 2, 'M23 valid owner refused'
+    old = {**mf.HOST_CAPS, 'hooks': tuple(h for h in mf.HOST_CAPS['hooks'] if h != 'long_owner')}
+    assert mf.compatible(m, mf.HOST_CAPS)[0] and not mf.compatible(m, old)[0], 'M23 capability gate'
+    assert not mf.shared('role:long.owner'), 'M23 shared owner'
+    assert mf.resolve([('b', 100, m.claims), ('a', 100, m.claims)], {'a', 'b'}) == ({'a'}, {'b': 'a'}), 'M23 exclusive'
+  return []
+
+
 def main() -> int:
-  errors = capability_checks() + text_setting_checks()
+  errors = capability_checks() + text_setting_checks() + long_owner_checks()
   from openpilot.tesla.ui.tiles import TileSpec
   try:
     TileSpec("missing", "Missing")
