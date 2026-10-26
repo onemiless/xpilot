@@ -1,49 +1,42 @@
 # G8 Tesla longitudinal owner contract (X-20261026-48 / X-20261026-49)
 
-Status: **BLOCKED at the timing acceptance gate; proposed ABI, not implemented**.
-Base: `1b52d017f4e6605cf6751963c92dbd899d38891c`. This document is the first
-commit of X-48 so X-49 can review the wire contract. It is not a firmware
-capability advertisement. Do not enable an engaged switch against this branch.
-No device access or flashing is part of X-48. G3 lateral handoff is separate.
+Status: **ABI 1 implementation in progress**. Base:
+`1b52d017f4e6605cf6751963c92dbd899d38891c`. Coordinator timing decision
+2026-10-26 supersedes the original wall-clock slot requirements. The document
+is a wire contract, not a claim of tested/deployed firmware. No device access
+or flashing in X-48. G3 lateral handoff is separate.
 
-## Timing contradiction that must be resolved before implementation
+## Accepted timing contract: counter slots, I1 / I2
 
-The requested stock-to-SP handshake and X-49 phase rule admit this input, with
-all engagement, freshness, acceleration and safety gates satisfied:
+I1: a single owner decides each normal bus-0 0x2B9 admission. Consecutive
+accepted counters increase by exactly +1 modulo 8 across a handoff; no duplicate
+counter is admitted. Ownership changes only on an admitted handoff frame.
+Emergency OEM AEB passthrough is an explicit exception to normal counter/source
+arbitration: it must never be delayed by a continuity gate.
 
-| Time (us) | Event | Required result |
-|---|---|---|
-| 0 | OEM counter 0 | Forward while stock owns longitudinal |
-| 1000 | Request SP | Pending, keep stock |
-| 10000 | First host cycle after OEM; SP counter 1 | Accept first valid OEM+1 and commit SP |
-| 40000 | OEM counter 1 | Block because SP now owns longitudinal |
-| 50000 | SP counter 2 | Accept |
+I2: the gap between the last old-source frame and first new-source frame is
+inclusive **5000..80000 us** (5..80 ms). This allows a one-off phase change,
+not a counter jump. Outside handoffs OEM freshness remains 60 ms at 25 Hz.
+Offline tests prove safety RX/TX/FWD verdicts; physical queueing, arbitration
+and bus timing require later vehicle validation.
 
-The bus-0 counter sequence is 0,1,2, but the first output gap is **10 ms** and
-the fixed 40 ms slot `[0,40000)` contains **both sources**. A counter check does
-not prove the requested "never both sources accepted in the same 40 ms slot".
-Changing the name of the counter generation to "slot" would weaken that gate.
-This is a schedule counterexample, not a result from implemented firmware.
+STOCK -> SP example: OEM counter 0 forwarded at 0 ms; SP request at 1 ms;
+SP counter 1 at 3 ms blocked with pending intact (too early); retry counter 1
+at 10 ms accepted, commits SP; OEM counter 1 at 40 ms blocked; SP counter 2
+at 50 ms accepted. Handoff gap 10 ms, counters 0,1,2.
 
-Adding a 40 ms minimum interval alone is insufficient: when every SP candidate
-arrives 10 ms after the latest OEM, forwarding all OEM until takeover makes
-every candidate too early. All requests then expire, even with perfect 25 Hz
-OEM and a healthy host. Dropping the next OEM before a replacement SP frame is
-secured contradicts make-before-break. Delaying an SP candidate requires a
-buffer/scheduler and a defined arbitration rule against the next OEM; neither
-is in the agreed immediate TX acceptance contract.
+SP -> STOCK example when a matching candidate exists: SP counter 1 at 10 ms;
+stock request at 11 ms; OEM counter 1 at 40 ms blocked as duplicate; OEM counter
+2 at 80 ms admitted and commits stock; subsequent SP blocked. Gap 70 ms,
+counters 1,2. All gates and the envelope must remain valid at 80 ms.
 
-Similarly, "never a slot with neither" needs a slot origin and a jitter budget.
-Two legal intervals near 40 ms can straddle a fixed slot boundary; a physical
-bus guarantee also requires queue admission and bus transmission evidence,
-not merely success from `safety_tx_hook` or `safety_fwd_hook`.
-
-Resolution must explicitly choose a timing contract: allow and bound the
-stock-to-SP phase advance (with counter slots distinct from wall-clock slots),
-or change host scheduling / introduce a secured candidate scheduling protocol.
-X-48 does not choose a weaker safety gate on behalf of the owner. Until this
-is resolved, firmware implementation and enabling the release long flag are
-blocked. The ABI below is reserved in this design only.
+**Required liveness regression:** if the host sends SP counter 2 at 50 ms in
+that example (normal OEM+1 phase lock), OEM counter 2 at 80 ms is a duplicate
+again. A host that sends on every OEM frame can stay one counter ahead forever.
+The coordinator also requires no request expiry with perfect 25 Hz OEM and a
+healthy 100 Hz host; that assertion must be tested against the actual state
+machine. No implementation may report that liveness assertion as passing by
+silently omitting the intervening SP transmissions.
 
 ## Authority and request (proposed ABI 1)
 
@@ -121,8 +114,9 @@ age zero; refusals to a request may still report MODE/ARGUMENT.
 
 Validation order is mode, arguments, capability, relay, cruise, motion, AEB,
 gas, brake, Autopark, RX, OEM freshness, target-specific checks, deadline,
-counter, envelope, existing long checks. Rejecting a candidate for any handoff
-failure clears pending and records that reason. Ordinary owner SP frames
+counter, envelope, existing long checks. A failed safety gate clears pending and records its reason. Counter mismatch
+or a gap below 5 ms only blocks that candidate, retaining pending until a
+valid candidate or the deadline; these waiting conditions are not refusals. Ordinary owner SP frames
 continue to obey the existing actuation limits; rejection never grants OEM
 ownership automatically. No Params writes or policy evaluation in firmware.
 
@@ -132,6 +126,8 @@ ownership automatically. No Params writes or policy evaluation in firmware.
 - `OEM_FRESH_US = 60000` (60 ms), fresh at age <= limit; OEM expected 25 Hz.
 - `SP_FRESH_US = 60000` (60 ms), required for stock takeover comparison.
 - `ACCEL_TOL_RAW = 5` (0.20 m/s^2, DBC resolution 0.04 m/s^2).
+- `HANDOFF_MIN_GAP_US = 5000` (5 ms), inclusive.
+- `HANDOFF_MAX_GAP_US = 80000` (80 ms), inclusive.
 - Counter modulus 8; no frame rewriting, synthesized counter or AEB marker.
 
 Request and every RX/TX frame must re-evaluate all pending conditions. Health
@@ -156,19 +152,21 @@ difference <= 5. Do not equate overlapping intervals to continuity. Stock->SP
 also runs every existing Tesla accel, reverse prevention, AEB and actuation
 gate. Normal stock OEM forwarding retains the base safety behavior.
 
-## Counter handshakes (timing gate unresolved above)
+## Counter handshakes
 
 STOCK -> SP: keep forwarding validated OEM while pending; remember the last
 actually admitted OEM counter/envelope. Only an otherwise allowed SP frame
-with `(last_forwarded_OEM_counter+1) mod 8`, matching envelope, can atomically
+with `(last_forwarded_OEM_counter+1) mod 8`, gap in 5000..80000 us and
+matching envelope, can atomically
 commit SP and be admitted. Other SP long actuation is blocked. Capability
-without a request is not ownership. Stock cancel handling must be explicitly
-tested independently of handoff; cancel cannot become a takeover backdoor.
+without a request is not ownership. With long capability and owner STOCK, host 0x2B9 including cancel is blocked.
+Without long capability, the original non-actuating cancel-only path remains.
 
 SP -> STOCK: keep admitting SP while pending. On a validated OEM whose counter
-equals the last accepted SP counter and whose envelope matches that SP frame,
-commit STOCK while suppressing this duplicate OEM. Block subsequent SP TX;
-the next valid OEM with the next counter is forwarded. Record the SP envelope
+equals `(last_accepted_SP_counter+1) mod 8`, with gap 5000..80000 us and
+matching envelope, admit that OEM and commit STOCK atomically. A duplicate
+OEM counter equal to last SP is blocked. Block subsequent SP TX; later OEM
+continues to be forwarded. Record the SP envelope
 on actual accepted frames, not on rejected TX attempts. A missing next OEM
 cannot be called a successful gap-free physical handoff.
 
@@ -184,7 +182,7 @@ Owner itself is not silently reversed by AEB or refusal.
 age zero, reason OK, no remembered counters/envelopes. Non-Tesla mode cannot
 retain a Tesla capability. Existing heartbeat timeout -> SILENT and relay
 behavior stay unchanged. Release/debug must both honor the long capability
-bit after implementation; the ALLOW_DEBUG gate is still present at this stage.
+bit; implementation removes only that ALLOW_DEBUG gate.
 
 F4 `bxcan.h` and H7 `fdcan.h` both call safety_fwd_hook BEFORE safety_rx_hook.
 Their addr-only forwarding hook cannot inspect same-frame AEB/checksum/counter.
@@ -219,5 +217,5 @@ copied into this request/health ABI.
 The timing reproducer and failure matrix live in
 `opendbc_repo/opendbc/safety/tests/test_tesla_long_owner_contract.py`.
 It is a requirements check, not a replacement for firmware/libsafety E2E.
-No safety, MISRA, mutation, build-size or capture replay result may be claimed
-as proof of G8 until implementation exists and those gates actually run.
+Safety, MISRA, mutation, build-size and capture replay results must identify
+the exact source and actual gate status; a failing liveness assertion is a gap.
