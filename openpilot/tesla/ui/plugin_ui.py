@@ -143,7 +143,7 @@ def draw_builtin(name, rect, draw) -> None:
     return
   key = "builtin:" + name
   entry = host._hud.get(key)
-  if entry is not None and not entry[2] and key not in tiles.HUD_REQUIRED:
+  if not tiles.hud_visible(host._hud, key):
     return
   default = tiles.builtin_hud_boxes((rect.x, rect.y, rect.width, rect.height))[key]
   x, y, _, _ = tiles.hud_rect(entry, default, (rect.x, rect.y, rect.width, rect.height))

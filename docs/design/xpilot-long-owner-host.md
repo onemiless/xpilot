@@ -36,7 +36,7 @@ invalid/SNA envelope or either endpoint gap > 0.20 m/s² veto a request. For SP,
 comparison uses the preceding LongControl output; for a STOCK->SP candidate it
 uses aEgo, the ramp seed. Panda rechecks the actual transmitted envelope.
 
-Two consecutive host/Panda refusals, request/ack mismatch > 0.5 s, health fault,
+Two consecutive host/Panda refusals, request/ack mismatch > 0.5 s, stale pandaStates or a permanent panda fault (a temporary fault such as interruptRateCan2 only pauses new requests),
 ABI loss, or invalid/throwing policy lock switching until disengage. A refusal
 preserves the acknowledged owner; a lost reply never triggers an opposite
 request. Historical refusal codes are not counted as a new immediate refusal:

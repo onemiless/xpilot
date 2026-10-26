@@ -92,6 +92,14 @@ def hud_rect(entry, default, view) -> tuple[float, float, float, float]:
 
 
 HUD_REQUIRED = {"builtin:steering_wheel", "builtin:model_source", "builtin:blind_spot_indicators"}
+# Hidden until the user shows them: the set speed is on the speed tile, keep the video clear (owner 2026-10-26).
+HUD_HIDDEN_DEFAULT = {"builtin:set_speed"}
+
+
+def hud_visible(hud: dict, name: str) -> bool:
+  if name in HUD_REQUIRED:
+    return True
+  return hud[name][2] if name in hud else name not in HUD_HIDDEN_DEFAULT
 
 
 def hud_buttons(boxes, view) -> dict:

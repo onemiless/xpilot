@@ -15,6 +15,8 @@ LO16: DRAIN fails either direction at any phase 0..40 ms/jitter 0..10 ms;
        I1/I2 fail; abort changes owner or a non-abort permits a counter jump.
 LO17: real manual/hook pulse is lost before debounce, overrides veto/lock/cooldown, repeats after ack/refusal/disengage.
 LO18: merged 54-byte health fails A5 or old 49-byte health crashes/unlocks it.
+LO19: a temporary panda fault (interruptRateCan2 on the car) locks switching, or a request starts while it lasts;
+      a permanent panda fault does not lock.
 
 The Panda below is a Python contract model, NOT firmware or physical proof.
 Host replay calls production controlsd/card/controller with deterministic inputs.
@@ -281,6 +283,14 @@ def host_replay():
   sm.alive['pandaStates'] = False
   assert tick(x, 41).longOwnerLocked
   sm.alive['pandaStates'] = True
+  x = long_owner.LongOwner(CP)
+  health.faultStatus = 'faultTemp'
+  tick(x, 42)
+  out = tick(x, 43.5)
+  assert not out.longOwnerLocked and out.longOwnerRequest == 255, 'LO19 temp fault locked or requested'
+  health.faultStatus = 'faultPerm'
+  assert tick(x, 44).longOwnerLocked, 'LO19 permanent fault did not lock'
+  health.faultStatus = 'none'
   for bad in ['invalid', 1, float('nan')]:
     assert tick(long_owner.LongOwner(CP), 50, bad).longOwnerLocked
   with patch.object(long_owner, 'desired_owner', side_effect=ValueError('bad policy')):

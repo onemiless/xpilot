@@ -399,7 +399,7 @@ controlsd 启动时只调用一次 `plugins.long_owner_policy(params, CP, CP_SP)
 
 Host floor：目标确认 1 s，完成/拒绝后 cooldown 2 s；gas/brake/standstill/stockAeb/accFault、
 |aEgo|≥0.35、lead TTC<3 s、OEM 不活跃/过期及对应 accel 两端差>0.20 均拒绝。
-两次连续拒绝、request/ack 不符>0.5 s、健康包/策略故障后锁定切换直到 disengage；拒绝保持
+两次连续拒绝、request/ack 不符>0.5 s、pandaStates 过期、Panda 永久故障或策略故障后锁定切换直到 disengage（临时故障如 interruptRateCan2 只暂停新请求，不锁定）；拒绝保持
 ack owner，Panda reset 跟随其确认后的初始 owner。CC_SP 与 CC 同周期配对；longActive/override/cancel、
 planner/LongControl 和 CAN 使用同一 owner，card 拒绝不配对消息。
 
@@ -489,6 +489,7 @@ X-50 自动速度策略和 G3 横向均未实现；刷写和实车接合测试�
 - **行驶时**：mici 画面默认在 `(300,59,1560,699)`（第 1–6 列 × 第 0–2 行这块区域里按 536:240 居中，缩放约 2.91），这 18 格不放磁贴；磁贴绕着它排：第 0 列、第 7 列和第 3 行的第 1–6 列，共 14 格。没固定位置的磁贴在自己支持的尺寸里从保存的尺寸往小试，放得下就用。2026-10-25 用户决定覆盖旧的“画面固定”规则：从画面内开始拖动可移动画面，松手时吸附到整格，6×3 格的占位保持在网格内（列 0–2、行 0–1）。位置改变后沿用上述 first-fit 重排，覆盖的固定磁贴也重新找空位。其余触摸全部忽略，画面内点击也不交给 mici 控件；报警仍只由 mici 在画面内显示一次。
 - **摄像头颜色**：接合与未接合都保持彩色；`cameraview.py` 固定 shader 的 `engaged=0`，保留原 shader 和驾驶员相机增强。
 - **停车时**：显示停车布局。点一下磁贴打开它的详情页（有 `PAGE` 的）；长按（0.6 s）磁贴或空格进入编辑模式。
+- **行驶/停车画面切换**（用户 2026-10-26）：启动（ignition）后挂 P 档显示停车画面（磁贴、设置），离开 P 档显示行驶画面。启动时长按可手动切换：行驶画面上在 Driving view 以外长按进入停车画面，停车画面上长按回到行驶画面（启动时长按不进入编辑）。手动选择保持到换挡或 openpilot/MADS 接管为止。启动时设置页仍按 onroad 规则只读。
 - **编辑模式**（只在停车时）：三个按钮 `Park | Drive | Done` 为 320×160 px、56 px 字号。三个大按钮不能竖排进一个空格，因此横排占边缘一行的四格宽度。按钮栏**不保留格子**（用户 2026-10-26）：编辑和平时的磁贴位置完全相同，任何格子都能放磁贴；按钮栏放在遮挡磁贴和加号最少的位置（停车布局在底行或顶行，优先底部中间；行驶布局只用画面外的那一边，永不遮挡 Driving view）。拖动磁贴、画面或 HUD 时按钮栏隐藏，可直接放到它下面的格子；只有点击属于按钮栏，从按钮栏上开始的拖动会拿起下面的磁贴。Park/Drive 切换布局，Done 退出。编辑行驶布局时灰色画面仍可拖动吸附，HUD 框的交互优先于画面。选中磁贴可改尺寸、取消固定或拖动固定；点加号打开 Add tiles；点空白取消选中。
 - **保存**：布局存在 `XpilotTileLayout`（JSON `{"park": {"tiles": [[id, 尺寸, 列, 行], ...], "hidden": [id, ...]}, "drive": {"tiles": [...], "hidden": [...], "view": [列, 行], "hud": {"插件 id": [fx, fy, visible]}}}`，列/行为 `null` 表示不固定；旧格式 `{"tiles": [[id, 尺寸]], "hidden": [...]}` 读作停车布局），不进 `params_keys.h`，由 `plugin_params.ParamsView` 存成文件 `/data/xpilot_plugins/.params/XpilotTileLayout`。读取时丢掉不认识的 id、不属于这套布局的磁贴和不支持的尺寸；新出现的磁贴按 (`order`, `id`) 用默认尺寸排到最后；插件关闭时它的磁贴不显示但位置保留。`drive.view` 缺失、格式错误或越界时回到默认 `(1,0)`；移动画面时两套磁贴布局一起保存。
 - **加磁贴**：插件的写在 `plugins/<名字>/ui.py`；不属于插件的放 `openpilot/tesla/ui/slots/`。继承 `Tile`，写 `SPEC = TileSpec(id, title, sizes=..., services=..., show="onroad"|"offroad"|"always", hz=..., order=...)`，会被自动发现。磁贴没有自己的颜色：都使用宿主设置的 `Tile.COLOR`，行驶时为中性深灰，停车时为所选主题色。
@@ -510,7 +511,7 @@ X-50 自动速度策略和 G3 横向均未实现；刷写和实车接合测试�
   - 页面调用 `self.open(None, None)` 表示返回上一层。
   - 开机引导：mici 的 `OnboardingWindow` 在栈里时，宿主不画 mici 纹理，改为全屏画原生 `pages/onboarding.py` 的 `OnboardingPage`（同样的参数：`HasAcceptedTerms`、`HasAcceptedTermsSP`、`CompletedTrainingVersion`、`DoUninstall`；拒绝前在页内再确认一次），完成后宿主 `pop_widgets_to(main)`，和 mici 的回调一样。
 - **不画 mici 纹理**靠 `system/ui/lib/application.py` 里一行钩子：`host.viewport()` 返回 `None` 时跳过 `draw_texture_pro`。这行放在 `begin_drawing()` 之前，宿主在里面重画变化的磁贴纹理。此时 `to_logical` 把所有触摸映射到 mici 屏幕很远之外，下面继续运行的 mici 控件不会响应。这是纹理合成入口的改动；HUD 平移和报警绘制的最小改动见下条。
-- **HUD 布局**：停车时编辑 Drive，Driving view 内同时显示已开启插件 `HudOverlay` 和内置 HUD 的有标签框。拖动移动，点击可隐藏/恢复允许隐藏的项；框不越出画面。内置项保存为 `drive.hud["builtin:<name>"]=[fx,fy,visible]`，插件仍用插件 id；左上角比例随画面移动保持。缺失、非数字、非有限、越界或非 BOOL 的条目回到原位置和可见状态。关闭插件时保留位置。`tiles.builtin_hud_boxes()` 提供默认占位；`plugin_ui.draw_builtin()` 只给 SP 原绘制函数传平移后的 rect，不改其绘制和状态条件；小屏无宿主时保持原调用。
+- **HUD 布局**：停车时编辑 Drive，Driving view 内同时显示已开启插件 `HudOverlay` 和内置 HUD 的有标签框。拖动移动，点击可隐藏/恢复允许隐藏的项；框不越出画面。内置项保存为 `drive.hud["builtin:<name>"]=[fx,fy,visible]`，插件仍用插件 id；左上角比例随画面移动保持。缺失、非数字、非有限、越界或非 BOOL 的条目回到原位置和可见状态。关闭插件时保留位置。`tiles.builtin_hud_boxes()` 提供默认占位；`plugin_ui.draw_builtin()` 只给 SP 原绘制函数传平移后的 rect，不改其绘制和状态条件；`tiles.HUD_HIDDEN_DEFAULT` 中的内置项默认隐藏、可在编辑器 Show（`set_speed`，用户 2026-10-26：不占视频画面，设定速度已在 Speed 磁贴）；G8 owner 不画在视频上，而是核心 onroad 磁贴 `long_owner`（`ui/slots/long_owner.py`，`STOCK`/`SP`、控速时 `ON`、拒绝原因前 16 字符；无 owner ABI 时显示 `-`），和其他磁贴一样绕画面放置、可隐藏；小屏无宿主时保持原调用。
   - 可隐藏：`torque_bar`（转向弧线）、`set_speed`（设定速度）。只允许移动：`steering_wheel`（接管状态、critical 图标及叹号、turn intent 一起移动）、`model_source`（加载/失败状态）、`blind_spot_indicators`（两侧一组）。编辑器显示 Move only，手写 `visible=false` 也不会隐藏安全指示。
   - `_draw_current_speed()` 在此基线没有调用，旧坐标超出 240 px 高画面；按用户补充不增加新元素。其他可分离内容：方向盘组内的 turn intent/critical 叹号；外层的 DMoji、纵向状态、置信度球、书签和导航不参与本次编辑。报警不进入布局；移除 `augmented_road_view.py` 中错误的大屏跳过条件，始终由 SP 在原处绘制。
   - 插件 `HudOverlay.default_rect(view)` 返回 mici 逻辑坐标的默认矩形，基类为 120×48。宿主在调用 `render(rect)` 前设置 Widget 矩形；固定绝对坐标的旧插件须在插件仓库适配。绘制裁剪到 Driving view；ScreenOverlay 继续使用画面外区域。`use` 不增加运行期门控。
