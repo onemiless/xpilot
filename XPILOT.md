@@ -377,6 +377,13 @@ SP→stock 的 OEM+1 条件与持续发送 OEM+1 的主机可能活锁，必须�
 通过省略中间 SP 帧宣称健康主机请求不超时。后续范围和验证清单在 `handoff/X-20261026-48.md`。
 未发布新的 HOST_CAPS/claim；X-49/X-50 尚不能依此文档启用实际控制。
 
+X-49 的宿主失败矩阵与 LO16 合同反例在 `tools/sp_tesla_e2e/long_owner_check.py`。
+运行 `python3 tools/sp_tesla_e2e/long_owner_check.py --output <新目录>` 保存每个中间 SP
+发送的 `timeline.csv`、`result.json` 和 `SHA256SUMS`；当前返回 1（BLOCKED），不代表
+libsafety 或 card/controlsd 已执行。完整限制见 `docs/reports/X-20261026-49.md`。
+`role:long.owner` / `long_owner(ctx, CS)` 仍是拟议 API，未注册、未发布 HOST_CAPS，
+无运行时 owner 字段、shadow observer 或手动切换设置；不能据此安装或启用 G8 插件。
+
 ## 7. 雷达接入接口
 
 写一个声明 `source:radar` 的插件，实现 `radar_interface` 钩子（见 4.4）。插件关闭、没有声明或出错时用原车雷达。外接雷达如果需要发送报文，还要声明 `can.tx` 并携带 panda 运行时规则。
