@@ -37,6 +37,198 @@ bool tesla_has_vehicle_bus = false;
 extern uint8_t tesla_mads_screen_button_fingers;
 uint8_t tesla_mads_screen_button_fingers = 0U;
 
+#define TESLA_LONG_STOCK 0U
+#define TESLA_LONG_SP 1U
+#define TESLA_LONG_NONE 255U
+#define TESLA_LONG_OK 0U
+#define TESLA_LONG_MODE 1U
+#define TESLA_LONG_ARGUMENT 2U
+#define TESLA_LONG_NOT_CAPABLE 3U
+#define TESLA_LONG_DISENGAGED 4U
+#define TESLA_LONG_STANDSTILL 5U
+#define TESLA_LONG_AEB 6U
+#define TESLA_LONG_GAS 7U
+#define TESLA_LONG_BRAKE 8U
+#define TESLA_LONG_AUTOPARK 9U
+#define TESLA_LONG_RX_INVALID 10U
+#define TESLA_LONG_OEM_STALE 11U
+#define TESLA_LONG_OEM_INACTIVE 12U
+#define TESLA_LONG_DEADLINE 13U
+#define TESLA_LONG_COUNTER 14U
+#define TESLA_LONG_ENVELOPE 15U
+#define TESLA_LONG_LIMIT 16U
+#define TESLA_LONG_RELAY 17U
+#define TESLA_LONG_BUSY 18U
+#define TESLA_LONG_SP_STALE 19U
+#define TESLA_LONG_DRAIN_TIMEOUT 20U
+#define TESLA_LONG_PENDING_US 250000U
+#define TESLA_LONG_DRAIN_US 50000U
+#define TESLA_LONG_FRESH_US 60000U
+#define TESLA_LONG_MIN_GAP_US 5000U
+#define TESLA_LONG_MAX_GAP_US 80000U
+
+typedef struct {
+  uint32_t ts;
+  int min;
+  int max;
+  uint8_t counter;
+  uint8_t acc_state;
+  bool valid;
+} TeslaLongFrame;
+
+static uint8_t tesla_long_owner = TESLA_LONG_STOCK;
+static uint8_t tesla_long_pending = TESLA_LONG_NONE;
+// App control/health share this state; body has neither consumer.
+// cppcheck-suppress misra-c2012-8.9
+static uint8_t tesla_long_refusal = TESLA_LONG_OK;
+static uint32_t tesla_long_request_ts = 0U;
+static uint32_t tesla_long_drain_ts = 0U;
+static bool tesla_long_drain = false;
+static TeslaLongFrame tesla_long_oem = {0};
+static TeslaLongFrame tesla_long_forwarded = {0};
+static TeslaLongFrame tesla_long_sp = {0};
+
+static void tesla_long_clear(uint8_t reason) {
+  tesla_long_pending = TESLA_LONG_NONE;
+  tesla_long_drain = false;
+  tesla_long_refusal = reason;
+}
+
+static void tesla_long_reset(void) {
+  tesla_long_owner = TESLA_LONG_STOCK;
+  tesla_long_clear(TESLA_LONG_OK);
+  tesla_long_request_ts = 0U;
+  tesla_long_drain_ts = 0U;
+  tesla_long_oem = (TeslaLongFrame){0};
+  tesla_long_forwarded = (TeslaLongFrame){0};
+  tesla_long_sp = (TeslaLongFrame){0};
+  tesla_longitudinal = false;
+}
+
+static TeslaLongFrame tesla_long_frame(const CANPacket_t *msg) {
+  return (TeslaLongFrame){
+    .ts = microsecond_timer_get(),
+    .min = ((msg->data[5] & 0x0FU) << 5) | (msg->data[4] >> 3),
+    .max = ((msg->data[6] & 0x1FU) << 4) | (msg->data[5] >> 4),
+    .counter = msg->data[6] >> 5,
+    .acc_state = msg->data[1] >> 4,
+    .valid = true,
+  };
+}
+
+static bool tesla_long_envelope(const TeslaLongFrame *a, const TeslaLongFrame *b) {
+  return a->valid && b->valid && (a->min <= a->max) && (b->min <= b->max) &&
+         (a->max < 511) && (b->max < 511) &&
+         (SAFETY_ABS(a->min - b->min) <= 5) && (SAFETY_ABS(a->max - b->max) <= 5);
+}
+
+static uint8_t tesla_long_gate(uint8_t target) {
+  uint8_t reason = TESLA_LONG_OK;
+  uint32_t now = microsecond_timer_get();
+  if (current_safety_mode != SAFETY_TESLA) {
+    reason = TESLA_LONG_MODE;
+  } else if (!tesla_longitudinal) {
+    reason = TESLA_LONG_NOT_CAPABLE;
+  } else if (relay_malfunction) {
+    reason = TESLA_LONG_RELAY;
+  } else if (!cruise_engaged_prev) {
+    reason = TESLA_LONG_DISENGAGED;
+  } else if (!vehicle_moving) {
+    reason = TESLA_LONG_STANDSTILL;
+  } else if (tesla_stock_aeb) {
+    reason = TESLA_LONG_AEB;
+  } else if (gas_pressed) {
+    reason = TESLA_LONG_GAS;
+  } else if (brake_pressed) {
+    reason = TESLA_LONG_BRAKE;
+  } else if (tesla_autopark_prev || tesla_autopark) {
+    reason = TESLA_LONG_AUTOPARK;
+  } else {
+    for (int i = 0; i < current_safety_config.rx_checks_len; i++) {
+      const RxCheck *check = &current_safety_config.rx_checks[i];
+      const CanMsgCheck *m = &check->msg[check->status.index];
+      const RxStatus *s = &check->status;
+      uint32_t max_age = SAFETY_MAX(100000U, 2000000U / m->frequency);
+      if (!s->msg_seen || !s->valid_checksum || !s->valid_quality_flag ||
+          (s->wrong_counters >= MAX_WRONG_COUNTERS) || s->lagging ||
+          (!m->ignore_frequency_check && (safety_get_ts_elapsed(now, s->last_timestamp) > max_age))) {
+        reason = TESLA_LONG_RX_INVALID;
+      }
+    }
+    if (reason == TESLA_LONG_OK) {
+      if (!tesla_long_oem.valid || (safety_get_ts_elapsed(now, tesla_long_oem.ts) > TESLA_LONG_FRESH_US)) {
+        reason = TESLA_LONG_OEM_STALE;
+      } else if ((target == TESLA_LONG_STOCK) && (tesla_long_oem.acc_state != 3U) && (tesla_long_oem.acc_state != 4U)) {
+        reason = TESLA_LONG_OEM_INACTIVE;
+      } else if ((target == TESLA_LONG_STOCK) && !tesla_long_drain &&
+                 (!tesla_long_sp.valid || (safety_get_ts_elapsed(now, tesla_long_sp.ts) > TESLA_LONG_FRESH_US))) {
+        reason = TESLA_LONG_SP_STALE;
+      } else {
+      }
+    }
+  }
+  return reason;
+}
+
+static void tesla_long_update(void) {
+  if (tesla_long_pending != TESLA_LONG_NONE) {
+    uint32_t now = microsecond_timer_get();
+    uint8_t reason;
+    if (safety_get_ts_elapsed(now, tesla_long_request_ts) >= TESLA_LONG_PENDING_US) {
+      reason = TESLA_LONG_DEADLINE;
+    } else if (tesla_long_drain && (safety_get_ts_elapsed(now, tesla_long_drain_ts) >= TESLA_LONG_DRAIN_US)) {
+      reason = TESLA_LONG_DRAIN_TIMEOUT;
+    } else {
+      reason = tesla_long_gate(tesla_long_pending);
+    }
+    if (reason != TESLA_LONG_OK) {
+      tesla_long_clear(reason);
+    }
+  }
+}
+
+// Called after validated RX, before queue admission, with interrupts masked.
+static int tesla_long_route(const CANPacket_t *msg, bool valid, bool tx_available) {
+  int bus_fwd = -1;
+  if (tesla_stock_aeb) {
+    tesla_long_clear(TESLA_LONG_AEB);
+    bus_fwd = 0;
+  } else if (tesla_long_owner == TESLA_LONG_STOCK) {
+    bus_fwd = 0;
+    if (valid && tx_available) {
+      tesla_long_forwarded = tesla_long_oem;
+    }
+  } else if ((tesla_long_pending == TESLA_LONG_STOCK) && valid) {
+    TeslaLongFrame frame = tesla_long_frame(msg);
+    if (tesla_long_drain) {
+      uint32_t gap = safety_get_ts_elapsed(frame.ts, tesla_long_sp.ts);
+      if (frame.counter != ((tesla_long_sp.counter + 1U) % 8U)) {
+        tesla_long_clear(TESLA_LONG_COUNTER);
+      } else if (!tesla_long_envelope(&frame, &tesla_long_sp)) {
+        tesla_long_clear(TESLA_LONG_ENVELOPE);
+      } else if ((gap < TESLA_LONG_MIN_GAP_US) || (gap > TESLA_LONG_MAX_GAP_US)) {
+        tesla_long_clear(TESLA_LONG_SP_STALE);
+      } else if (tx_available) {
+        tesla_long_owner = TESLA_LONG_STOCK;
+        tesla_long_clear(TESLA_LONG_OK);
+        tesla_long_forwarded = frame;
+        bus_fwd = 0;
+      } else {
+      }
+    } else if (frame.counter == tesla_long_sp.counter) {
+      if (!tesla_long_envelope(&frame, &tesla_long_sp)) {
+        tesla_long_clear(TESLA_LONG_ENVELOPE);
+      } else {
+        tesla_long_drain = true;
+        tesla_long_drain_ts = frame.ts;
+      }
+    } else {
+    }
+  } else {
+  }
+  return (tx_available && !relay_malfunction && !current_safety_config.disable_forwarding) ? bus_fwd : -1;
+}
+
 static uint8_t tesla_get_counter(const CANPacket_t *msg) {
   uint8_t cnt = 0;
   if (msg->addr == 0x2b9U) {
@@ -212,6 +404,7 @@ static void tesla_rx_hook(const CANPacket_t *msg) {
   if (msg_matches(msg, 0x2b9U, 2U)) {
     // "AEB_ACTIVE"
     tesla_stock_aeb = (msg->data[2] & 0x03U) == 1U;
+    tesla_long_oem = tesla_long_frame(msg);
   }
 
   // DAS_steeringControl
@@ -252,6 +445,7 @@ static bool tesla_tx_hook(const CANPacket_t *msg) {
 
   bool tx = true;
   bool violation = false;
+  bool cancel = false;
 
   // Don't send any messages when Autopark is active
   if (tesla_autopark) {
@@ -302,6 +496,8 @@ static bool tesla_tx_hook(const CANPacket_t *msg) {
     int raw_accel_max = ((msg->data[6] & 0x1FU) << 4) | (msg->data[5] >> 4);
     int raw_accel_min = ((msg->data[5] & 0x0FU) << 5) | (msg->data[4] >> 3);
     int acc_state = msg->data[1] >> 4;
+    cancel = (acc_state == 13) && (raw_accel_max == TESLA_LONG_LIMITS.inactive_accel) &&
+             (raw_accel_min == TESLA_LONG_LIMITS.inactive_accel);
 
     if (tesla_longitudinal) {
       // Prevent both acceleration from being negative, as this could cause the car to reverse after coming to standstill
@@ -313,23 +509,39 @@ static bool tesla_tx_hook(const CANPacket_t *msg) {
       violation |= longitudinal_accel_checks(raw_accel_max, TESLA_LONG_LIMITS);
       violation |= longitudinal_accel_checks(raw_accel_min, TESLA_LONG_LIMITS);
     } else {
-      // Can only send cancel longitudinal messages when not controlling longitudinal
-      if (acc_state != 13) {  // ACC_CANCEL_GENERIC_SILENT
-        violation = true;
-      }
-
-      // No actuation is allowed when not controlling longitudinal
-      if ((raw_accel_max != TESLA_LONG_LIMITS.inactive_accel) || (raw_accel_min != TESLA_LONG_LIMITS.inactive_accel)) {
-        violation = true;
-      }
+      violation |= !cancel;
     }
   }
 
-  if (violation) {
-    tx = false;
+  if ((msg->addr == 0x2b9U) && tesla_longitudinal) {
+    TeslaLongFrame frame = tesla_long_frame(msg);
+    if (tesla_long_drain || relay_malfunction || (msg->extended != 0U) ||
+        (tesla_get_checksum(msg) != tesla_compute_checksum(msg))) {
+      violation = true;
+    }
+    if (tesla_long_owner == TESLA_LONG_STOCK) {
+      tx = cancel && (tesla_long_pending != TESLA_LONG_SP);
+      if ((tesla_long_pending == TESLA_LONG_SP) && (frame.acc_state != 13U)) {
+        uint32_t gap = safety_get_ts_elapsed(frame.ts, tesla_long_forwarded.ts);
+        if (!tesla_long_envelope(&frame, &tesla_long_forwarded)) {
+          tesla_long_clear(TESLA_LONG_ENVELOPE);
+        } else if (violation) {
+          tesla_long_clear(TESLA_LONG_LIMIT);
+        } else if (tesla_long_forwarded.valid &&
+                   (frame.counter == ((tesla_long_forwarded.counter + 1U) % 8U)) &&
+                   (gap >= TESLA_LONG_MIN_GAP_US) && (gap <= TESLA_LONG_MAX_GAP_US)) {
+          tesla_long_owner = TESLA_LONG_SP;
+          tesla_long_clear(TESLA_LONG_OK);
+          tx = true;
+        } else {
+        }
+      }
+    }
+    if (tx && !violation && (tesla_long_owner == TESLA_LONG_SP)) {
+      tesla_long_sp = frame;
+    }
   }
-
-  return tx;
+  return tx && !violation;
 }
 
 static bool tesla_fwd_hook(int bus_num, int addr) {
@@ -347,13 +559,12 @@ static bool tesla_fwd_hook(int bus_num, int addr) {
         block_msg = true;
       }
 
-      // DAS_control
-      if (tesla_longitudinal && (addr == 0x2b9) && !tesla_stock_aeb) {
-        block_msg = true;
-      }
     }
   }
 
+  if ((bus_num == 2) && (addr == 0x2b9) && (tesla_long_owner == TESLA_LONG_SP) && !tesla_stock_aeb) {
+    block_msg = true;
+  }
   return block_msg;
 }
 
@@ -373,11 +584,9 @@ static safety_config tesla_init(uint16_t param) {
   const uint16_t TESLA_FLAG_FSD_14 = 2;
   tesla_fsd_14 = GET_FLAG(param, TESLA_FLAG_FSD_14);
 
-  SAFETY_UNUSED(param);
-#ifdef ALLOW_DEBUG
+  tesla_long_reset();
   const uint16_t TESLA_FLAG_LONGITUDINAL_CONTROL = 1;
   tesla_longitudinal = GET_FLAG(param, TESLA_FLAG_LONGITUDINAL_CONTROL);
-#endif
 
   const uint16_t TESLA_PARAM_SP_VEHICLE_BUS = 1;
   const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_3_FINGER = 2;

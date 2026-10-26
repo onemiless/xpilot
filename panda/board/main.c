@@ -34,6 +34,7 @@
 // this is the only way to leave silent mode
 void set_safety_mode(uint16_t mode, uint16_t param) {
   uint16_t mode_copy = mode;
+  ENTER_CRITICAL();
   int err = set_safety_hooks(mode_copy, param);
   if (err == -1) {
     print("Error: safety set mode failed. Falling back to SILENT\n");
@@ -80,6 +81,7 @@ void set_safety_mode(uint16_t mode, uint16_t param) {
       break;
   }
   can_init_all();
+  EXIT_CRITICAL();
 }
 
 bool is_car_safety_mode(uint16_t mode) {
@@ -251,7 +253,9 @@ static void tick_handler(void) {
       ignition_can_cnt += 1U;
 
       // synchronous safety check
+      ENTER_CRITICAL();
       safety_tick();
+      EXIT_CRITICAL();
     }
 
     loop_counter++;

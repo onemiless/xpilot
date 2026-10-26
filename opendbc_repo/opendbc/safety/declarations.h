@@ -348,6 +348,7 @@ extern uint16_t current_safety_param_sp;
 extern safety_config current_safety_config;
 
 int safety_fwd_hook(int bus_num, int addr);
+int safety_rx_fwd_hook(const CANPacket_t *msg, bool *valid, bool tx_available);
 int set_safety_hooks(uint16_t mode, uint16_t param);
 
 extern const safety_hooks body_hooks;

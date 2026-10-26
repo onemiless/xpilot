@@ -416,6 +416,28 @@ phase/jitter 双向交接和 host 回放。result.json 保存 rc、源文件 has
 Mac 原生 MPC QP 在不含 owner 改动的独立路径也失败；已验证 pre-solve seed，求解轨迹
 仍是明确 gap。Python 模型和确定性 host 回放均不等于 libsafety、IPC 或实车证明。
 
+### G8 动态纵向 owner（X-20261026-48，离线固件验证）
+
+线协议和时序合同见 [`docs/design/xpilot-long-owner.md`](docs/design/xpilot-long-owner.md)：
+Panda 唯一裁决 STOCK/SP，使用 app-only `0xA5` 请求、health 追加 owner/pending/age/refusal；
+能力位不等于运行时 owner，规则引擎仍不能授予 0x2B9。计数器交接连续 +1 mod 8；交接源间隔
+限定 5–80 ms，允许一次相位变化。原车 AEB 优先，心跳丢失 SILENT 行为不变，G3 横向未实现。
+
+本分支已实现 owner/pending/DRAIN 固件状态机、A5 请求和 54 字节 health；
+Tesla 纵向能力位在 debug/release 均生效。RX/转发、TX/入队、请求、health、模式切换和 tick
+使用嵌套临界区保护，心跳丢失 SILENT 代码保持原样。
+SP→stock 按协调者 DRAIN 决定：收到与最后 SP 同计数器的 OEM 时阻断并暂停 SP TX；
+下一 OEM（SP+1）通过检查后提交 STOCK 并转发。DRAIN 最长 50 ms，失败则清 pending、
+保留 SP owner 并恢复 SP TX；此中止路径的主机恢复帧可能跳计数器。正常 SP owner 期间计数器由主机
+OEM+1 锁定，Panda 只在交接边界强制连续性，不新增正常 SP 帧的连续性检查。请求总期限仍为 250 ms。
+STOCK owner 且无 DRAIN/pending SP 接管时，允许沿用 non-long cancel 条件的 0x2B9：
+accState=13、加速度 min/max 均为 inactive（raw 375）、无主机 AEB、原车 AEB 未激活且 checksum 正确；
+原有白名单、relay 和 Autopark 检查仍生效。其余主机纵向帧仍阻断。Cancel 不作为 SP 接管候选，
+也不更新 SP/已转发 OEM 样本；pending SP 时 cancel 阻断且不因 cancel 本身清除 pending。
+真实 libsafety 回归保留全部中间 SP 帧，覆盖 25 Hz/100 Hz 相位和抖动下的活性与中止。
+未发布新的 HOST_CAPS/claim；X-49 必须同步健康包消费者并验证主机控制链后，才能进入另行授权的刷写/人工接合测试；
+X-50 自动速度策略和 G3 横向均未实现。本任务没有设备或刷写证明。
+
 ## 7. 雷达接入接口
 
 写一个声明 `source:radar` 的插件，实现 `radar_interface` 钩子（见 4.4）。插件关闭、没有声明或出错时用原车雷达。外接雷达如果需要发送报文，还要声明 `can.tx` 并携带 panda 运行时规则。

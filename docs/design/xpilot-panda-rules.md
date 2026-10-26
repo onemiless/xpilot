@@ -112,6 +112,13 @@ hook, with its existing whitelist bus/length gate. For non-mode TX, exactly one
 matching rule decides; absent match blocks. Rules require TESLA, vehicle bus,
 bus 1 and no relay malfunction. Silent/noOutput never invoke a rule.
 
+G8 longitudinal owner is a separate app control, not a runtime rule or plugin
+claim. `0x2B9` stays mode-owned on every bus/length with STOCK/SP/DRAIN;
+BEGIN/COMMIT/CLEAR and a rule fault cannot grant it. The owner request `0xA5`,
+health version/54-byte layout, 250 ms deadline and 50 ms DRAIN limit are defined
+in [xpilot-long-owner.md](xpilot-long-owner.md). Rule ABI v1 and table limits are
+unchanged; no new HOST_CAPS/manifest claim is exposed by X-48.
+
 ## Control requests (app firmware only)
 
 These requests are intentionally unimplemented in bootstub/body firmware. Before

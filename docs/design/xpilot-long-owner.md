@@ -1,6 +1,6 @@
 # G8 Tesla longitudinal owner contract (X-20261026-48 / X-20261026-49)
 
-Status: **ABI 1 implementation in progress**. Base:
+Status: **ABI 1 implemented; offline validation in progress**. Base:
 `1b52d017f4e6605cf6751963c92dbd899d38891c`. Coordinator timing decision
 2026-10-26 supersedes the original wall-clock slot requirements. The document
 is a wire contract, not a claim of tested/deployed firmware. No device access
@@ -10,13 +10,19 @@ or flashing in X-48. G3 lateral handoff is separate.
 
 I1: a single owner decides each normal bus-0 0x2B9 admission. Consecutive
 accepted counters increase by exactly +1 modulo 8 across a handoff; no duplicate
-counter is admitted. Ownership changes only on an admitted handoff frame.
+counter is admitted at that boundary. During normal SP ownership the host supplies
+the OEM+1 counter lock; Panda retains the existing acceleration/checksum checks
+and does not require counter continuity except at handoff. I1 for the complete
+output stream therefore depends on that host contract. Ownership changes only on
+an admitted handoff frame. Inactive host cancel while STOCK owns longitudinal is
+a separate cruise-cancel admission, excluded from the normal actuation stream;
+it cannot commit ownership or change remembered SP/forwarded OEM samples.
 Emergency OEM AEB passthrough is an explicit exception to normal counter/source
 arbitration: it must never be delayed by a continuity gate.
 
 I2: the gap between the last old-source frame and first new-source frame is
 inclusive **5000..80000 us** (5..80 ms). This allows a one-off phase change,
-with a counter jump permitted only after DRAIN abort. Outside handoffs OEM freshness remains 60 ms at 25 Hz.
+with a host counter jump expected after DRAIN abort. Outside handoffs OEM freshness remains 60 ms at 25 Hz.
 Offline tests prove safety RX/TX/FWD verdicts; physical queueing, arbitration
 and bus timing require later vehicle validation.
 
@@ -34,17 +40,18 @@ The handoff gap is 70 ms with counters 1,2. No host cadence change is required.
 While DRAIN is active, owner remains SP but host 0x2B9 TX is blocked. DRAIN
 expires at age >= **50000 us** or on any failed accept condition. Abort clears
 pending, records the refusal and restores normal SP acceptance without changing
-owner. Its next frame may jump a counter; this is the sole normal I1 exception
-and the vehicle DI is expected to tolerate it (physical validation remains).
+owner. Its next frame may jump a counter; this is the expected recovery exception
+to the host's normal OEM+1 sequence, and the vehicle DI is expected to tolerate it
+(physical validation remains). Panda does not impose a normal-SP continuity gate.
 The 250 ms request deadline still applies throughout DRAIN.
 
 The executable property must retain every intervening host transmission and
 assert both directions commit before deadline with perfect 25 Hz OEM, healthy
 100 Hz host, every phase 0..40 ms and jitter 0..10 ms. I1/I2 apply; only DRAIN
-abort may produce an SP counter jump. The previous open liveness contradiction
+abort is the modeled host counter-jump exception. The previous open liveness contradiction
 is superseded by this coordinator decision (2026-10-26).
 
-## Authority and request (proposed ABI 1)
+## Authority and request (ABI 1)
 
 Panda alone owns `tesla_long_owner`: `0 STOCK`, `1 SP`. No owner NONE. One
 value decides both host 0x2B9:0 acceptance and OEM 0x2B9:2 -> 0 forwarding.
@@ -76,9 +83,9 @@ owner is a no-op and does not reverse/replace a pending request. An opposite
 request while pending is refused BUSY. A new valid request clears the refusal
 reason; a successful handoff leaves OK. Refusals preserve the current owner.
 
-## Health packet change (proposed, not yet applied)
+## Health packet change
 
-Append to the packed `panda/board/health.h` struct, preserving every old field:
+Appended to the packed `panda/board/health.h` struct, preserving every old field:
 
 | Offset | C field | Type | Meaning |
 |---|---|---|---|
@@ -87,12 +94,12 @@ Append to the packed `panda/board/health.h` struct, preserving every old field:
 | 51 | tesla_long_pending_age_ms_pkt | u16 | Same age as request reply |
 | 53 | tesla_long_refusal_pkt | u8 | Same reason as request reply |
 
-Base size 49 -> 54 bytes, within USBPACKET_MAX_SIZE. Firmware version is not a
+Size 49 -> 54 bytes, within USBPACKET_MAX_SIZE. Firmware version is not a
 manually incremented integer: `panda/SConscript` hashes health.h into
 `HEALTH_PACKET_VERSION`, and the Python library computes the same hash. The
-header change MUST change that version and ship with X-49's C++ health consumer
-and the Python field mapping. The exact new hash is recorded only after the
-real header is changed and built. Non-Tesla modes report STOCK, absent pending,
+header change changes that version and must ship with X-49's C++ health consumer
+and the Python field mapping. The implemented health hash is `0x25f8efcd` (54 bytes); firmware and Python
+compute it from the header. Non-Tesla modes report STOCK, absent pending,
 age zero; refusals to a request may still report MODE/ARGUMENT.
 
 | Code | Name | Refusal condition |
@@ -124,10 +131,11 @@ gas, brake, Autopark, RX, OEM freshness, target-specific checks, deadline,
 counter, envelope, existing long checks. A failed safety gate clears pending and records its reason. Counter mismatch
 or a gap below 5 ms only blocks that candidate, retaining pending until a
 valid candidate or the deadline; these waiting conditions are not refusals. Ordinary owner SP frames
-continue to obey the existing actuation limits; rejection never grants OEM
+continue to obey the existing actuation limits and checksum checks, with counters
+provided by the host OEM+1 lock rather than a Panda continuity check; rejection never grants OEM
 ownership automatically. No Params writes or policy evaluation in firmware.
 
-## Gates and constants (proposed)
+## Gates and constants
 
 - `DRAIN_TIMEOUT_US = 50000` (50 ms), expired at age >= timeout.
 - `PENDING_TIMEOUT_US = 250000` (250 ms), expired at age >= timeout.
@@ -167,8 +175,15 @@ actually admitted OEM counter/envelope. Only an otherwise allowed SP frame
 with `(last_forwarded_OEM_counter+1) mod 8`, gap in 5000..80000 us and
 matching envelope, can atomically
 commit SP and be admitted. Other SP long actuation is blocked. Capability
-without a request is not ownership. With long capability and owner STOCK, host 0x2B9 including cancel is blocked.
-Without long capability, the original non-actuating cancel-only path remains.
+without a request is not ownership. With long capability and owner STOCK, host
+0x2B9 is blocked except for the existing non-long cancel rule: accState 13
+(`ACC_CANCEL_GENERIC_SILENT`), both acceleration endpoints inactive (raw 375),
+no host AEB event, no stock AEB, valid checksum, and no DRAIN/pending SP takeover.
+The existing TX whitelist, relay and Autopark checks still apply. Cancel never
+acts as an SP takeover candidate (including while pending), never clears pending
+merely by being a cancel, and never updates remembered SP/forwarded OEM samples.
+This lets driver/DM/controls cancel stock ACC while STOCK remains owner. Without
+long capability, the original non-actuating cancel-only path remains.
 
 SP -> STOCK: keep admitting SP while pending until a validated OEM counter
 equals `last_accepted_SP_counter` (duplicate). Block that OEM and enter DRAIN
@@ -196,23 +211,25 @@ bit; implementation removes only that ALLOW_DEBUG gate.
 
 F4 `bxcan.h` and H7 `fdcan.h` both call safety_fwd_hook BEFORE safety_rx_hook.
 Their addr-only forwarding hook cannot inspect same-frame AEB/checksum/counter.
-The implementation needs a narrow packet-aware Tesla 0x2B9 RX dispatcher that
+`safety_rx_fwd_hook` is the narrow packet-aware Tesla 0x2B9 RX dispatcher that
 validates that frame once, decides forwarding and RX state in one transaction,
 then returns the forwarding decision. Other addresses retain their order.
-Tests must drive this actual order, rather than call RX then test FWD.
+Tests drive this actual order, rather than call RX then test FWD.
 
 Use the existing nested ENTER_CRITICAL / EXIT_CRITICAL primitives across each
 RX routing + safety-state transaction and each host TX check + queue admission.
 Protect request, health snapshot, mode reset and tick accesses to the same
 state. A lock only inside tesla_tx_hook is insufficient: after unlock an OEM
 IRQ could change owner before the already-accepted SP frame enters the queue.
-Queue-full / peripheral FIFO arbitration and wire completion are separate from
-libsafety acceptance and need an explicit physical output proof boundary.
+Host TX checks queue capacity before safety admission; Tesla RX receives a
+queue-capacity verdict inside the same critical region, so a full queue cannot
+commit a stock handoff or advance the remembered forwarded OEM counter.
+Peripheral FIFO arbitration and wire completion still require physical proof.
 Fixed bounded state, no heap, no generic rules-engine forwarding permission.
 
 ## Scope / evidence
 
-Future implementation touches Tesla safety, narrow safety dispatch, libsafety
+Implementation touches Tesla safety, narrow safety dispatch, libsafety
 tests/bindings, app control/health, F4/H7 CAN receive and transmit admission,
 mode/tick critical sections, Python health keys, and XPILOT.md section 6.
 X-49 owns host consumers, shadow logging and manual engaged requests. The
@@ -229,9 +246,11 @@ AEB=3 internal marker then flips ownership on a normal SP TX; carcontroller.py
 uses a pending SP takeover/ramp. This is not counter/phase proof and is not
 copied into this request/health ABI.
 
-The timing reproducer and failure matrix live in
+The real libsafety scenarios and failure matrix live in
 `opendbc_repo/opendbc/safety/tests/test_tesla_long_owner_contract.py`.
-It is a requirements check, not a replacement for firmware/libsafety E2E.
+It drives the production RX/FWD dispatcher, TX hooks, request serializer and
+health field population, including a release libsafety build. Full safety and
+build proof is recorded separately; it does not simulate physical CAN output.
 Safety, MISRA, mutation, build-size and capture replay results must identify
 the exact source and actual gate status; DRAIN liveness and abort exceptions must be exercised explicitly.
 

@@ -33,6 +33,10 @@ struct __attribute__((packed)) health_t {
   uint16_t sound_output_level_pkt;
   uint8_t temperature_pkt;
   uint8_t controls_allowed_sp_pkt;
+  uint8_t tesla_long_owner_pkt;
+  uint8_t tesla_long_pending_pkt;
+  uint16_t tesla_long_pending_age_ms_pkt;
+  uint8_t tesla_long_refusal_pkt;
 };
 
 typedef struct __attribute__((packed)) {
