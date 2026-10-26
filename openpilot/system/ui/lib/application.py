@@ -101,7 +101,7 @@ NOTO_FONTS = {
   "ja": "NotoSansCJKjp-Regular.otf",
   "ko": "NotoSansCJKkr-Regular.otf",
   "th": "NotoSansThai-Regular.ttf",
-  "zh-CHS": "NotoSansCJKsc-Regular.otf",
+  "zh-CHS": "unifont.otf",
   "zh-CHT": "NotoSansCJKtc-Regular.otf",
 }
 

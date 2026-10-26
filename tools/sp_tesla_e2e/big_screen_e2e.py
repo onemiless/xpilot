@@ -57,6 +57,8 @@ settings actions, store refresh/install, or reboot/reset/uninstall confirmation.
 34. Started in P does not show the offroad screen, a long press does not switch onroad/offroad, or a gear change keeps the switch.
 35. Dragging the edit bar changes layout data, does not move/clamp it, or its moved Park/Drive buttons stop working.
 32. Empty secret lacks Not set, Cancel changes storage, or existing BOOL/range/choices controls change.
+36. Device-scale scissoring clips every HUD preview out of the drive editor.
+37. A zh-CHS edit frame draws a codepoint missing from the loaded fallback font.
 """
 import argparse
 from copy import deepcopy
@@ -78,7 +80,7 @@ def host_check(output):
   sys.path[:0] = [str(root), str(root / 'opendbc_repo')]
   output.mkdir(parents=True, exist_ok=True)
   sandbox = tempfile.TemporaryDirectory()
-  os.environ.update(XPILOT_PLUGINS_DIR=sandbox.name, SCALE='1', SUNNYPILOT_UI='0')
+  os.environ.update(XPILOT_PLUGINS_DIR=sandbox.name, SCALE='4', SUNNYPILOT_UI='0')
   cereal = types.ModuleType('openpilot.cereal')
   cereal.__path__ = [str(root / 'openpilot/cereal')]
   import capnp
@@ -113,6 +115,11 @@ def host_check(output):
   for module, name in (('device', 'DevicePage'), ('onboarding', 'OnboardingPage')):
     sys.modules['openpilot.tesla.ui.pages.' + module] = types.SimpleNamespace(**{name: Page})
   from openpilot.tesla.ui import screen, plugin_ui
+  original_preview = screen.hud_preview.draw
+  def marked_preview(name, rect):
+    original_preview(name, rect)
+    rl.draw_rectangle(int(rect.x + rect.width / 2) - 2, int(rect.y + rect.height / 2) - 2, 4, 4, rl.MAGENTA)
+  screen.hud_preview.draw = marked_preview
   screen.load = lambda base: [(None, type('DataTile', (Tile,), {'SPEC': tiles.TileSpec(str(i), title, sizes=('small',), show='always'),
                             'draw': lambda self, rect, size, value: self.draw_value(rect, str(42 + int(self.SPEC.id)), 'km/h')})())
                             for i, title in enumerate(('Speed', 'Lead', 'Battery', 'Range', 'Temperature', 'Clock', 'Limit', 'Power'))]
@@ -144,7 +151,7 @@ def host_check(output):
   font = rl.load_font_ex('/System/Library/Fonts/Supplemental/Arial.ttf', 100, None, 0)
   gui_app._fonts = {weight: font for weight in FontWeight}
   gui_app._patch_text_functions()
-  rl._orig_begin_scissor_mode = rl.begin_scissor_mode
+  gui_app._patch_scissor_mode()
   image = rl.gen_image_color(32, 32, rl.WHITE)
   icon = rl.load_texture_from_image(image)
   rl.unload_image(image)
@@ -513,6 +520,7 @@ def host_check(output):
     cases.append({'id': 16, 'input': 'NV12 RGB bars', 'disengaged_rgb': disengaged, 'engaged_rgb': engaged,
                   'shader': 'production CameraView PC shader; device EGL shader not executed'})
     state.started, state.engaged, state.status = False, False, 0
+    host._view_position = (0, 1)  # device layout from the owner report
     host._edit, host._layout = True, 'drive'
     frame()
     try:
@@ -540,6 +548,57 @@ def host_check(output):
       if not tiles.hud_visible(host._hud, 'builtin:set_speed'):
         touch(center(tiles.hud_controls(host._hud_boxes()['builtin:set_speed'], False)['toggle']))
       frame(name='drive-edit-hud-preview')
+      image = rl.load_image_from_texture(target.texture)
+      rl.image_flip_vertical(image)
+      vx, vy, vw, vh = host._drive_view()
+      preview_pixels = 0
+      for px in range(int(vx), int(vx + vw)):
+        for py in range(int(vy), int(vy + vh)):
+          c = rl.get_image_color(image, px, py)
+          preview_pixels += (c.r, c.g, c.b) == (255, 0, 255)
+      rl.unload_image(image)
+      check(preview_pixels > 0, '36 device-scale scissor clipped every HUD preview')
+      cases.append({'id': 36, 'scale': gui_app._scale, 'preview_pixels': preview_pixels})
+
+      from openpilot.system.ui.lib.multilang import multilang
+      po = Path(sandbox.name) / 'app_zh-CHS.po'
+      po.write_text('''msgid ""
+msgstr ""
+"Language: zh-CHS\\n"
+
+msgid "Park"
+msgstr "\u505c\u8f66"
+
+msgid "Drive"
+msgstr "\u884c\u9a76"
+
+msgid "Done"
+msgstr "\u5b8c\u6210"
+
+msgid "Hide"
+msgstr "\u9690\u85cf"
+
+msgid "Show"
+msgstr "\u663e\u793a"
+''')
+      multilang._language = 'zh-CHS'
+      multilang._plugin_paths['zh-CHS'] = po
+      multilang.setup()
+      drawn = []
+      original_draw_text = rl.draw_text_ex
+      def capture_text(font, value, *args):
+        drawn.append(value)
+        return original_draw_text(font, value, *args)
+      rl.draw_text_ex = capture_text
+      try:
+        frame(name='drive-edit-zh-chs')
+      finally:
+        rl.draw_text_ex = original_draw_text
+      fallback = gui_app.fallback_font()
+      used = {c for value in drawn for c in value if ord(c) > 127}
+      missing = sorted(c for c in used if rl.get_glyph_info(fallback, ord(c)).value != ord(c))
+      check(used and not missing, f'37 zh-CHS drawn codepoints missing from fallback font: {missing}')
+      cases.append({'id': 37, 'language': multilang.language, 'drawn_codepoints': ''.join(sorted(used)), 'missing': missing})
 
       name = 'example'
       host._hud_selected = None

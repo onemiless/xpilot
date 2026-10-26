@@ -476,7 +476,7 @@ class BigScreenHost:
     if drive:
       boxes = self._hud_boxes()
       defaults = self._hud_defaults()
-      rl.begin_scissor_mode(int(vx), int(vy), int(vw), int(vh))
+      getattr(rl, "_orig_begin_scissor_mode", rl.begin_scissor_mode)(int(vx), int(vy), int(vw), int(vh))
       try:
         for name, rect in boxes.items():
           if name.startswith("builtin:"):
