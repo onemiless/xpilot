@@ -16,7 +16,7 @@ those fields for card conversion. No new service or per-switch Params.
 pandad reads 0xDD before 0xD2. Only the exact jointly built health.h SHA256 hash
 and 54-byte layout enable 0xA5. The SCons define remains zero while the dependency
 has no owner fields; unknown extended/short health is rejected. Legacy 49-byte
-health remains readable and never enables requests. No malformed/short reply
+health remains readable and never enables requests. DRAIN_TIMEOUT refusal 20 is accepted. No malformed/short reply
 changes owner; the next health read resolves an uncertain request. Requests
 are edge-triggered at 10 Hz, bounded to 5 ms, Tesla engaged/onroad only through
 controlsd. No blind opposite request or automatic safety-mode change.

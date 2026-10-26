@@ -46,7 +46,12 @@ struct FakeHandle : PandaCommsHandle {
   int control_read(uint8_t req, uint16_t p1, uint16_t p2, uint8_t *data, uint16_t len, unsigned int timeout) override {
     if (req >= 0xa0 && req <= 0xa4) REQUIRE(timeout > 0 && timeout <= 10);
     requests.push_back(req);
-    if (req == 0xdd) { memset(data, 0, len); return 8; }
+    if (req == 0xdd) {
+      memset(data, 0, len);
+      uint32_t version = XPILOT_LONG_HEALTH_VERSION;
+      memcpy(data, &version, sizeof(version));
+      return 8;
+    }
     if (req == 0xd2) {
       health_t health = {};
       health.safety_mode_pkt = fw.get_mode();

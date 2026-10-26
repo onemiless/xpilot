@@ -542,4 +542,4 @@ CI（`.github/workflows/xpilot.yaml`）在每个 PR 上跑以上检查（`upstre
 pandad/cereal transport contract and limits: [host design](docs/design/xpilot-long-owner-host.md).
 Only exact jointly built owner-health version plus a valid 54-byte packet enables app A5;
 legacy 49-byte firmware gets no requests. Lost replies resolve through health, never reversal.
-No policy hook/HOST_CAPS/claim is published by this transport-only step.
+No policy hook/HOST_CAPS/claim is published by this transport-only step. DRAIN_TIMEOUT=20 is parsed; DRAIN never changes the host pending-stock cadence.

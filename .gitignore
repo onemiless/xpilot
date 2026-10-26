@@ -109,3 +109,5 @@ SKILL.md
 
 # Local replay receipts, captures and build staging (not source inputs).
 /artifacts/
+
+/openpilot/selfdrive/pandad/tests/test_long_owner

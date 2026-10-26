@@ -524,7 +524,7 @@ class Panda:
     if len(reply) != 8:
       raise RuntimeError("Short owner reply; resolve by health readback")
     abi, owner, pending, reason, age, reserved = struct.unpack("<BBBBHH", reply)
-    if abi != 1 or owner > 1 or pending not in (0, 1, 255) or reason > 19 or reserved:
+    if abi != 1 or owner > 1 or pending not in (0, 1, 255) or reason > 20 or reserved:
       raise RuntimeError("Invalid owner reply; resolve by health readback")
     return {"owner": owner, "pending": pending, "refusal": reason, "pending_age_ms": age}
 

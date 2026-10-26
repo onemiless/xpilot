@@ -119,7 +119,7 @@ bool Panda::request_long_owner(uint8_t target) {
   std::array<uint8_t, 8> reply{};
   int n = handle->control_read(0xa5, target, 0, reply.data(), reply.size(), 5);
   return n == reply.size() && reply[0] == 1 && reply[1] <= 1 &&
-         (reply[2] <= 1 || reply[2] == 255) && reply[3] <= 19 && reply[6] == 0 && reply[7] == 0;
+         (reply[2] <= 1 || reply[2] == 255) && reply[3] <= 20 && reply[6] == 0 && reply[7] == 0;
 }
 
 std::optional<health_t> Panda::get_state(unsigned int timeout) {
@@ -137,7 +137,7 @@ std::optional<health_t> Panda::get_state(unsigned int timeout) {
   int n = handle->control_read(0xd2, 0, 0, raw.data(), raw.size(), timeout);
   bool owner_abi = XPILOT_LONG_HEALTH_VERSION != 0 && health_version == XPILOT_LONG_HEALTH_VERSION;
   if (n != (owner_abi ? 54 : 49)) return std::nullopt;
-  if (owner_abi && (raw[49] > 1 || (raw[50] > 1 && raw[50] != 255) || raw[53] > 19 ||
+  if (owner_abi && (raw[49] > 1 || (raw[50] > 1 && raw[50] != 255) || raw[53] > 20 ||
                    (raw[50] == 255 && (raw[51] != 0 || raw[52] != 0)))) return std::nullopt;
   health_t health{};
   memcpy(&health, raw.data(), std::min(sizeof(health), size_t(n)));
