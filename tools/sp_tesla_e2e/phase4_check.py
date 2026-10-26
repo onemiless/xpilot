@@ -54,6 +54,7 @@ import json
 from pathlib import Path
 import sys
 import types
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / "opendbc_repo")]
@@ -196,11 +197,15 @@ def step(s, CS=None, events=(), events_sp=()):
 def event_filter_checks():
   from openpilot.tesla import manifest as mf
   from openpilot.selfdrive.selfdrived.events import EVENTS
-  from openpilot.selfdrive.car.car_events import CarEvents
   from opendbc.can import CANPacker
   from opendbc.car.tesla.carstate import CarState
   from opendbc.car.tesla.values import CAR, DBC, CANBUS
   from opendbc.car import Bus, structs
+  from opendbc.car.tesla.interface import CarInterface
+
+  # Fingerprint discovery is outside this known-Tesla event replay.
+  with patch.dict(sys.modules, {"opendbc.car.car_helpers": types.SimpleNamespace(interfaces={CAR.TESLA_MODEL_3: CarInterface})}):
+    from openpilot.selfdrive.car.car_events import CarEvents
 
   errors, records = [], []
 
