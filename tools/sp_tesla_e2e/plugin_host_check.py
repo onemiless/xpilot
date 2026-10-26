@@ -28,8 +28,7 @@ Failure cases listed before implementation:
 - P22 a radar plugin that raises takes card down or keeps being called; the port's radar must take over
 - P23 an active source:map plugin leaves SP's OSM map processes running (two liveMapDataSP publishers),
        or a disabled one stops them
-- P24 externald bridges a provider from a disabled plugin or one without the external.provider claim,
-       or a raising provider hook takes the others down
+- P24 retired external-compute hooks/claim/services remain, or deprecated cereal ordinals/types change
 - P26 SP's four model processes lose their own conditions, run beside op_modeld, fail to resume after switching
        back, or an arbitrary role owner cannot select all, some or none of the supplied process objects
 - P27 send_msg publishes a kind the plugin has no msg:<kind> claim for, or does not record it as a fault
@@ -777,19 +776,17 @@ def source_checks(plugins, real) -> list[str]:
   if 'for name in ("mapd", "mapd_manager", "map_osm")' not in gate or 'plugins.holds(params, "source:map")' not in gate:
     errors.append("P23 fork_processes.py does not gate SP's OSM processes on source:map")
 
-  faults.clear()
-  good, unclaimed, off = types.SimpleNamespace(), types.SimpleNamespace(), types.SimpleNamespace()
-  plugins.PLUGINS = (plugin("good", ("external.provider",), "external_provider", good),
-                     plugin("unclaimed", (), "external_provider", unclaimed),
-                     plugin("off", ("external.provider",), "external_provider", off, enable="OffKey"),
-                     type("raising", (Plugin,), {"NAME": "raising", "CLAIMS": ("external.provider",),
-                                                 "external_provider": classmethod(lambda cls, p: 1 / 0)}))
-  try:
-    got = plugins.external_providers(FakeParams())
-    if got != [good] or "externald.external_provider" not in faults:
-      errors.append(f"P24 external providers {got}, faults {faults}")
-  except Exception as e:
-    errors.append(f"P24 external_providers raised {e!r}")
+  from openpilot.cereal import log
+  from openpilot.cereal.services import SERVICE_LIST
+  from openpilot.tesla import manifest
+  if (hasattr(Plugin, "external_provider") or hasattr(plugins, "external_providers") or
+      "external_provider" in manifest.HOST_CAPS["hooks"] or manifest._CLAIM_RE.fullmatch("external.provider") or
+      {"externalIn", "externalOut"} & SERVICE_LIST.keys()):
+    errors.append("P24 plugin-specific external-compute system API remains")
+  for name, ordinal in (("deprecatedExternalIn", 137), ("deprecatedExternalOut", 138)):
+    field = log.Event.schema.fields.get(name)
+    if field is None or field.proto.ordinal.explicit != ordinal or field.schema != log.Event.schema.fields["pluginMsg"].schema:
+      errors.append(f"P24 {name} ordinal/type changed")
   return errors
 
 

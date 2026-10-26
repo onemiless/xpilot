@@ -63,7 +63,7 @@ openpilot/tesla/
   plugins/sp_models/        默认模型：SP 的模型管理器和 modeld（role:perception.model）
   plugins/sp_engagement/ sp_safety_fallback/   默认接管和安全兜底
   plugins/gen_safety.py     旧 registry 生成器，仅保留作迁移参考（第 6 节）
-  store.py                  插件商店：下载、校验、安装；首次启动自动安装 DEFAULTS 里的显示插件（8c）
+  store.py                  插件商店：下载、校验、安装；首次启动自动安装索引标记的默认插件（8c）
   ui/screen.py ui/tile.py ui/tiles.py ui/slots/   大屏磁贴宿主、磁贴基类、布局模型（无 pyray）、内置磁贴（slots/settings.py 设置页磁贴）
   ui/plugin_ui.py           UI 侧插件加载：找到 Tile、HudOverlay 和 ScreenOverlay，插件关闭时隐藏
   ui/plugins_page.py ui/store_page.py   mici 设置里的"Plugins"页和商店页（小屏用）
@@ -105,6 +105,7 @@ panda/board/xpilot_rules.h   app EP2 loader
 | `settings` | 设置项：只有 key 和 label 是开关；带 `range: [最小, 最大, 步长, 单位, 除数]` 或 `choices: [[标签, 值], ...]` 是选择项；`type: "text"` / `"secret"` 是文本 / 秘密输入，见下文 |
 | `params` | 参数声明，格式见 `gen_params.py`；改完运行 `python3 openpilot/tesla/plugins/gen_params.py` |
 | `rules` | `template_clone.v1` 规则列表，字段与限制见第 6 节合同；can.tx 必须精确匹配。旧 `safety` 字段一律拒绝 |
+| `default` | 可选布尔值；`true` 由商店索引声明为首次启动自动安装包，省略为非默认；不是 enable 开关 |
 | `requires` | 可选能力需求：`{"hooks": ["setup"], "msg": ["lanes.hint"], "rule_abi": 1, "native": {"machine": "aarch64", "python": "cpython-312"}}`；每项可省略 |
 
 文本设置写成 `{"key": "MyServer", "label": "Server", "type": "text", "max_len": 64}`；秘密设置用 `"type": "secret"`，对应 `params` 必须声明 `"type": "STRING"`。`max_len` 默认 64，只接受 1–256 的整数；不能同时带 range/choices，未知 type 和不合法的 max_len 会拒载。未声明 type 的开关、range、choices 保持原语义。
@@ -139,7 +140,7 @@ card 每次启动用 `cloudlog.event("xpilot.drive_snapshot", ...)` 记录本行
 | `controller` | 控制器 | 可补充：`lat_correction`；横向控制器替换限 `role:lateral.controller` |
 | `actuation` | 执行和车端报文 | 可补充：`control_sends`，受 panda safety 限制 |
 | `safety_fallback` | 安全兜底和 Autopilot 交接 | 可替换：`role:safety.fallback`（Autopilot 交接还没做） |
-| `data_source` | 数据源和外接算力 | 可补充：`observe_can`、`radar_interface`、`external_provider` |
+| `data_source` | 数据源和外接算力 | 可补充：`observe_can`、`radar_interface`、`processes` + `pluginMsg` |
 | `alerts` | 报警 | 可补充：`alert_source` |
 | `body_comfort` | 车身和舒适 | 可补充：`observe_can`、`control_sends` |
 | `ui` | 磁贴 | 可补充：`Tile` |
@@ -176,7 +177,6 @@ card 每次启动用 `cloudlog.event("xpilot.drive_snapshot", ...)` 记录本行
 | `event.filter` | 使用 `event_filter` 钩子，只删宿主 allowlist 中的事件 | 否，按 `(priority, id)` 串联 |
 | `alert` | 使用 `alert_source` 钩子 | 否，每个级别取优先级最高插件的第一条 |
 | `lat.correction` | 使用 `lat_correction` 钩子 | 否，按优先级串联，总改动有上限 |
-| `external.provider` | 使用 `external_provider` 钩子 | 否，所有 provider 一起运行 |
 | `role:lane_change.policy` | 使用 `lane_change_policy` 钩子 | 是 |
 | `role:lateral.controller` | 替换横向控制器（`lat_controller`） | 是 |
 | `role:long.owner` | 用 `long_owner` 提议 STOCK/SP owner；必须 `requires.hooks=["long_owner"]`，不授予 CAN 或安全权限 | 是 |
@@ -231,7 +231,6 @@ Host E2E：`PYTHONPATH=tinygrad_repo python3 tools/sp_tesla_e2e/model_source_e2e
 | `event_filter(ctx, CS, names, names_sp)`（可选类方法） | selfdrived，每周期 SP 事件生成之后、独占 fallback 之前 | 声明 `event.filter`，返回 `(drop, drop_sp)` 两个列表；只接收事件名副本，不改 CarState。宿主 allowlist 首项且唯一项是普通事件 `invalidLkasSetting`，`drop_sp` 必须为空。越权、非列表或异常均记录该插件故障，后续不再调用并显示 `xpilotPluginFault`；过滤器故障不锁定两轴，保留事件使策略更严格 |
 | `safety_fallback(ctx)`（类方法） | selfdrived，启动时一次；返回对象每周期在 SP 事件和共享过滤器之后执行 | 返回带 `update(ctx, CS, names, names_sp) -> (names, names_sp)` 的对象。`ctx = SimpleNamespace(sm, CP, CP_SP, params=view(params))` 由宿主只建一次，不暴露 `selfdrive` 或事件对象。返回两份已知事件名列表（保留或增加的事件）；宿主在原 `events` / `events_sp` 对象中重建，保持报警计数，再把底线事件放回。默认插件原样返回 SP 列表。底线：踩油门/刹车/取消（pedalPressed、buttonCancel、pcmDisable）、fcw、stockAeb、stockFcw、controlsMismatch(+Lateral)、relayMalfunction、canError、canBusMissing、selfdrivedLagging、commIssue(AvgFreq)、processNotRunning、selfdriveInitializing、DM 事件、lkasDisable。DM 锁定仍由 SP 处理 |
 | `radar_interface(CP, CP_SP, params)`（类方法） | card，启动时 | 需要 `source:radar`。返回和 `RadarInterfaceBase` 接口一致的对象（`update(can_list) -> RadarData 或 None`），替换车型自带的雷达。原车雷达一直并行运行；插件出错后本次运行剩下的时间回到原车雷达 |
-| `external_provider(params)`（类方法） | externald，启动时 | 需要 `external.provider`。返回一个 provider（`poll`、`send`、`close`），见 8b |
 | `SERVICES` | plannerd、selfdrived、controlsd | 钩子需要额外订阅的服务；这些服务不参与存活和有效性检查，不会影响接管 |
 
 SP 里的调用位置：`selfdrive/car/card.py`（`CarPlugins`、`radar_interface`）、`selfdrive/controls/plannerd.py`（`services`、`plan_filters`、`plan_sink`、`long_targets`）、`sunnypilot/selfdrive/controls/lib/longitudinal_planner.py`（`apply_long_targets`）、`selfdrive/selfdrived/selfdrived.py`（`alert_sources`、`update_alerts`）、`sunnypilot/selfdrive/selfdrived/events.py`（插件报警定义，见 `openpilot/tesla/alerts.py`）、`selfdrive/controls/lib/desire_helper.py`（`lane_change_policies`、`lane_change_allowed`）、`selfdrive/controls/controlsd.py`（`lat_corrections`、`apply_lat_corrections`、`lateral_controller`）、`selfdrive/controls/lib/longitudinal_planner.py`（`apply_long_planner`）、`sunnypilot/system/fork_processes.py`（`processes`，以及 `holds(params, "source:map")` 关掉 SP 的地图进程）、`selfdrive/selfdrived/selfdrived.py`（`install_core`）、`selfdrive/car/card.py`（`core_alive`：Tesla 安装宿主后始终门控，包括默认插件；启动尚无 `selfdriveState` 时不发控制，发布后恢复；断流约 0.1 秒内停止）。
@@ -311,7 +310,6 @@ class MyTile(Tile):
 | modeld | `lane_change_policy(params)` | `role:lane_change.policy` |
 | selfdrived | `alert_source(CP, params)`，返回 `PluginAlert(severity, title, body)` | `alert` |
 | selfdrived | `event_filter(ctx, CS, names, names_sp) -> (drop, drop_sp)` | `event.filter` |
-| externald | `external_provider(params)`，返回 `Provider`（`poll`、`send`、`close`） | `external.provider` |
 
 `can_list` 每一项是 `(mono_time_ns, [(address, data, bus), ...])`；总线编号用 `opendbc.car.tesla.values.CANBUS`（`party`、`vehicle`、`autopilot_party`）。解析可以用位运算，也可以用 `opendbc.can.CANParser` 读 `opendbc/dbc/` 里的 DBC。
 
@@ -328,7 +326,7 @@ class MyTile(Tile):
 | `ui.plugin_ui.ScreenOverlay` | `update(sm)`、`draw(zones)` | 大屏行驶时的整屏叠加层 |
 | `ui.plugin_ui.HudOverlay` | Widget：`update()`、`render(rect)`；读 `ui_state.sm` | mici 行驶画面叠加层 |
 
-**消息**（插件可以读或发布）：`carStateSP` 里插件自己的字段（例 `teslaBattery`）、`liveMapDataSP` 和 `navInstruction`（地图和导航，第 8 节）、`externalIn` / `externalOut`（外接算力，8b），以及 SP 的所有服务（`carState`、`radarState`、`longitudinalPlan`、`deviceState` 等）。
+**消息**（插件可以读或发布）：`carStateSP` 里插件自己的字段（例 `teslaBattery`）、`liveMapDataSP` 和 `navInstruction`（地图和导航，第 8 节）、`pluginMsg`（插件通信，8d），以及 SP 的所有服务（`carState`、`radarState`、`longitudinalPlan`、`deviceState` 等）。
 
 **panda safety**：插件声明 ABI v1 规则，固件统一验证和执行，见第 6 节；旧 C 插件接口只供差分测试。
 
@@ -448,13 +446,12 @@ X-50 自动速度策略和 G3 横向均未实现；刷写和实车接合测试�
 - **已知问题**：地图插件开启时，Tesla 页的 "OSM Map Data" 开关仍显示原值，但不起作用。
 - **导航**：发布 `navInstruction`，再把 256×256 地图图像发到 VisionIPC 的 `mapsd` 流。
 
-## 8b. 外接算力接口（插件仓库 `plugins/external_compute/`）
+## 8b. 外接算力（插件仓库 `plugins/external_compute/`）
 
-- **消息**：`externalIn`（外部 → 设备）和 `externalOut`（设备 → 外部），类型 `ExternalData`：`source`、`kind`（如 `llm.reply`、`vision.lanes`）、`seq`、`payload`（JSON 文本）、`validForMs`（0 表示不过期）。
-- **只做建议**：外部数据不能直接控制车辆。要用它的插件订阅 `externalIn`，用 `provider.is_fresh()` 检查时效，再通过自己的钩子（如 `long_target`）和限制生效。
-- **桥接进程** `externald`：插件开启时运行，把所有 provider 收到的消息发到 `externalIn`，把 `externalOut` 转给 provider。
-- **provider 接口**（`provider.py`）：`poll(timeout)`、`send(msg)`、`close()`。现有 `tcp.py`：外部设备通过网线、USB 网卡或 WiFi 连到设备端口（默认 8770），按行发 JSON，第一行必须是 `{"hello": "<令牌>", "name": "..."}`。令牌在设备的 `/data/params/d/XpilotExternalToken`，首次启动自动生成。明文 TCP，只在可信网络上用。
-- **新增 provider**（例如调用大模型 HTTP API）：写一个插件，声明 `external.provider`，在 `external_provider(params)` 钩子里返回一个 `Provider` 子类的实例。`external_compute` 自己就用这个钩子提供 TCP provider。`externald` 只在 `external_compute` 开启时运行。
+- **纯插件**：`external_compute` 用 `process:externald` 启动自己的 TCP 桥接进程，直接创建自己的 `TcpProvider`；系统没有 provider 钩子或专用服务。`log.capnp` 的 `@137` / `@138` 保留 `ExternalData` 类型，改名 `deprecatedExternalIn` / `deprecatedExternalOut`，只供旧日志解析。
+- **消息**：复用第 8d 节的 `pluginMsg`。桥接声明 `msg:external.in`，向进程内消费者发布原 TCP 消息字典（`source`、`kind`、`seq`、JSON 文本 `payload`、`validForMs`），外层 `source` 由宿主固定为插件 id，时效沿用 TCP 消息。消费者调用 `PluginMsgs().fresh("external.in")`，只能通过自己的钩子和限制使用建议。
+- **发往外部**：发送插件声明 `msg:external.out`，用 `send_msg` 把上述 TCP 字典作为 payload 发送。桥接只转发尚未过期的 `external.out`，将字典 `source` 固定为实际发送插件 id；不会把 `external.in` 回送 TCP。当前仍受第 8d 节单发布端限制，入站和出站发布者不能同时运行；不保证并行双向传输。
+- **TCP 协议**：外部设备通过网线、USB 网卡或 Wi-Fi 连接端口（默认 8770），按行发 JSON，第一行必须是 `{"hello": "<令牌>", "name": "..."}`。令牌在插件参数 `XpilotExternalToken`，首次启动自动生成，商店参数实际在 `/data/xpilot_plugins/.params/`。明文 TCP，只在可信网络上用。扩展 provider 在插件内部完成，不新增系统钩子。
 
 ## 8c. 插件商店（`openpilot/tesla/store.py`）
 
@@ -469,12 +466,12 @@ X-50 自动速度策略和 G3 横向均未实现；刷写和实车接合测试�
 - **下载插件的参数**：不编译进 Params，而是存在 `/data/xpilot_plugins/.params/<key>`，支持 BOOL、INT、FLOAT、STRING、JSON。宿主把交给插件、开关判断和设置页的 params 都包了一层（`plugin_params.ParamsView`），插件照常用 `params.get/get_bool/put`。删除插件时参数值保留，重装后设置还在。
 - **带二进制的插件**：需要编译的代码（例如 acados 求解器）以预编译二进制发布，清单里写 `"platform": {"machine", "python"}`（由插件自己的 `build_native.py` 在目标设备上生成）。设备只显示、安装和加载平台一致的版本；升级 Python 等导致不一致时，插件被跳过并显示 "Failed"。
 - **发 CAN 的插件**：插件规则和 `can.tx` claims 必须一致，并符合设备固件 ABI（第 6 节）；旧 profile 版本由新版规则插件替代。
-- **首次启动**：`store.DEFAULTS`（speed_card、lead_card、speed_limit_card、car_tile、map_tile、clock_tile、ip_tile、blindspot_edges）在停车且能连上索引时自动安装一次，装好后设 `DoReboot` 重启生效，并写标记 `/data/xpilot_plugins/.defaults_done`；索引连不上就 30 秒后重试，不写标记。用户之后删掉的插件不会再被装回。
+- **首次启动**：插件仓库在 `plugin.json` 标记 `"default": true`，构建器将布尔标记写入 `index.json`；宿主仅按索引中的严格布尔 `true` 选择默认包，不保存插件 id 列表。标记的插件在停车且能连上索引时自动安装一次，装好后设 `DoReboot` 重启生效，并写标记 `/data/xpilot_plugins/.defaults_done`；索引连不上或尚无默认标记的条目（例如插件仓库尚未合并新索引）就 30 秒后重试，不写标记。用户之后删掉的插件不会再被装回。
 
 ## 8d. 插件间消息 `pluginMsg`
 
 - **用途**：插件之间传数据的通用通道，不用再为每个插件加 cereal 字段。已有自己 cereal 字段的插件（如 `traffic_light`）保持不变。
-- **消息**：cereal 服务 `pluginMsg`（`log.capnp` 的 `@139`，原 `customReserved13`），类型和外接算力相同，都是 `ExternalData`：`source`、`kind`、`seq`、`payload`（JSON 文本）、`validForMs`（0 表示不过期）。
+- **消息**：cereal 服务 `pluginMsg`（`log.capnp` 的 `@139`，原 `customReserved13`），类型是通用 envelope `ExternalData`：`source`、`kind`、`seq`、`payload`（JSON 文本）、`validForMs`（0 表示不过期）。
 - **发送**：`plugins.send_msg(pm, plugin, kind, payload, valid_for_ms)`，`pm` 要能发 `pluginMsg`，`plugin` 传插件类或实例。宿主填 `source` = 插件 id，插件自己改不了。清单里没有 `msg:<kind>` 声明的类型一律拒发，返回 False，并像其他越权一样记到 `XpilotPluginFaults`。
 - pluginMsg 当前只支持一个实际发布端；同一进程也不得创建多个独立发布实例。多发布者冲突目前只做故障处理，不保证原发布者继续发送。
 - **接收**：`plugins.PluginMsgs()` 订阅 `pluginMsg`（不合并），`fresh(kind)` 返回 `{来源插件 id: payload}`，每个来源只取最新一条，过了 `validForMs` 的不返回。
@@ -548,7 +545,7 @@ X-50 自动速度策略和 G3 横向均未实现；刷写和实车接合测试�
 python3 tools/sp_tesla_e2e/agnos_update_check.py                     # 实际启动/OTA19.9选择和写前保护；分区IO模拟
 python3 tools/sp_tesla_e2e/static_imports.py                         # 有没有断掉的 import
 python3 tools/sp_tesla_e2e/tile_layout_check.py                       # 大屏磁贴：网格、排布、行驶避让、编辑操作、手势、重画判断、ASCII 文字、文字适配磁贴
-python3 tools/sp_tesla_e2e/plugin_host_check.py                       # 插件宿主：出错隔离、总开关、元数据、参数、目标车速、雷达/地图/外接 provider、pluginMsg
+python3 tools/sp_tesla_e2e/plugin_host_check.py                       # 插件宿主：出错隔离、总开关、元数据、参数、目标车速、雷达/地图、旧接口移除、pluginMsg
 python3 tools/sp_tesla_e2e/manifest_check.py                          # 插件清单、资源声明、冲突裁决、代码结构（5.3）、只放核心插件（M12）
 python3 tools/sp_tesla_e2e/safety_manifest_check.py                   # rules 清单、位覆盖、所有权、表大小及 G14 编码
 python3 tools/sp_tesla_e2e/phase2_check.py                            # 插件报警、变道策略、横向修正

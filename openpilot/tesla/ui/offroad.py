@@ -163,7 +163,7 @@ def next_choice(choices: list[tuple[str, int]], value) -> int:
 
 
 def install_defaults_later(offroad, params) -> None:
-  """First boot: install store.DEFAULTS once offroad and online, then reboot so the plugins load."""
+  """First boot: install index defaults once offroad and online, then reboot so the plugins load."""
   def loop():
     while not store.defaults_done():
       if offroad() and store.install_defaults() and offroad():

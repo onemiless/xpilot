@@ -32,8 +32,7 @@ from openpilot.tesla import manifest as mf
 from openpilot.tesla.plugin_params import ParamsView, STORE_TYPES
 
 INDEX_URL = "https://raw.githubusercontent.com/onemiless/xpilot-plugins/main/index.json"
-# First boot: display plugins installed once (marker file in INSTALL_DIR, so a removed default stays removed).
-DEFAULTS = ("speed_card", "lead_card", "speed_limit_card", "car_tile", "map_tile", "clock_tile", "ip_tile", "blindspot_edges")
+# First boot: index defaults installed once; a removed default stays removed.
 DEFAULTS_DONE = ".defaults_done"
 MAX_ARCHIVE = 20 * 1024 * 1024
 TIMEOUT_S = 15
@@ -53,6 +52,7 @@ class IndexEntry:
   platform: dict | None = None  # None: pure Python; else must equal manifest.host_platform()
   installable: bool = False  # api and platform match this host and the id is not a built-in plugin
   use: str | None = None
+  default: bool = False
 
 
 def _get(url: str, limit: int) -> bytes:
@@ -77,7 +77,7 @@ def fetch_index(url: str = INDEX_URL) -> tuple[list[IndexEntry], str | None]:
   for raw in doc.get("plugins", []) if isinstance(doc, dict) else []:
     try:
       e = IndexEntry(**{f: raw[f] for f in ("id", "name", "version", "api", "category", "author", "description", "url", "sha256")},
-                     platform=raw.get("platform"), use=raw.get("use"))
+                     platform=raw.get("platform"), use=raw.get("use"), default=raw.get("default") is True)
     except (KeyError, TypeError):
       continue
     ok = e.api == mf.API_VERSION and e.id not in builtin and mf.platform_ok(e.platform)
@@ -384,12 +384,12 @@ def defaults_done() -> bool:
 
 
 def install_defaults() -> bool:
-  """Install the missing DEFAULTS and set the marker; True if any got installed. Unreachable index: no marker, retry."""
+  """Install the missing index defaults and set the marker; True if any got installed. Unreachable index: no marker, retry."""
   entries, error = fetch_index(INDEX_URL)
-  if error:
+  if error or not any(e.default for e in entries):
     return False
   have = installed_versions()
-  done = [e.id for e in entries if e.id in DEFAULTS and e.id not in have and install(e) is None]
+  done = [e.id for e in entries if e.default and e.id not in have and install(e) is None]
   mf.INSTALL_DIR.mkdir(parents=True, exist_ok=True)
   (mf.INSTALL_DIR / DEFAULTS_DONE).touch()
   return bool(done)

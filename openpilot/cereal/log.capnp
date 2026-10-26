@@ -2655,8 +2655,8 @@ struct Event {
     liveMapDataSP @115 :Custom.LiveMapDataSP;
     modelDataV2SP @116 :Custom.ModelDataV2SP;
     trafficRadarState @136 :Custom.TrafficRadarState;
-    externalIn @137 :Custom.ExternalData;
-    externalOut @138 :Custom.ExternalData;
+    deprecatedExternalIn @137 :Custom.ExternalData;
+    deprecatedExternalOut @138 :Custom.ExternalData;
     pluginMsg @139 :Custom.ExternalData;  # xpilot plugin -> plugin messages (source = plugin id, kind needs a msg:<kind> claim)
     customReserved14 @140 :Custom.CustomReserved14;
     customReserved15 @141 :Custom.CustomReserved15;

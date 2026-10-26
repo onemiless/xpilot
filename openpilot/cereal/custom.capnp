@@ -650,9 +650,8 @@ struct TrafficRadarState @0xcb9fd56c7057593a {
 }
 
 struct ExternalData @0xc2243c65e0340384 {
-  # One message to (externalOut) or from (externalIn) external compute: a laptop, an LLM server, an accelerator.
-  # Advisory only: it reaches control solely through a plugin's own checked hooks (openpilot/tesla/plugins/external_compute).
-  source @0 :Text;        # peer or provider name
+  # Generic pluginMsg envelope. Advisory data reaches control only through a plugin's checked hooks.
+  source @0 :Text;        # publishing plugin id
   kind @1 :Text;          # payload type, e.g. "llm.reply", "vision.lanes"
   seq @2 :UInt32;
   payload @3 :Text;       # JSON

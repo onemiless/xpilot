@@ -602,8 +602,3 @@ def radar_interface(CP, CP_SP, params, sp_radar):
     return sp_radar
   found = _collect(params, "radar_interface", "source:radar", "card", CP, CP_SP, params)
   return _GuardedRadar(found[0], sp_radar) if found else sp_radar
-
-
-# ---- externald: providers ----
-def external_providers(params) -> list:
-  return _collect(params, "external_provider", "external.provider", "externald", params)
