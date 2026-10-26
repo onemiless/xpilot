@@ -156,9 +156,3 @@ class Plugin:
     the source:radar claim. The port's radar keeps running alongside and takes over for good if this one raises.
     A radar that sends CAN also needs a panda safety plugin."""
     return None
-
-  @classmethod
-  def external_provider(cls, params):
-    """None, or a Provider (xpilot-plugins: plugins/external_compute/provider.py) for externald to bridge; needs the external.provider
-    claim. externald runs only while external_compute is on."""
-    return None

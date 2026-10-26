@@ -24,7 +24,6 @@ HOST_CLAIMS = {
   "models_manager": ("role:perception.model",),
   "modeld_tinygrad": ("role:perception.model",),
   "modeld_warmup": ("role:perception.model",),
-  "externald": ("external.provider",),
 }
 
 

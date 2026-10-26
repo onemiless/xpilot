@@ -20,7 +20,7 @@ Failure cases listed before implementation:
 - S16 a plugin that breaks the code layout rules (manifest.layout_problems, e.g. one file over MAX_LINES) is installed
 - S17 the UI looks for an installed plugin's ui.py under openpilot.tesla.plugins instead of xpilot_ext
 - S18 can.tx and runtime rules disagree or a valid rule plugin is refused
-- S19 first-boot defaults are not installed, or the marker is set on an unreachable index (no retry)
+- S19 index-flagged defaults are not installed, unflagged/invalid flags install, or an unreachable/unflagged index sets the marker
 - S20 the second replace fails and the old version is lost, changed or no longer discoverable
 - S21 the second replace and restore fail, and the old backup is deleted or its path is missing from the error
 - S22 install or uninstall onroad does not return "park first", changes the installed files, or shows UI success
@@ -178,6 +178,9 @@ def main() -> int:
   for pid, (_, over) in bad_safety.items():
     publish(pid, archive(pid, good_files(pid, **over)))
   publish("speed_card", archive("speed_card", good_files("speed_card")))
+  for pid, flag in (("ext_default", True), ("ext_optional", False), ("ext_invalid", "true")):
+    publish(pid, archive(pid, good_files(pid)))
+    entries[-1]["default"] = flag
   publish("ext_fat", archive("ext_fat", {**good_files("ext_fat"), "helper.py": "VALUE = 1\n" * (mf.MAX_LINES + 1)}))
   publish("ext_api", archive("ext_api", good_files("ext_api")), api=mf.API_VERSION + 1)
   here, other = mf.host_platform(), {"machine": "sparc", "python": "cpython-27"}
@@ -429,9 +432,17 @@ def main() -> int:
   store.INDEX_URL = f"{base}/missing.json"
   if store.install_defaults() or store.defaults_done():
     errors.append("S19 marker set on an unreachable index")
+  (site / "unflagged.json").write_text(json.dumps({"plugins": [{k: v for k, v in e.items() if k != "default"} for e in entries]}))
+  store.INDEX_URL = f"{base}/unflagged.json"
+  if store.install_defaults() or store.defaults_done():
+    errors.append("S19 old/unflagged index prematurely completes defaults")
   store.INDEX_URL = f"{base}/index.json"
-  if not store.install_defaults() or "speed_card" not in store.installed_versions() or not store.defaults_done():
+  if not store.install_defaults() or "ext_default" not in store.installed_versions() or not store.defaults_done():
     errors.append(f"S19 defaults not installed: {store.installed_versions()}")
+  if {"speed_card", "ext_optional", "ext_invalid"} & store.installed_versions().keys():
+    errors.append("S19 unflagged or invalid default installed")
+  if store.install_defaults():
+    errors.append("S19 installed default installed again")
 
   server.shutdown()
   print(json.dumps({"artifacts": str(TMP), "errors": errors}, indent=1))
