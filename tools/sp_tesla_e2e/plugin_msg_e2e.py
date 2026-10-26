@@ -147,9 +147,9 @@ def measure():
     # msgq resets reader registrations when its sole publisher starts; attach before the first burst.
     reader.fresh('_ready')
     collect()
-    traffic = custom.TeslaTrafficControl.new_message().to_dict()
+    traffic = custom.DeprecatedTrafficControl.new_message().to_dict()
     traffic['rawPayload'] = '0123456789abcdef'
-    payloads = [traffic, custom.TeslaBattery.new_message().to_dict(), custom.TeslaTrafficControlPlan.new_message().to_dict(), {'external': 'in+out'}]
+    payloads = [traffic, custom.DeprecatedBattery.new_message().to_dict(), custom.DeprecatedTrafficControlPlan.new_message().to_dict(), {'external': 'in+out'}]
     for sample in range(20):
       expected = [{**payloads[i], 'sample': sample} for i in range(4)]
       for i, payload in enumerate(expected):

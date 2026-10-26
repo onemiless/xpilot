@@ -208,7 +208,7 @@ struct LongitudinalPlanSP @0xf35cc4560bbf6ec2 {
   events @6 :List(OnroadEventSP.Event);
   e2eAlerts @7 :E2eAlerts;
   accelController @8 :AccelController;
-  teslaTrafficControl @9 :TeslaTrafficControlPlan;
+  deprecatedTrafficControl @9 :DeprecatedTrafficControlPlan;
 
   struct DynamicExperimentalControl {
     state @0 :DynamicExperimentalControlState;
@@ -493,10 +493,10 @@ struct BackupManagerSP @0xf98d843bfd7004a3 {
 struct CarStateSP @0xb86e6369214c01c8 {
   speedLimit @0 :Float32;
   flags @1 :UInt32;  # Optional car-module runtime flags (Tesla split-control ownership).
-  # Retired visualization field; retain ordinal/type for recorded-log compatibility.
-  teslaRoadContext @2 :TeslaRoadContext;
-  teslaTrafficControl @3 :TeslaTrafficControl;
-  teslaBattery @4 :TeslaBattery;
+  # Retired fields; retain ordinals and types for recorded-log compatibility.
+  deprecatedRoadContext @2 :DeprecatedRoadContext;
+  deprecatedTrafficControl @3 :DeprecatedTrafficControl;
+  deprecatedBattery @4 :DeprecatedBattery;
   teslaLongControl @5 :TeslaLongControl;
 }
 
@@ -508,20 +508,20 @@ struct TeslaLongControl {
   counter @4 :UInt8;
 }
 
-struct TeslaBattery {
-  available @0 :Bool;  # fresh BMS frames from the vehicle bus (bms plugin)
+struct DeprecatedBattery @0xfcb5b911bec07607 {
+  available @0 :Bool;  # Retained wire layout.
   soc @1 :Float32;  # %, as the car shows it
   voltage @2 :Float32;  # V, pack
   current @3 :Float32;  # A, pack, positive = discharging
 }
 
-struct TeslaRoadContext {
+struct DeprecatedRoadContext @0x8f6f0b45bb38c685 {
   available @0 :Bool;
   trafficLightColor @1 :UInt8;
   stopLineDistance @2 :Float32;
 }
 
-struct TeslaTrafficControl {
+struct DeprecatedTrafficControl @0x8a7b52354f67737e {
   available @0 :Bool;
   validForControl @1 :Bool;
   sourceBus @2 :UInt8;
@@ -546,7 +546,7 @@ struct TeslaTrafficControl {
   rawPayload @21 :Data;
 }
 
-struct TeslaTrafficControlPlan {
+struct DeprecatedTrafficControlPlan @0xdfbea4ae06b998b3 {
   mode @0 :UInt8;
   phase @1 :UInt8;
   active @2 :Bool;

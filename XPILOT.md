@@ -46,7 +46,7 @@ C3/C3XL 保留各自锁定的 mr-one 引导链和写前白名单校验，禁止�
 9. **提交**：在 `xpilot` 分支上，一个连贯改动一个提交，只包含这次改动的文件。只有在用户要求时才推送。
 10. **按插件拆分**：加功能就是在插件仓库加一个带 `plugin.json` 的插件目录。系统仓库的 `openpilot/tesla/plugins/` 只放核心插件，`manifest_check.py` M12 拒绝新目录。插件自动被发现，没有手写的注册表。插件内部按 5.3 拆分文件（入口 ≤150 行、其他 ≤400 行、只有 `ui.py` 画图），检查强制执行。
 11. **只用声明过的资源**：插件只能使用 `plugin.json` 里 `claims` 声明过的资源；宿主会拒绝未声明的 CAN 发送、钩子和进程。
-12. **车端数据只读、只经插件**：插件在 card 里用 `observe_can` 自己解析，再写进 `carStateSP` 里自己的字段（cereal 规则见第 7 条）；UI 和其他进程只读这些消息，不直接读 CAN。
+12. **车端数据只读、只经插件**：插件在 card 里用 `observe_can` 自己解析，经 `plugins.send_msg` 发布有限 TTL 的 `pluginMsg`（8d 节）；UI 和其他进程用 `PluginMsgs` 读取，不直接读 CAN，不新增插件专用 cereal 字段。
 13. **UI**：文字只用英文和 ASCII（设备字体没有 `‹ › · —` 等字）；磁贴只读消息、不写参数（设置写在详情页）；`hz` 按需要取最低值。
 14. **不加新依赖**：只用标准库和仓库里已有的库。商店插件需要编译的部分以预编译二进制发布（见 8c）。
 15. **推送分流**：插件的改动（`plugins/<id>/`、它的测试、`dist/`、`index.json`）只推到 `onemiless/xpilot-plugins`；系统的改动（宿主、商店、UI、核心插件、panda safety、检查脚本、文档）只推到 `onemiless/xpilot`。一个功能两边都要改时分成两个提交、两个 PR，先合系统仓库。两个仓库的默认分支都受保护：走 PR，CI 通过才能合并（管理员可以直接推）。
@@ -245,7 +245,7 @@ SP 里的调用位置：`selfdrive/car/card.py`（`CarPlugins`、`radar_interfac
 
 1. **先想清楚类型**，选最小的一种：
    - 只显示：一个 `ui.py` 磁贴或叠加层，读已有的消息。`claims` 为空，可以默认开启。
-   - 读车端数据再显示：card 钩子 `observe_can` 解析 + `publish_state` 写到 `carStateSP` 的新字段，`ui.py` 磁贴订阅 `carStateSP`。参考插件仓库的 `plugins/bms/`。
+   - 读车端数据再显示：card 钩子 `observe_can` 解析 + `publish_state` 调用 `plugins.send_msg`（声明 `msg:<kind>`、有限 TTL），`ui.py` 磁贴用 `PluginMsgs.latest(kind, source)`。参考插件仓库的 `plugins/bms/`。
    - 影响驾驶：用第 4.4 节的规划/控制钩子，声明对应 claim；能"只收紧"的就不要"替换"。
    - 发 CAN：`control_sends` + `can.tx` claim + panda 运行时规则（第 6 节）。规则数据和实现都放在插件仓库。
    - 独立进程：`processes()` + `process:<名字>` claim。参考插件仓库的 `plugins/traffic_light/`、`plugins/external_compute/`。
@@ -491,6 +491,7 @@ X-50 自动速度策略和 G3 横向均未实现；刷写和实车接合测试�
 - **超限/故障**：已认证来源的超大 payload、未声明 kind、非法时间/TTL 或限流只丢当前消息；每来源每行程最多写一次 `XpilotPluginFaults`，并在私有 socket 目录原子保存去重标记，broker 重启后沿用。行程由 deviceState.startedMonoTime 标识，停车阶段为 0。伪造/未知来源和无法归属的畸形封装直接丢弃。manager 检查已退出的 Python 进程并重新启动；broker 停止期间发送者直接丢弃，有有限 TTL 的接收缓存自然过期。TTL 0 的消息依约不过期，实时建议应设置有限 TTL。
 - **接收**：`plugins.PluginMsgs()` 非 conflate 地订阅唯一 `pluginMsg` 服务；`fresh(kind)` 返回 `{source: payload}`，每种 kind、每个来源只取最新未过期消息；`latest(kind, source)` 返回该来源最新未过期 payload，没有则为 None。
 - **只做建议**：消息只经接收方插件自己的钩子和限制生效。核心控制不等待 broker，也不以 pluginMsg 的存在或成功送达为接管条件。
+- **现有迁移（X-20261026-58）**：商店 `traffic_light` / `bms` 1.1.0 使用此接口。card 发布 `traffic.observation`（最高 20 Hz / TTL 750 ms）与 `bms.state`（最高 2 Hz / TTL 最多 2000 ms，按原始 CAN 剩余时效缩短）；trafficcontrold 读取 observation 并发布 `traffic.target`（20 Hz / TTL 350 ms），plannerd 的 `plan.filter` 读取 target 并发布 `traffic.plan` 诊断（20 Hz / TTL 350 ms）；磁贴读取各自 source。三个 traffic_light 发送进程合计约 60 Hz，共享来源预算。目标的既有本地数据构建类型保留，但不再发布 `trafficRadarState` 服务。控制算法与 plan.filter 入口不变，过期走既有退化/低速保持规则。原 CarStateSP @2/@3/@4、LongitudinalPlanSP @9 和四个结构体改名 deprecated*/Deprecated*，显式保留原 node ID、ordinal、类型和布局，不再写入。**先合并/部署含 broker 的系统，再合并/安装新插件**；旧单发布端系统的 requires.msg 仍会匹配，不能依靠能力预检保证此顺序。1.0.2 插件不兼容重命名后的字段，系统更新时须停用旧包，升级到 1.1.0 后再启用。主机证据不代表设备或道路验证。
 - **重复验证**：`python3 tools/sp_tesla_e2e/plugin_msg_e2e.py` 输出 JSON evidence；覆盖多进程、真实 Linux 凭据、伪造来源/越权 kind、流量与公平预算、TTL、manager 重启和 broker 停止时非阻塞发送。CI host-checks 同时运行；runner 缺少 native Params 库时仅参数存储使用隔离文件夹具，Linux socket、凭据、消息与重启均为真实执行。
 
 ## 9. UI（大屏，2160×1080，UI v4：磁贴）
