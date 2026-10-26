@@ -400,7 +400,7 @@ controlsd 启动时只调用一次 `plugins.long_owner_policy(params, CP, CP_SP)
 
 Host floor：目标确认 1 s，完成/拒绝后 cooldown 2 s；gas/brake/standstill/stockAeb/accFault、
 |aEgo|≥0.35、lead TTC<3 s、OEM 不活跃/过期及对应 accel 两端差>0.20 均拒绝。
-两次连续拒绝、request/ack 不符>0.5 s、健康包/策略故障后锁定切换直到 disengage；拒绝保持
+两次连续拒绝、request/ack 不符>0.5 s、pandaStates 过期、Panda 永久故障或策略故障后锁定切换直到 disengage（临时故障如 interruptRateCan2 只暂停新请求，不锁定）；拒绝保持
 ack owner，Panda reset 跟随 STOCK。CC_SP 与 CC 同周期配对；longActive/override/cancel、
 planner/LongControl 和 CAN 使用同一 owner，card 拒绝不配对消息。
 
