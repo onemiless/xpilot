@@ -16,7 +16,7 @@ arbitration: it must never be delayed by a continuity gate.
 
 I2: the gap between the last old-source frame and first new-source frame is
 inclusive **5000..80000 us** (5..80 ms). This allows a one-off phase change,
-not a counter jump. Outside handoffs OEM freshness remains 60 ms at 25 Hz.
+with a counter jump permitted only after DRAIN abort. Outside handoffs OEM freshness remains 60 ms at 25 Hz.
 Offline tests prove safety RX/TX/FWD verdicts; physical queueing, arbitration
 and bus timing require later vehicle validation.
 
@@ -25,18 +25,24 @@ SP counter 1 at 3 ms blocked with pending intact (too early); retry counter 1
 at 10 ms accepted, commits SP; OEM counter 1 at 40 ms blocked; SP counter 2
 at 50 ms accepted. Handoff gap 10 ms, counters 0,1,2.
 
-SP -> STOCK example when a matching candidate exists: SP counter 1 at 10 ms;
-stock request at 11 ms; OEM counter 1 at 40 ms blocked as duplicate; OEM counter
-2 at 80 ms admitted and commits stock; subsequent SP blocked. Gap 70 ms,
-counters 1,2. All gates and the envelope must remain valid at 80 ms.
+SP -> STOCK uses DRAIN to guarantee progress with the normal OEM+1 host
+phase lock. SP counter 1 at 10 ms; stock request at 11 ms; OEM counter 1 at
+40 ms is blocked and enters DRAIN. SP counter 2 at 50 ms is blocked. OEM
+counter 2 at 80 ms passes the gates/envelope, commits STOCK and is forwarded.
+The handoff gap is 70 ms with counters 1,2. No host cadence change is required.
 
-**Required liveness regression:** if the host sends SP counter 2 at 50 ms in
-that example (normal OEM+1 phase lock), OEM counter 2 at 80 ms is a duplicate
-again. A host that sends on every OEM frame can stay one counter ahead forever.
-The coordinator also requires no request expiry with perfect 25 Hz OEM and a
-healthy 100 Hz host; that assertion must be tested against the actual state
-machine. No implementation may report that liveness assertion as passing by
-silently omitting the intervening SP transmissions.
+While DRAIN is active, owner remains SP but host 0x2B9 TX is blocked. DRAIN
+expires at age >= **50000 us** or on any failed accept condition. Abort clears
+pending, records the refusal and restores normal SP acceptance without changing
+owner. Its next frame may jump a counter; this is the sole normal I1 exception
+and the vehicle DI is expected to tolerate it (physical validation remains).
+The 250 ms request deadline still applies throughout DRAIN.
+
+The executable property must retain every intervening host transmission and
+assert both directions commit before deadline with perfect 25 Hz OEM, healthy
+100 Hz host, every phase 0..40 ms and jitter 0..10 ms. I1/I2 apply; only DRAIN
+abort may produce an SP counter jump. The previous open liveness contradiction
+is superseded by this coordinator decision (2026-10-26).
 
 ## Authority and request (proposed ABI 1)
 
@@ -111,6 +117,7 @@ age zero; refusals to a request may still report MODE/ARGUMENT.
 | 17 | RELAY | Relay malfunction |
 | 18 | BUSY | Conflicting pending target |
 | 19 | SP_STALE | Stock target without a recent accepted SP frame |
+| 20 | DRAIN_TIMEOUT | DRAIN elapsed >= 50000 us without a valid next OEM |
 
 Validation order is mode, arguments, capability, relay, cruise, motion, AEB,
 gas, brake, Autopark, RX, OEM freshness, target-specific checks, deadline,
@@ -122,6 +129,7 @@ ownership automatically. No Params writes or policy evaluation in firmware.
 
 ## Gates and constants (proposed)
 
+- `DRAIN_TIMEOUT_US = 50000` (50 ms), expired at age >= timeout.
 - `PENDING_TIMEOUT_US = 250000` (250 ms), expired at age >= timeout.
 - `OEM_FRESH_US = 60000` (60 ms), fresh at age <= limit; OEM expected 25 Hz.
 - `SP_FRESH_US = 60000` (60 ms), required for stock takeover comparison.
@@ -162,13 +170,15 @@ commit SP and be admitted. Other SP long actuation is blocked. Capability
 without a request is not ownership. With long capability and owner STOCK, host 0x2B9 including cancel is blocked.
 Without long capability, the original non-actuating cancel-only path remains.
 
-SP -> STOCK: keep admitting SP while pending. On a validated OEM whose counter
-equals `(last_accepted_SP_counter+1) mod 8`, with gap 5000..80000 us and
-matching envelope, admit that OEM and commit STOCK atomically. A duplicate
-OEM counter equal to last SP is blocked. Block subsequent SP TX; later OEM
-continues to be forwarded. Record the SP envelope
-on actual accepted frames, not on rejected TX attempts. A missing next OEM
-cannot be called a successful gap-free physical handoff.
+SP -> STOCK: keep admitting SP while pending until a validated OEM counter
+equals `last_accepted_SP_counter` (duplicate). Block that OEM and enter DRAIN
+atomically; remember its start time and block SP TX. In DRAIN only the next OEM
+counter `(last_accepted_SP_counter+1) mod 8` with valid gates, matching envelope
+and gap 5000..80000 us commits STOCK and is forwarded. A bad counter, envelope,
+accept condition, DRAIN timeout or request deadline aborts DRAIN and clears
+pending with its refusal reason; owner stays SP and SP acceptance resumes.
+Record SP envelope/counter on actual admissions, never rejected attempts.
+A missing next OEM cannot be called a successful gap-free physical handoff.
 
 AEB has priority over normal owner routing: inspect the CURRENT OEM payload,
 forward its AEB frame even when owner SP, block host long TX, clear pending
@@ -179,7 +189,7 @@ Owner itself is not silently reversed by AEB or refusal.
 ## Reset, routing and IRQ boundaries
 
 `tesla_init`, every safety mode set and SILENT reset to STOCK, pending absent,
-age zero, reason OK, no remembered counters/envelopes. Non-Tesla mode cannot
+age zero, reason OK, DRAIN inactive, no remembered counters/envelopes. Non-Tesla mode cannot
 retain a Tesla capability. Existing heartbeat timeout -> SILENT and relay
 behavior stay unchanged. Release/debug must both honor the long capability
 bit; implementation removes only that ALLOW_DEBUG gate.
@@ -218,4 +228,4 @@ The timing reproducer and failure matrix live in
 `opendbc_repo/opendbc/safety/tests/test_tesla_long_owner_contract.py`.
 It is a requirements check, not a replacement for firmware/libsafety E2E.
 Safety, MISRA, mutation, build-size and capture replay results must identify
-the exact source and actual gate status; a failing liveness assertion is a gap.
+the exact source and actual gate status; DRAIN liveness and abort exceptions must be exercised explicitly.

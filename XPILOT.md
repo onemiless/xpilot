@@ -373,8 +373,10 @@ Panda 唯一裁决 STOCK/SP，拟用 app-only `0xA5` 请求、health 追加 owne
 限定 5–80 ms，允许一次相位变化。原车 AEB 优先，心跳丢失 SILENT 行为不变，G3 横向未实现。
 
 本分支目前只固定合同、失败矩阵和可重复时序反例，**尚未实现 G8 固件或健康包字段**。
-SP→stock 的 OEM+1 条件与持续发送 OEM+1 的主机可能活锁，必须保留真实 libsafety 回归，不能
-通过省略中间 SP 帧宣称健康主机请求不超时。后续范围和验证清单在 `handoff/X-20261026-48.md`。
+SP→stock 按协调者 DRAIN 决定：收到与最后 SP 同计数器的 OEM 时阻断并暂停 SP TX；
+下一 OEM（SP+1）通过检查后提交 STOCK 并转发。DRAIN 最长 50 ms，失败则清 pending、
+保留 SP owner 并恢复 SP TX；仅此中止路径允许 SP 计数器跳跃。请求总期限仍为 250 ms。
+真实 libsafety 回归必须保留全部中间 SP 帧并验证 25 Hz/100 Hz 全相位与抖动下的活性。
 未发布新的 HOST_CAPS/claim；X-49/X-50 尚不能依此文档启用实际控制。
 
 ## 7. 雷达接入接口
