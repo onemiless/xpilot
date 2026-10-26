@@ -52,7 +52,7 @@ CC, with CC_SP.controlMonoTime equal to the CC event timestamp; card rejects
 missing/stale/invalid or unpaired CC_SP. selfdrived/plannerd subscribe normally,
 so stale owner messages participate in communication fault checks.
 
-STOCK sends no ACC_ON/accel, with cancel-only behavior retained. The necessary
+STOCK sends no ACC_ON/accel, with cancel-only behavior retained; the panda passes a valid cancel under STOCK at any time and a cancel during pending SP clears the request (refusal DISENGAGED). The necessary
 exception is an explicit pending SP request: candidate ACC_ON frames are sent
 at 100 Hz with the same latest OEM+1 until ack, allowing retry after a <5 ms
 Panda rejection. Accepted owner remains STOCK until health commits SP.
