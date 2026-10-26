@@ -58,6 +58,7 @@ class Controls(ControlsExt):
     self.calibrated_pose: Pose | None = None
 
     self.long_owner = LongOwner(self.CP)
+    self.long_owner_policy = plugins.long_owner_policy(self.params, self.CP, self.CP_SP)
     self.LoC = LongControl(self.CP, self.CP_SP)
     self.VM = VehicleModel(self.CP)
     self.LaC: LatControl

@@ -234,11 +234,13 @@ tests/bindings, app control/health, F4/H7 CAN receive and transmit admission,
 mode/tick critical sections, Python health keys, and XPILOT.md section 6.
 X-49 owns host consumers, shadow logging and manual engaged requests. The
 X-49B optional `role:long.owner`/`long_owner` policy surface, offroad default-off
-wiper-first-detent manual proposal, ABI-gated HUD and 25 Hz rlog shadow
+four-finger vehicle-bus rising-edge manual proposal, ABI-gated HUD and 25 Hz rlog shadow
 observer are specified in [host design](xpilot-long-owner-host.md). Neither
 policy nor manual input bypasses host/Panda vetoes or changes DRAIN cadence.
-X-49A owns runtime integration; X-49B host checks are not firmware/vehicle proof. X-50 owns
-the speed policy. No source edits in selfdrive/, openpilot/, plugins or device.
+X-49C integrates X-49A runtime, X-49B policy/manual/HUD and these X-48 firmware
+commits. It enables A5 only for the exact health hash above; old firmware remains
+pinned. Host checks are not vehicle proof. X-50 owns the speed policy. No device
+or flash is performed.
 
 Old fork reference, read-only at
 `onemiless/opendbc@65cc8fdbcb6aaaf0533ba296c9e6fe5422a696e8`: tesla.h uses an
@@ -254,10 +256,10 @@ build proof is recorded separately; it does not simulate physical CAN output.
 Safety, MISRA, mutation, build-size and capture replay results must identify
 the exact source and actual gate status; DRAIN liveness and abort exceptions must be exercised explicitly.
 
-## X-20261026-49A host integration
+## X-20261026-49C host integration
 
 Host controlsd/card/CAN owner and veto implementation, runtime reader audit,
-49B hook/claim/HOST_CAPS boundary and verification limits are documented in
+exclusive hook/claim/HOST_CAPS and four-finger manual latch and verification limits are documented in
 [xpilot-long-owner-host.md](xpilot-long-owner-host.md). The executable Python
 model now implements DRAIN, including intervening host sends, abort and AEB
 exceptions; it does not replace the firmware's actual RX/TX/FWD tests.

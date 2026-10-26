@@ -59,7 +59,7 @@ Run from the repo root with the openpilot python env. Native-only modules (Param
 - P47 no rules or a disabled plugin explicitly replaces a stale table with an empty table
 - P48 a critical rule-owner fault raises the rules feature fault for pandad revocation
 - P49 long.owner constructor/desired raises, returns a bad value, runs again after fault or restart, or loses exclusivity
-- P50 manual off/old ABI/disengaged/held/unknown input requests a switch; a press toggles more than once
+- P50 four-finger edge: off/old ABI/disengaged/held/stale/wrong-bus/malformed input toggles; 3/5 fingers or wipers toggle; MADS 3-finger collides
 - P51 shadow logs non-SP/old ABI/stale/wrong bus/malformed CAN or exceeds 25 Hz; OEM endpoints/counter or SP accel are lost
 """
 import ast
@@ -312,8 +312,8 @@ def long_owner_checks(plugins):
   def can(address, data, bus, ms):
     batch.append(types.SimpleNamespace(logMonoTime=ms * 1_000_000,
       can=[types.SimpleNamespace(address=address, dat=data, src=bus)]))
-  def stalk(value, ms):
-    can(0x249, (value << 14).to_bytes(3, 'little'), 0, ms)
+  def touch(value, ms):
+    can(0x3DF, bytes([0, 0, 0, value, 0, 0, 0, 0]), 1, ms)
   class Params(FakeParams):
     def put(self, key, value, block=False):
       self.values[key] = value
@@ -357,31 +357,54 @@ def long_owner_checks(plugins):
       params = Params({'XpLongOwnerManual': True})
       policy = plugins.long_owner_policy(params, CP, None)
       outputs = []
-      for value in (0, 1, 1, 2, 1, 0, 1):
-        stalk(value, 100)
+      for value in (0, 4, 4, 5, 4, 0, 4):
+        touch(value, 100)
         outputs.append(policy(ctx, cs))
-      assert outputs == [None, 'sp', None, None, None, None, 'sp'], ('P50 press', outputs)
+      assert outputs == [None, 'sp', None, None, 'sp', None, 'sp'], ('P50 press', outputs)
       ctx.owner = 'sp'
-      stalk(0, 100)
+      touch(0, 100)
       policy(ctx, cs)
-      stalk(1, 100)
+      touch(4, 100)
       assert policy(ctx, cs) == 'stock', 'P50 reverse'
       for available, enabled, on in ((False, True, True), (True, False, True), (True, True, False)):
         ctx.available, ctx.enabled = available, enabled
         params = Params({'XpLongOwnerManual': on})
         policy = plugins.long_owner_policy(params, CP, None)
-        for value in (0, 1, 1, 0):
-          stalk(value, 100)
+        for value in (0, 4, 4, 0):
+          touch(value, 100)
           assert policy(ctx, cs) is None, 'P50 gate'
       ctx.available, ctx.enabled, ctx.owner = True, True, 'stock'
       params = Params({'XpLongOwnerManual': True})
       policy = plugins.long_owner_policy(params, CP, None)
-      stalk(1, 100)
+      touch(4, 100)
       assert policy(ctx, cs) is None, 'P50 initial held'
-      stalk(3, 100)
-      policy(ctx, cs)
-      stalk(1, 100)
-      assert policy(ctx, cs) is None, 'P50 SNA is not release'
+      for address, data, bus, ms in ((0x3DF, bytes([0, 0, 0, 0, 0, 0, 0, 0]), 0, 100),
+          (0x3DF, b'bad', 1, 100), (0x3DF, bytes(8), 1, -1),
+          (0x249, (1 << 14).to_bytes(3, 'little'), 0, 100)):
+        can(address, data, bus, ms)
+        assert policy(ctx, cs) is None, 'P50 invalid/wiper'
+      touch(4, 100)
+      assert policy(ctx, cs) is None, 'P50 invalid input must not rearm'
+      for value in (3, 5, 0):
+        touch(value, 100)
+        assert policy(ctx, cs) is None, 'P50 exact four fingers'
+      touch(4, 100)
+      assert policy(ctx, cs) == 'sp', 'P50 rising edge after other counts'
+      from opendbc.car import Bus, structs
+      from opendbc.sunnypilot.car.tesla.carstate_ext import CarStateExt
+      from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
+      ext = CarStateExt(CP, structs.CarParamsSP(flags=TeslaFlagsSP.HAS_VEHICLE_BUS | TeslaFlagsSP.MADS_SCREEN_BUTTON_3_FINGER))
+      ext.can_define = types.SimpleNamespace(dv={'DI_state': {'DI_speedUnits': {0: 'KPH'}},
+                                                'DAS_status': {'DAS_fusedSpeedLimit': {0: 'NONE'}}})
+      parsers = {Bus.adas: types.SimpleNamespace(vl={'UI_status2': {'UI_activeTouchPoints': 0}}),
+                 Bus.party: types.SimpleNamespace(vl={'DI_state': {'DI_speedUnits': 0}}),
+                 Bus.ap_party: types.SimpleNamespace(vl={'DAS_status': {'DAS_fusedSpeedLimit': 0}})}
+      for value in (0, 4, 0, 3):
+        parsers[Bus.adas].vl['UI_status2']['UI_activeTouchPoints'] = value
+        state, state_sp = structs.CarState(), structs.CarStateSP()
+        ext.update(state, state_sp, parsers)
+        assert any(e.pressed and e.type == structs.CarState.ButtonEvent.Type.lkas for e in state.buttonEvents) == (value == 3), 'P50 MADS exact count'
+
       logs = []
       with patch.object(long_owner.cloudlog, 'event', side_effect=lambda name, **kw: logs.append((name, kw))), \
            patch.object(long_owner.time, 'monotonic_ns', return_value=1_000_000_000):

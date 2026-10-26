@@ -13,7 +13,8 @@ LO9: planner/LongControl not seeded or takeover exceeds +.6/-1.5 m/s^3 in 1 s.
 LO15: runtime readers use startup capability, or settings mutate on switches.
 LO16: DRAIN fails either direction at any phase 0..40 ms/jitter 0..10 ms;
        I1/I2 fail; abort changes owner or a non-abort permits a counter jump.
-LO11-14 (HUD/shadow/manual/claim registration) belong to 49B, not this gate.
+LO17: real manual/hook pulse is lost before debounce, overrides veto/lock/cooldown, repeats after ack/refusal/disengage.
+LO18: merged 54-byte health fails A5 or old 49-byte health crashes/unlocks it.
 
 The Panda below is a Python contract model, NOT firmware or physical proof.
 Host replay calls production controlsd/card/controller with deterministic inputs.
@@ -308,6 +309,9 @@ def host_replay():
     c.calibrated_pose, c.steer_limited_by_safety, c.plugin_lat = None, False, []
     c.get_lat_active = lambda sm: True
     c.long_owner = long_owner.LongOwner(CP)
+    c.long_owner_policy = lambda *a: None
+    c.long_owner_policy.manual_target = None
+    c.long_owner_policy.faulted = False
     c.sm = SM(**sm)
     c.sm['pandaStates'] = [log.PandaState.new_message(safetyModel='tesla', longOwnerAvailable=available, longOwner=owner)]
     c.sm.update(vehicleParameters=log.VehicleParameters.new_message(stiffnessFactor=1., steerRatio=15.),
@@ -524,6 +528,140 @@ def planner_replay():
           'a_target': float(planner.output_a_target)}
 
 
+
+def integration_replay():
+  from openpilot.cereal import custom, log
+  from opendbc.car.tesla.interface import CarInterface
+  from openpilot.selfdrive.controls.lib.long_owner import LongOwner
+  from openpilot.tesla import plugins
+  from openpilot.tesla import long_owner as policy_module
+  from panda import Panda as PandaUSB
+  import struct
+
+  CP = CarInterface.get_non_essential_params('TESLA_MODEL_Y')
+  CP.openpilotLongitudinalControl = True
+  health = log.PandaState.new_message(safetyModel='tesla', longOwnerAvailable=True, longOwner=0)
+  cs = NS(aEgo=.1, gasPressed=False, brakePressed=False, standstill=False, stockAeb=False,
+          accFaulted=False, cruiseState=NS(enabled=True))
+  oem = NS(monoTime=1, accState=4, accelMin=.1, accelMax=.1)
+  sm = SM(carState=cs, longitudinalPlan=NS(), pandaStates=[health], selfdriveState=NS(enabled=True), carStateSP=NS(teslaLongControl=oem),
+          radarState=log.RadarState.new_message())
+  batch, rows = [], []
+  class Params:
+    def get(self, key, *a, **kw):
+      return None
+    def get_bool(self, key):
+      return key == 'XpLongOwnerManual'
+  def touch(value, t):
+    batch.append(NS(logMonoTime=int(t*1e9), can=[NS(address=0x3df, src=1, dat=bytes([0,0,0,value,0,0,0,0]))]))
+  def drain(*a):
+    out = batch[:]
+    batch.clear()
+    return out
+  from openpilot.tesla.plugin import Plugin
+  proposal = [None]
+  calls = []
+  class Policy(Plugin):
+    NAME, CLAIMS, PRIORITY = 'integration_owner', ('role:long.owner',), 100
+    @classmethod
+    def long_owner(cls, CP, CP_SP, params):
+      calls.append('build')
+      def desired(ctx, CS):
+        calls.append((ctx.available, ctx.owner, ctx.enabled, ctx.sp_accel))
+        if isinstance(proposal[0], Exception):
+          raise proposal[0]
+        return proposal[0]
+      return NS(desired=desired)
+  clock = [1.]
+  with patch.object(plugins, 'PLUGINS', (Policy,)), patch.object(plugins, 'record_fault'), patch.object(policy_module.messaging, 'sub_sock', return_value=None), \
+       patch.object(policy_module.messaging, 'drain_sock', side_effect=drain), \
+       patch.object(policy_module.time, 'monotonic_ns', side_effect=lambda: int(clock[0]*1e9)):
+    policy = plugins.long_owner_policy(Params(), CP, None)
+    ctx = NS(CP=CP, sm=sm, LoC=NS(last_output_accel=.1), long_owner=LongOwner(CP), long_owner_policy=policy)
+    def tick(t, fingers=None):
+      clock[0] = t
+      if fingers is not None:
+        touch(fingers, t)
+      sm.logMonoTime['pandaStates'] = oem.monoTime = int(t*1e9)
+      out = custom.CarControlSP.new_message()
+      ctx.long_owner.update(ctx, cs, out, t)
+      rows.append([t, fingers, str(out.longOwner), out.longOwnerRequest, out.longOwnerRefusal])
+      return out
+    tick(1, 0)
+    assert tick(1.01, 4).longOwnerRequest == 255
+    assert tick(2.0).longOwnerRequest == 255
+    proposal[0] = 'stock'
+    assert tick(2.02).longOwnerRequest == 1, 'LO17 one-cycle pulse lost'
+    proposal[0] = None
+    health.longOwner = 1
+    assert str(tick(2.1).longOwner) == 'sp'
+    assert ctx.long_owner.manual_target is None
+    tick(2.2, 0)
+    tick(2.21, 4)
+    assert tick(3.22).longOwnerRequest == 255, 'LO17 cooldown'
+    assert tick(4.11).longOwnerRequest == 0
+    health.longOwnerRefusal = 15
+    assert tick(4.2).longOwnerRequest == 255
+    assert ctx.long_owner.manual_target is None
+    assert tick(7).longOwnerRequest == 255, 'LO17 refusal must clear pulse'
+    tick(7.1, 0)
+    tick(7.11, 4)
+    cs.gasPressed = True
+    assert tick(8.12).longOwnerRefusal == 'gas'
+    assert ctx.long_owner.manual_target is None
+    cs.gasPressed = False
+    assert tick(12).longOwnerLocked, 'LO17 second refusal lock'
+    sm['selfdriveState'].enabled = False
+    tick(12.1, 0)
+    assert ctx.long_owner.manual_target is None
+    sm['selfdriveState'].enabled = True
+    tick(12.2, 4)
+    sm['selfdriveState'].enabled = False
+    tick(12.3)
+    sm['selfdriveState'].enabled = True
+    assert tick(15).longOwnerRequest == 255, 'LO17 disengage must clear pulse'
+    health.longOwnerAvailable = False
+    tick(15.1, 0)
+    assert tick(15.2, 4).longOwnerRequest == 255
+    health.longOwnerAvailable = True
+    sm['selfdriveState'].enabled = False
+    tick(16, 0)
+    sm['selfdriveState'].enabled = True
+    proposal[0] = RuntimeError('hook failure')
+    assert tick(16.1, 4).longOwnerLocked, 'LO17 hook fault must lock and suppress manual'
+    assert ctx.long_owner.manual_target is None
+    assert calls.count('build') == 1, 'LO17 policy rebuilt per cycle'
+
+  # Byte-exact Python transport, no USB/device access.
+  packets, requests = [], []
+  def read(kind, request, target, index, size):
+    if request == 0xd2:
+      return packets.pop(0)
+    requests.append((request, target))
+    return struct.pack('<BBBBHH', 1, 0, target, 0, 0, 0)
+  usb = PandaUSB.__new__(PandaUSB)
+  usb._handle = NS(controlRead=read)
+  usb.get_type = lambda: b'\x07'
+  usb.health_version = PandaUSB.HEALTH_PACKET_VERSION
+  assert PandaUSB.HEALTH_STRUCT.size == 54
+  values = [0] * 26
+  values[23] = 255
+  packets.append(PandaUSB.HEALTH_STRUCT.pack(*values))
+  assert usb.health()['tesla_long_pending'] == 255
+  assert usb.request_long_owner(1)['pending'] == 1
+  usb.health_version = 3398409903
+  packets.append(struct.pack('<IHHIIIIIHBBHBHBBHHHHBB', *([0]*22)))
+  assert 'tesla_long_owner' not in usb.health(), 'LO18 old health must remain legacy'
+  try:
+    usb.request_long_owner(1)
+  except RuntimeError:
+    pass
+  else:
+    raise AssertionError('LO18 old firmware received A5')
+  assert requests == [(0xa5, 1)]
+  return {'manual_trace': rows, 'health_version': PandaUSB.HEALTH_PACKET_VERSION, 'health_size': 54, 'requests': requests}
+
+
 def main():
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument('--output', required=True, type=Path)
@@ -531,8 +669,8 @@ def main():
   args.output.mkdir(parents=True, exist_ok=True)
   result = {'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
             'scope': 'deterministic host replay and Python Panda model; no device/firmware/physical proof',
-            'checks': {}, 'deferred': ['LO11-14: 49B HUD/shadow/manual/plugin registration']}
-  for name, check in [('LO16_DRAIN', drain_replay), ('LO1_10_15_host', host_replay), ('LO9_planner', planner_replay)]:
+            'checks': {}, 'deferred': ['Physical handoff, multiprocess IPC and real rlog capture']}
+  for name, check in [('LO16_DRAIN', drain_replay), ('LO1_10_15_host', host_replay), ('LO9_planner', planner_replay), ('LO17_18_integration', integration_replay)]:
     try:
       result['checks'][name] = {'rc': 0, 'evidence': check()}
     except Exception:

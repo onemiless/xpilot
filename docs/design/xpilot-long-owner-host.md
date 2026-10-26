@@ -1,13 +1,13 @@
-# G8 host contract (X-20261026-49A)
+# G8 host contract (X-20261026-49C)
 
 The wire authority is [xpilot-long-owner.md](xpilot-long-owner.md), including
-DRAIN. Panda alone commits STOCK/SP. No device or firmware change in 49A.
+DRAIN. Panda alone commits STOCK/SP. This integration includes X-48 firmware commits; no device or flash.
 
 ## Transport and schema
 
 The X-49 version/hash-gated health/A5 consumer is unchanged. Only the exact
-jointly built 54-byte health ABI enables requests; the dependency at this base
-still has the 49-byte header. Initial legacy firmware pins today's CP-selected
+jointly built X-48 54-byte health ABI enables requests: hash `0x25f8efcd`
+(637071309). The merged health header and both consumers match. Initial legacy firmware pins today's CP-selected
 owner and exact CAN cadence. Once the ABI has been observed, loss of that ABI
 selects STOCK and locks switching; it cannot reopen the legacy SP branch.
 `carControlSP.longOwnerAvailable` therefore also remains set after ABI loss to
@@ -20,13 +20,12 @@ host frame time. The parser's validated receive timestamp supplies freshness;
 
 ## Policy, veto and acknowledgment
 
-`selfdrive/controls/lib/long_owner.py:desired_owner(ctx, CS)` is the plain 49B
-hook point, returning None (no request), `stock` or `sp`. Production returns None;
-the replay substitutes a test policy. ctx is Controls with CP/CP_SP, sm and LoC.
-No plugin code, claim or HOST_CAPS is registered in 49A. 49B owns the exclusive
-`role:long.owner` registration, manifest/required-hook validation and capability
-advertisement together, under the explicit `openpilot/tesla/` scope boundary.
-Generic role syntax alone does not make this hook available to plugins.
+`selfdrive/controls/lib/long_owner.py:desired_owner(ctx, CS)` calls the exclusive
+`plugins.long_owner_policy(params, CP, CP_SP)` callable, built once at controlsd
+startup. It returns None (no proposal), `stock` or `sp`. The policy receives the
+health-owned LongOwner context with available, owner, enabled, sp_accel and sm.
+The optional `role:long.owner`, manifest required-hook validation and HOST_CAPS
+advertisement ship together. No policy leaves health ownership unchanged.
 
 controlsd follows the single Tesla Panda's acknowledged owner. A desired target
 must remain unchanged for 1 s, and every completion/refusal starts a 2 s cooldown.
@@ -89,7 +88,7 @@ never starts a takeover ramp, preserving today's behavior.
 | sunnypilot car/interfaces._cleanup_unsupported_params | Startup capability; retained, never called for an owner switch |
 | speed_limit/helpers.set_speed_limit_assist_availability | Capability/setting availability, retained; no per-switch Params mutation |
 | VCruiseHelper initialization, button timers, SP cruise minimum/enabled policy | Configured PCM/button semantics, retained; stock speed branch explicitly wins |
-| 49B UI, shadow observer and policy readers | Outside 49A; must consume CC_SP, no claim of implementation here |
+| UI, shadow observer and policy readers | Same health-owned context / live valid CC_SP; no CP owner inference |
 
 ## Evidence and limits
 
@@ -104,14 +103,11 @@ is a reported gap. SCC/map/boost policies are stubbed in that focused MPC replay
 LO16 is a Python Panda contract model across phase 0..40 ms / jitter 0..10 ms,
 with all intervening host sends, I1/I2, early retry, DRAIN abort and AEB exception.
 It is not libsafety, multiprocess IPC, physical bus timing or vehicle proof.
-LO11-14 (HUD/shadow/manual/plugin registry) remain 49B work. G3 and X-50 remain
-separate. Firmware/header integration and matching health ABI remain required.
-The original step 1 transport alone cannot enable a plugin. The 49B surface
-below adds the optional policy hook, manual setting and observer; it still
-requires 49A runtime integration and jointly built firmware. Legacy firmware retains the
-pre-G8 owner/cadence behavior. G3 mixed lateral and X-50 speed policy are separate.
-
-## G8 plugin surface (X-20261026-49B)
+LO17/18 execute the real collector/manual-to-host path, one-cycle latch, veto,
+cooldown, refusal/ack/disengagement/fault reset and new/legacy Python health/A5.
+plugin_host_check covers hook/manual/HUD companion contracts. X-48 supplies
+real libsafety G8 tests; G3 and X-50 remain separate.
+## G8 plugin surface (X-20261026-49B + 49C)
 
 `Plugin.long_owner(CP, CP_SP, params)` returns None or an object exposing
 `desired(ctx, CS) -> None | "stock" | "sp"`. The exclusive claim is
@@ -136,23 +132,26 @@ promoted after a fault. A failed call returns None, retaining owner.
 
 Core `XpLongOwnerManual` is a persistent BOOL default 0, editable only offroad
 in both Tesla settings pages and sampled when creating the callable. The
-trigger is left-stalk wiper button **first detent**, SCCM_leftStalk 0x249 on
-bus 0, bits 14..15 = 1 (`1ST_DETENT`). This does not overlap the current
-MADS/LKAS screen-touch input or the cruise cancel path. It still performs the
-OEM wiper action; there is no frame suppression. Vehicles without that stalk
-message have no manual trigger. Observe a real release (0) before arming;
-first detent proposes the other acknowledged owner once per press. Holding,
-second detent (2), SNA (3), initial held input, malformed/wrong-bus/stale (>100
-ms) input cannot retrigger. No proposal unless engaged and ABI available.
+trigger is the rising edge of exactly four active touches on the vehicle bus:
+`UI_status2` 0x3DF bus 1, `UI_activeTouchPoints` byte 3 (the same signal
+CarStateExt already parses). A fresh 8-byte frame and an observed non-four
+sample are required before arming; an initial/continued four-finger hold cannot
+retrigger. Stale (>100 ms), wrong-bus or malformed frames cannot arm or fire.
+Three/five fingers do not propose an owner change. MADS retains exact configured
+count matching; four fingers cannot activate the three-finger MADS option.
+MADS configured to four fingers shares the gesture; choose three/five when using
+manual longitudinal switching. The wiper button keeps only its stock function.
+No proposal unless engaged and the health ABI is available.
 Manual takes precedence over a valid plugin proposal in the same cycle;
 a plugin fault suppresses that cycle's proposal.
 
-**49A integration contract:** manual proposals are one-cycle pulses. The caller
-must latch the proposed target through its 1 s desired debounce (and clear it
-on acknowledgement/disengagement); do not discard it on the next None.
-Both manual and plugin proposals must pass every host veto, cooldown, request
-lock and Panda acknowledgement gate. A proposal is never a handoff proof.
-49B does not edit controlsd/card/carcontroller; their integration remains 49A.
+Manual proposals are one-cycle pulses, marked separately by the collector.
+The host holds the manual target ahead of subsequent plugin proposals through
+the 1 s desired debounce and pending request. Health commit, host/Panda refusal,
+lock or disengagement clears it. None from a plugin never invents a new manual
+edge. Both proposal sources pass every host veto, cooldown, lock and Panda
+acknowledgement gate. A hook call fault suppresses the manual pulse and locks
+switching until disengage; the faulted policy stays disabled for the drive.
 
 Core `LongOwnerChip` uses the existing HudOverlay discovery/render path on
 both big screen and mici. UI subscribes carControlSP and draws only a live,
@@ -170,4 +169,4 @@ no service/schema/uploader is added. Samples are observations, not validated
 safety admissions. Missing frames are not synthesized; late backlogs are not
 replayed at burst rate. These logs cannot prove physical actuation or DRAIN
 liveness. Host fixtures exercise decoded fields/rate/gates; real rlog capture
-and 49A+firmware end-to-end handoff still require later integration.
+and physical host/firmware handoff still require later vehicle validation.
