@@ -102,10 +102,14 @@ panda/board/xpilot_rules.h   app EP2 loader
 | `priority` | 数字越小越优先：争同一个独占资源时它赢；同类插件的执行顺序也按它，数字相同按 id |
 | `enable_param` | BOOL 总开关；`null` 表示一直开启。关闭时 card 不创建插件、进程不启动、plan filter/目标车速不加载、UI 不显示。车端下一次行程生效，UI 1 秒内生效 |
 | `claims` | 要用的资源，见下表；没声明的一律被拒绝 |
-| `settings` | 设置项：只有 key 和 label 是开关；带 `range: [最小, 最大, 步长, 单位, 除数]` 或 `choices: [[标签, 值], ...]` 是选择项 |
+| `settings` | 设置项：只有 key 和 label 是开关；带 `range: [最小, 最大, 步长, 单位, 除数]` 或 `choices: [[标签, 值], ...]` 是选择项；`type: "text"` / `"secret"` 是文本 / 秘密输入，见下文 |
 | `params` | 参数声明，格式见 `gen_params.py`；改完运行 `python3 openpilot/tesla/plugins/gen_params.py` |
 | `rules` | `template_clone.v1` 规则列表，字段与限制见第 6 节合同；can.tx 必须精确匹配。旧 `safety` 字段一律拒绝 |
 | `requires` | 可选能力需求：`{"hooks": ["setup"], "msg": ["lanes.hint"], "rule_abi": 1, "native": {"machine": "aarch64", "python": "cpython-312"}}`；每项可省略 |
+
+文本设置写成 `{"key": "MyServer", "label": "Server", "type": "text", "max_len": 64}`；秘密设置用 `"type": "secret"`，对应 `params` 必须声明 `"type": "STRING"`。`max_len` 默认 64，只接受 1–256 的整数；不能同时带 range/choices，未知 type 和不合法的 max_len 会拒载。未声明 type 的开关、range、choices 保持原语义。
+
+两套设置页复用 Wi-Fi 键盘，只允许停车编辑，提交时再次检查停车状态。text 预填当前值；secret 每次打开为空，行内有值固定显示 `******`、无值显示 `Not set`，不显示原值或原值长度。输入只接受可打印 ASCII（0x20–0x7e，允许空格和空字符串），超过 max_len 或非法字符会保留原输入并显示短错误；取消不写入，确认空字符串可清空。秘密键盘始终遮罩且不短暂回显最后一个字符。插件沿用 `ParamsView.get/put`，商店参数仍存 `.params` 文件、不新增编译 key；secret 是显示保护，不增加存储加密。设置路径不记录值到日志或故障文本。G2 配对码控件另做。
 
 清单有错（id 不对、类别未知、use 缺失或无效、api 不匹配、资源格式错、JSON 坏了）或代码导入失败的插件会被跳过，在 Plugins 页顶部显示 "Failed: <id>"，不影响其他插件。
 

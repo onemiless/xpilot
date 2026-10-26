@@ -50,6 +50,11 @@ settings actions, store refresh/install, or reboot/reset/uninstall confirmation.
 25. A HUD button tap does not toggle/save/reload visibility, or a box-body tap changes visibility/saved layout.
 26. A drag starting on a HUD button moves/toggles/saves the box or view, or a body drag stops moving the box.
 27. HUD buttons overlap each other or leave the screen, including coincident boxes and view-edge positions.
+28. Either settings page omits text/secret rows, fails to prefill text/clear secret, or cannot save through ParamsView.
+29. Non-printable/non-ASCII/overlong touch or hardware input changes the keyboard/param instead of preserving it with an error.
+30. Secret content or its stored length appears in row/keyboard draw calls or logs, including immediately after typing.
+31. Onroad row entry or confirmation after an offroad->onroad transition writes a setting.
+32. Empty secret lacks Not set, Cancel changes storage, or existing BOOL/range/choices controls change.
 """
 import argparse
 from copy import deepcopy
@@ -63,7 +68,7 @@ import sys
 
 
 def host_check(output):
-  """Mac GPU composition: real host, NetworkUI and keyboard; fake services, fixture tiles and camera, no device IO."""
+  """Host GL composition: real host, NetworkUI and keyboard; fake services, fixture tiles and camera, no device IO."""
   import logging
   import os
   import types
@@ -87,7 +92,7 @@ def host_check(output):
   sys.modules['openpilot.selfdrive.ui.ui_state'] = types.SimpleNamespace(
     ui_state=state, UIStatus=types.SimpleNamespace(DISENGAGED=0, ENGAGED=1, LAT_ONLY=2, LONG_ONLY=3),
     ChestnutState=types.SimpleNamespace(LOADING=1, UNCOMPILED=2, FAILED=3, ACTIVE=4), device=types.SimpleNamespace(awake=True))
-  sys.modules['openpilot.sunnypilot.hardware.profile'] = types.SimpleNamespace(HardwareProfile=types.SimpleNamespace(C3XL='c3xl'), get_hardware_profile=lambda: 'pc')
+  sys.modules['openpilot.sunnypilot.hardware.profile'] = types.SimpleNamespace(HardwareProfile=types.SimpleNamespace(C3XL='c3xl'), get_hardware_profile=lambda: 'pc', has_driver_camera=lambda: True)
   import pyray as rl
   from openpilot.system.ui.lib.application import gui_app, FontWeight, MouseEvent, MousePos
   from openpilot.system.ui.widgets import Widget
@@ -290,6 +295,118 @@ def host_check(output):
     gui_app.pop_widgets_to(main, instant=True)
     host._stack = []
     frame()
+    try:
+      import contextlib
+      import io
+      from openpilot.tesla import manifest as mf
+      from openpilot.tesla.plugin_params import ParamsView
+      from openpilot.tesla.ui.pages.base import ListPage, SettingRow
+      from openpilot.tesla.ui.settings_page import SettingsList
+      from openpilot.system.ui.widgets.keyboard import Keyboard, ENTER_KEY
+      from openpilot.tesla.ui.settings_meta import setting_label
+      fixture = Path(sandbox.name) / 'g6_fixture'
+      fixture.mkdir()
+      keys = ('G6Text', 'G6Secret')
+      (fixture / 'plugin.json').write_text(json.dumps({'id': 'g6_fixture', 'api': 1, 'category': 'tools',
+        'use': 'both', 'entry': 'plugin:P', 'params': {key: {'type': 'STRING'} for key in keys},
+        'settings': [{'key': keys[0], 'label': 'Server name', 'type': 'text', 'max_len': 8},
+                     {'key': keys[1], 'label': 'Access token', 'type': 'secret', 'max_len': 8}]}))
+      manifest = mf.parse(fixture / 'plugin.json')
+      settings = manifest.settings
+      from openpilot.tesla import plugins
+      plugins.INSTALLED_SPECS.update(manifest.params)
+      if not all(getattr(s, 'type', None) in ('text', 'secret') for s in settings):
+        raise AssertionError('28 text/secret manifest metadata missing')
+      values = ParamsView(params)
+      values.put(keys[0], 'host')
+      sentinel = 'G6s3cr!'
+      values.put(keys[1], sentinel)
+      captured, drawn = io.StringIO(), []
+      original_draw = rl.draw_text_ex
+      def capture_draw(font, text, *args):
+        drawn.append(text)
+        return original_draw(font, text, *args)
+      rl.draw_text_ex = capture_draw
+      try:
+        with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+          for variant in ('native', 'mici'):
+            if variant == 'native':
+              page = ListPage()
+              rows = [SettingRow(s) for s in settings]
+              page.add(*(row.item for row in rows))
+              open_row = lambda i: rows[i].item.callback()
+            else:
+              page = SettingsList(settings)
+              open_row = lambda i: page._choose(settings[i])
+            host._open('Plugin settings', page)
+            frame(name='g6-' + variant + '-text-secret-rows')
+            check('******' in drawn and sentinel not in drawn, '30 secret row content visible')
+            open_row(0)
+            editor = gui_app.get_active_widget()
+            check(isinstance(editor, Keyboard) and editor.text == 'host', '28 text keyboard not prefilled')
+            frame()
+            rl.begin_texture_mode(target)
+            with host._native([]):
+              editor.render(rl.Rectangle(0, 0, 536, 240))
+            rl.end_texture_mode()
+            key_rect = editor._all_keys['a'].rect
+            check(key_rect.height > 0 and (key_rect.y + key_rect.height) * 240 / 1080 <= 240,
+                  '28 keyboard keys do not fit mici')
+            frame()
+            box = editor._input_box
+            for bad in ('\n', '\x7f', 'é', '12345'):
+              before = editor.text
+              box.add_char_at_cursor(bad)
+              check(editor.text == before and bool(editor._sub_title._text), '29 invalid input changed text/no error')
+            editor.handle_key_press('a')
+            editor._key_callback(ENTER_KEY)
+            check(values.get(keys[0]) == 'hosta', '28 text edit not stored through ParamsView')
+            open_row(1)
+            editor = gui_app.get_active_widget()
+            check(isinstance(editor, Keyboard) and editor.text == '', '28 secret keyboard prefilled')
+            frame()
+            for key in sentinel:
+              editor.handle_key_press(key)
+              check(key not in editor._input_box._get_display_text(), '30 secret typed character echoed')
+            frame(name='g6-' + variant + '-secret-keyboard')
+            check(sentinel not in drawn, '30 secret visible in draw calls')
+            editor._key_callback(ENTER_KEY)
+            check(values.get(keys[1]) == sentinel, '28 secret edit not stored')
+            open_row(1)
+            gui_app.get_active_widget()._cancel_button_callback()
+            check(values.get(keys[1]) == sentinel, '32 Cancel changed secret')
+            open_row(0)
+            editor = gui_app.get_active_widget()
+            editor.set_text('changed')
+            state.started = True
+            editor._key_callback(ENTER_KEY)
+            check(values.get(keys[0]) == 'hosta', '31 onroad confirmation wrote a value')
+            before_stack = list(gui_app._nav_stack)
+            open_row(1)
+            check(gui_app._nav_stack == before_stack, '31 onroad row opened editor')
+            state.started = False
+            values.put(keys[1], '')
+            page.show_event()
+            drawn.clear()
+            frame(name='g6-' + variant + '-empty-secret')
+            check(setting_label(settings[1], '') == 'Not set' and 'Not set' in drawn, '32 empty secret label wrong')
+            values.put(keys[0], 'host')
+            values.put(keys[1], sentinel)
+            host._stack = []
+            frame()
+          check(sentinel not in captured.getvalue(), '30 secret in stdout/stderr')
+      finally:
+        rl.draw_text_ex = original_draw
+      for case in range(28, 33):
+        cases.append({'id': case, 'pages': ['native', 'mici'], 'storage': 'temporary ParamsView STRING files',
+                      'secret_in_draw_or_logs': False})
+    except Exception:
+      errors.append('28-32 text/secret settings: ' + traceback.format_exc())
+    finally:
+      state.started = False
+      gui_app.pop_widgets_to(main, instant=True)
+      host._stack = []
+      frame()
     accent = color()
     check(accent == tiles.THEMES['Crimson'], f'14 park lost chosen theme: {accent}')
     state.started = True

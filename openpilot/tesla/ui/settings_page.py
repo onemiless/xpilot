@@ -6,6 +6,7 @@ from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets.scroller import NavScroller
 from openpilot.tesla.plugins import view
 from openpilot.tesla.ui.settings_meta import VEHICLE_SETTINGS, setting_choices, setting_label
+from openpilot.tesla.ui.setting_keyboard import edit_text_setting
 from openpilot.sunnypilot.hardware.driver_monitoring import driver_monitoring_configured
 from openpilot.sunnypilot.hardware.profile import has_driver_camera
 
@@ -42,7 +43,7 @@ class SettingsList(NavScroller):
 
   def add_settings(self, settings) -> None:
     for setting in settings:
-      if setting.range is None and setting.choices is None:
+      if setting.type is None and setting.range is None and setting.choices is None:
         toggle = BigToggle(setting.label, initial_state=bool(_params().get(setting.key, return_default=True)),
                            toggle_callback=lambda value, k=setting.key: (_set_param(k, value), self.show_event()))
         toggle.set_enabled(ui_state.is_offroad)
@@ -56,6 +57,11 @@ class SettingsList(NavScroller):
         self._scroller.add_widget(button)
 
   def _choose(self, setting) -> None:
+    if not ui_state.is_offroad():
+      return
+    if setting.type in ("text", "secret"):
+      edit_text_setting(setting, _params(), self.show_event)
+      return
     page = _page()
     for label, value in setting_choices(setting, ui_state.is_metric):
       button = BigButton(label)

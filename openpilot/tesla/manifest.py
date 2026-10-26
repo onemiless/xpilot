@@ -80,11 +80,20 @@ _CLAIM_RE = re.compile("|".join(f"(?:{p})" for p in CLAIM_PATTERNS))
 
 @dataclass(frozen=True)
 class Setting:
-  """One row on a plugin's settings page. No range/choices: toggle. range=(min, max, step, unit, divisor)."""
+  """One settings row: text/secret, range=(min, max, step, unit, divisor), choices, or a toggle."""
   key: str
   label: str
   range: tuple[int, int, int, str, int] | None = None
   choices: tuple[tuple[str, int], ...] | None = None
+  type: str | None = None
+  max_len: int = 64
+
+  def input_error(self, value: str) -> str:
+    if any(not 32 <= ord(c) <= 126 for c in value):
+      return "Printable ASCII only"
+    if len(value) > self.max_len:
+      return f"Maximum {self.max_len} characters"
+    return ""
 
 
 @dataclass(frozen=True)
@@ -108,10 +117,22 @@ class Manifest:
   requires: dict = field(default_factory=dict)
 
 
-def _setting(d: dict) -> Setting:
+def _setting(d: dict, params: dict) -> Setting:
+  kind = d.get("type")
+  if "type" in d and kind not in ("text", "secret"):
+    raise ValueError("bad setting type")
+  length = d.get("max_len", 64)
+  if type(length) is not int or not 1 <= length <= 256 or ("max_len" in d and kind is None):
+    raise ValueError("bad setting max_len")
+  if kind is not None:
+    if "range" in d or "choices" in d:
+      raise ValueError("text/secret cannot have range/choices")
+    spec = params.get(d["key"])
+    if not isinstance(spec, dict) or spec.get("type") != "STRING":
+      raise ValueError("text/secret requires a STRING param")
   rng = d.get("range")
   return Setting(d["key"], d["label"], tuple(rng) if rng else None,
-                 tuple((str(label), int(v)) for label, v in d["choices"]) if d.get("choices") else None)
+                 tuple((str(label), int(v)) for label, v in d["choices"]) if d.get("choices") else None, kind, length)
 
 
 def safety_profiles() -> dict:
@@ -155,7 +176,7 @@ def parse(path: Path) -> Manifest:
     return Manifest(id=d["id"], name=str(d.get("name") or d["id"]), version=str(d.get("version", "0")), api=d["api"],
                     category=d["category"], use=d["use"], entry=d["entry"], description=str(d.get("description", "")),
                     author=str(d.get("author", "")), priority=int(d.get("priority", 100)), enable_param=d.get("enable_param"),
-                    claims=tuple(claims), settings=tuple(_setting(s) for s in d.get("settings", [])), params=dict(d.get("params", {})),
+                    claims=tuple(claims), settings=tuple(_setting(s, d.get("params", {})) for s in d.get("settings", [])), params=dict(d.get("params", {})),
                     platform=plat, rules=rules, requires=d.get("requires", {}))
   except (KeyError, TypeError, ValueError) as e:
     raise ValueError(f"bad field: {e!r}") from None
