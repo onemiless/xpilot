@@ -164,9 +164,9 @@ class BigScreenHost:
 
   def _place(self, mode: str) -> dict[str, tuple[int, int, str]]:
     items = self._visible(mode)
-    key = (mode, tuple(items), self._view_position, self._edit)
+    key = (mode, tuple(items), self._view_position)
     if key != self._placed_key:
-      self._placed_key, self._placed = key, tiles.place(items, mode == "drive", self._view_position, edit=self._edit)
+      self._placed_key, self._placed = key, tiles.place(items, mode == "drive", self._view_position)
     return self._placed
 
   def _save(self, pinned=None, hidden=None) -> None:
@@ -467,7 +467,7 @@ class BigScreenHost:
         rl.draw_rectangle_rec(rl.Rectangle(x, y, w, h), rl.WHITE)
         text(FontWeight.SEMI_BOLD, label, x + (w - text_w(FontWeight.SEMI_BOLD, label, 40)) / 2, y + (h - 40) / 2,
              40, rl.Color(20, 20, 24, 255))
-    cell = tiles.add_cell(placed, drive, self._view_position, edit=self._edit)
+    cell = tiles.add_cell(placed, drive, self._view_position)
     if cell is not None:
       x, y, w, h = tiles.cell_rect(*cell)
       rl.draw_rectangle_lines_ex(rl.Rectangle(x, y, w, h), 3, DIM)
@@ -481,7 +481,8 @@ class BigScreenHost:
       dx, dy = self._gesture.pos[0] - self._gesture.start[0], self._gesture.pos[1] - self._gesture.start[1]
       if self._face(e, placed[self._drag][2], now):
         self._blit(e, rl.Rectangle(x + dx, y + dy, w, h))
-    self._draw_bar(placed)
+    if self._drag is None and not self._view_drag and self._hud_drag is None:
+      self._draw_bar(placed)  # hidden while dragging, so a drop under it is visible
 
   def _draw_bar(self, placed) -> None:
     medium = gui_app.font(FontWeight.MEDIUM)
@@ -514,9 +515,9 @@ class BigScreenHost:
       return
     sx, sy = start[:2]
     bar = tiles.bar_buttons(placed, self._layout == "drive", self._view_position)
-    if self._edit and any(x0 <= sx < x0 + w and y0 <= sy < y0 + h for x0, y0, w, h in bar.values()):
-      if event == "tap":
-        self._bar_tap(sx, sy, bar)
+    # Only a tap belongs to the bar; a drag starting on it picks up the tile underneath (the bar reserves no cells).
+    if self._edit and event == "tap" and any(x0 <= sx < x0 + w and y0 <= sy < y0 + h for x0, y0, w, h in bar.values()):
+      self._bar_tap(sx, sy, bar)
       return
     if self._mode != "onroad" and self._edit and self._layout == "drive":
       boxes = self._hud_boxes()
@@ -597,7 +598,7 @@ class BigScreenHost:
       self._selected = None if tid == self._selected else tid
       return
     drive = self._layout == "drive"
-    if tiles.cell_at(x, y) is not None and tiles.cell_at(x, y) == tiles.add_cell(placed, drive, self._view_position, edit=self._edit):
+    if tiles.cell_at(x, y) is not None and tiles.cell_at(x, y) == tiles.add_cell(placed, drive, self._view_position):
       ids = tiles.addable(self._visible(self._layout), self._layouts[self._layout][1], placed)
       self._open("add tiles", AddTilesPage([self._entries[i] for i in ids], self._pin))
       return

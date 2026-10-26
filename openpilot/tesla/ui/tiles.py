@@ -197,11 +197,11 @@ def _cells(col: int, row: int, size: str) -> set[tuple[int, int]] | None:
   return {(col + i, row + j) for i in range(w) for j in range(h)}
 
 
-def place(items: list[tuple[str, str, tuple[str, ...], tuple[int, int] | None]], started: bool, view_pos=DRIVE_CELLS[:2], *, edit=False) -> dict[str, tuple[int, int, str]]:
+def place(items: list[tuple[str, str, tuple[str, ...], tuple[int, int] | None]], started: bool, view_pos=DRIVE_CELLS[:2]) -> dict[str, tuple[int, int, str]]:
   """items: (id, saved size, supported sizes, fixed position or None) in list order. Returns id -> (col, row, size) for
   every tile that fits. Fixed tiles first (a position off the grid, on the drive view or on an earlier tile is ignored),
   then the rest in scan order. Onroad a tile tries its saved size, then each smaller supported size, largest first."""
-  taken = set(blocked(started, view_pos)) | (bar_cells(started, view_pos) if edit else set())
+  taken = set(blocked(started, view_pos))
   out = {}
 
   def sizes_for(saved, sizes):
@@ -239,17 +239,19 @@ def hit(placed: dict[str, tuple[int, int, str]], x: float, y: float) -> str | No
 BAR_NAMES = ("park", "drive", "done")
 
 
-def bar_cells(started: bool, view_pos=DRIVE_CELLS[:2]) -> set[tuple[int, int]]:
-  """Reserve a bottom-row edit bar, or the top row when the drive view occupies the bottom."""
-  return {(c, 0 if started and view_pos[1] else ROWS - 1) for c in range(2, 6)}
-
-
 def bar_buttons(placed: dict[str, tuple[int, int, str]], started: bool, view_pos=DRIVE_CELLS[:2]) -> dict[str, tuple[int, int, int, int]]:
-  """Seat-sized buttons in reserved cells outside tiles and the Driving view; three never fit stacked in one cell."""
+  """Seat-sized buttons over four cells of an edge row, never the Driving view; three never fit stacked in one cell. The
+  bar reserves no cells: it takes the span covering the fewest tiles and the "+" cell (bottom middle first)."""
   w, h, gap = 320, 160, 10
-  x0 = (SCREEN[0] - 3 * w - 2 * gap) // 2
-  row = 0 if started and view_pos[1] else ROWS - 1
-  y = cell_rect(2, row)[1] + (CELL - h) // 2
+  rows = [0 if view_pos[1] else ROWS - 1] if started else [ROWS - 1, 0]
+  used = {c for col, row, size in placed.values() for c in _cells(col, row, size)}
+  add = add_cell(placed, started, view_pos)
+  used |= {add} if add else set()
+  span = {(c, r) for r in range(ROWS) for c in range(COLS)} - blocked(started, view_pos)
+  options = [(row, c0) for row in rows for c0 in (2, 1, 3, 0, 4) if {(c0 + i, row) for i in range(4)} <= span]
+  row, c0 = min(options, key=lambda o: len({(o[1] + i, o[0]) for i in range(4)} & used))
+  x0 = cell_rect(c0, row)[0] + (4 * PITCH - GAP - 3 * w - 2 * gap) // 2
+  y = cell_rect(c0, row)[1] + (CELL - h) // 2
   return {name: (x0 + i * (w + gap), y, w, h) for i, name in enumerate(BAR_NAMES)}
 
 
@@ -260,9 +262,9 @@ def corner_buttons(rect) -> dict[str, tuple[float, float, float]]:
   return {"unpin": (x + w - r - 8, y + r + 8, r), "resize": (x + w - r - 8, y + h - r - 8, r)}
 
 
-def add_cell(placed: dict[str, tuple[int, int, str]], started: bool, view_pos=DRIVE_CELLS[:2], *, edit=False) -> tuple[int, int] | None:
+def add_cell(placed: dict[str, tuple[int, int, str]], started: bool, view_pos=DRIVE_CELLS[:2]) -> tuple[int, int] | None:
   """First free cell (column-major): edit mode draws the "+" (add tiles) there."""
-  taken = set(blocked(started, view_pos)) | (bar_cells(started, view_pos) if edit else set())
+  taken = set(blocked(started, view_pos))
   for col, row, size in placed.values():
     w, h = SIZES[size]
     taken |= {(col + i, row + j) for i in range(w) for j in range(h)}

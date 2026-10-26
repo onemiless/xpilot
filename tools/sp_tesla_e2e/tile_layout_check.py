@@ -22,8 +22,10 @@ Failure cases listed before implementation:
 - T9  edit ops: resize does not cycle through the tile's sizes or drops the position, unpin/pin do not move between pinned
       and hidden, a drop does not fix the tile at the drop cell (pulled back inside the grid), does not free other fixed
       tiles it now overlaps, moves a tile onto the drive view, or reorders the list
-- T17 edit bar: Park, Drive and Done buttons overlap each other or leave the screen; reserved edit cells prevent
-      covering tiles or the add cell; the drive bar stays outside the view (supersedes the old in-view bar)
+- T17 edit bar: Park, Drive and Done buttons overlap each other or leave the screen; the bar covers a tile or the add
+      cell while a clear four-cell edge span exists; the drive bar stays outside the view (supersedes the old in-view bar)
+- T33 edit bar reserves cells (owner 2026-10-26): edit mode places tiles differently from normal mode, a tile dropped
+      on a cell under the bar does not land there, or the add cell skips a free cell under the bar
 - T10 hit tests: a gap hits a tile, a cell center does not map back to its cell, corner buttons leave their tile or
       overlap each other
 - T11 gestures: a short press without movement is not a tap, a held press is not one long press, a moved press still
@@ -319,12 +321,21 @@ def check_hits(errors):
     errors.append(f"T14 addable {T.addable(pinned, ['h'], T.place(items, False))}")
 
 
+def bar_clear_span(placed, started, pos) -> bool:
+  """A four-cell edge-row span outside the view that holds no tile and no add cell."""
+  used = set().union(*(cells(*p) for p in placed.values())) if placed else set()
+  add = T.add_cell(placed, started, pos)
+  used |= {add} if add else set()
+  rows = [0 if pos[1] else T.ROWS - 1] if started else [T.ROWS - 1, 0]
+  return any(not ({(c0 + i, r) for i in range(4)} & (used | T.blocked(started, pos))) for r in rows for c0 in range(T.COLS - 3))
+
+
 def check_bar(errors):
   rng = random.Random(7)
   for n in range(200):
     items = [(f"t{i}", rng.choice(ALL), ALL, None) for i in range(rng.randint(0, 14))]
     for started in (False, True):
-      placed = T.place(items, started, edit=True)
+      placed = T.place(items, started)
       b = T.bar_buttons(placed, started)
       rects = list(b.values())
       if set(b) != {"park", "drive", "done"} or any(overlap(x, y) for x, y in itertools.combinations(rects, 2)):
@@ -339,11 +350,23 @@ def check_bar(errors):
           errors.append(f"T28 drive bar covers the view {b}")
       taken = set().union(*(cells(*p) for p in placed.values())) if placed else set()
       free = [c for c in T.scan(False) if c not in taken]
-      add = T.add_cell(placed, started, edit=True)
-      if len(free) > 1:
+      add = T.add_cell(placed, started)
+      if bar_clear_span(placed, started, T.DRIVE_CELLS[:2]):
         tile_rects = [T.tile_rect(p) for p in placed.values()] + ([T.cell_rect(*add)] if add else [])
         if any(overlap(r, t) for r in rects for t in tile_rects):
-          errors.append(f"T17 n={n} bar covers a tile or the + cell with {len(free)} free cells: {b}")
+          errors.append(f"T17 n={n} bar covers a tile or the + cell while a clear span exists: {b}")
+  # T33: no reserved cells; a drop under the bar lands there and the add cell may sit under it.
+  items = [(f"t{i}", "small", ("small",), None) for i in range(4)]
+  placed = T.place(items, False)
+  bar = T.bar_buttons(placed, False)
+  under = next(c for c in T.scan(False) if any(overlap(T.cell_rect(*c), r) for r in bar.values()))
+  pinned = T.move([(i, s, None) for i, s, _, _ in items], placed, "t0", under, False)
+  moved = T.place([(i, s, (s,), f) for i, s, f in pinned], False)
+  if moved["t0"][:2] != under:
+    errors.append(f"T33 drop on bar cell {under} landed at {moved['t0'][:2]}")
+  full = [(f"t{i}", "small", ("small",), None) for i in range(T.COLS * T.ROWS - 1)]
+  if T.add_cell(T.place(full, False), False) is None:
+    errors.append("T33 add cell missing with one free cell")
 
 
 def check_gesture(errors):
@@ -509,10 +532,9 @@ def check_builtin_hud(errors):
         errors.append(f"T29 invalid saved entry survives: {name} {bad}")
   items = [(str(i), "small", ("small",), None) for i in range(40)]
   for pos in itertools.product(range(3), range(2)):
-    placed = T.place(items, True, pos, edit=True)
+    placed = T.place(items, True, pos)
     bar = T.bar_buttons(placed, True, pos)
-    if any(overlap(r, T.view(pos)) or r[3] < 152 or not inside(r, (0, 0, *T.SCREEN))
-           or any(overlap(r, T.tile_rect(p)) for p in placed.values()) for r in bar.values()):
+    if any(overlap(r, T.view(pos)) or r[3] < 152 or not inside(r, (0, 0, *T.SCREEN)) for r in bar.values()):
       errors.append(f"T28 moved view/bar/tiles overlap: {pos}")
 
 
