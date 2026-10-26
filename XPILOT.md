@@ -215,7 +215,7 @@ Host E2E：`PYTHONPATH=tinygrad_repo python3 tools/sp_tesla_e2e/model_source_e2e
 | `service_params(params)` | card，约 10 Hz | 重新读取实时设置 |
 | `processes()`（类方法） | manager | 额外进程。manager 相关的 import 写在方法内部 |
 | `role_processes(role, procs)`（类方法） | manager | 选择宿主提供的 SP 角色进程，规则见 `role:perception.model`；默认返回空列表 |
-| `plugins.send_msg(pm, plugin, kind, payload, valid_for_ms)`、`plugins.PluginMsgs().fresh(kind)` | 任何插件代码 | 发布和读取 `pluginMsg`（8d 节），每个 `kind` 要声明 `msg:<kind>` |
+| `plugins.send_msg(plugin, kind, payload, valid_for_ms)`、`plugins.PluginMsgs().fresh(kind)` / `.latest(kind, source)` | 任何插件代码 | 发布和读取 `pluginMsg`（8d 节），每个 `kind` 要声明 `msg:<kind>` |
 | `long_target(CP, params)`（类方法） | plannerd，每个计划周期 | 返回带 `update(sm, v_ego, v_cruise)` 的对象，给出目标车速（m/s）或 None。低于巡航车速：和 SP 自己的限速一样取最小；高于巡航车速：只替换驾驶员设定车速，且只在已接管、没踩油门/刹车、没 override 时生效，多个插件取最低，上限 `V_CRUISE_MAX`。MPC 跟车、模型和 SP 的限速功能仍然取最小，所以加速不会越过它们 |
 | `alert_source(CP, params)`（类方法） | selfdrived，每周期（100 Hz） | 返回带 `update(sm) -> list[PluginAlert]` 的对象。`PluginAlert(severity, title, body)`，severity 为 `info`（无声）、`warning`（提示音）、`critical`（警告音）。插件报警在任何状态都显示，不会让系统退出，优先级最高到 MID，SP 自己的退出和严重报警永远优先。标题最多 60 字符，正文 80 |
 | `lane_change_policy(params)`（类方法） | modeld 的 DesireHelper | 返回带 `allow(carstate, direction, default) -> bool` 的对象，只替换 SP 的"不用推方向盘就开始变道"这一个判断（`default` 是 SP 原来的结果）。打转向灯、最低车速、盲区和路沿检查仍然强制生效 |
@@ -472,12 +472,26 @@ X-50 自动速度策略和 G3 横向均未实现；刷写和实车接合测试�
 
 ## 8d. 插件间消息 `pluginMsg`
 
-- **用途**：插件之间传数据的通用通道，不用再为每个插件加 cereal 字段。已有自己 cereal 字段的插件（如 `traffic_light`）保持不变。
-- **消息**：cereal 服务 `pluginMsg`（`log.capnp` 的 `@139`，原 `customReserved13`），类型和外接算力相同，都是 `ExternalData`：`source`、`kind`、`seq`、`payload`（JSON 文本）、`validForMs`（0 表示不过期）。
-- **发送**：`plugins.send_msg(pm, plugin, kind, payload, valid_for_ms)`，`pm` 要能发 `pluginMsg`，`plugin` 传插件类或实例。宿主填 `source` = 插件 id，插件自己改不了。清单里没有 `msg:<kind>` 声明的类型一律拒发，返回 False，并像其他越权一样记到 `XpilotPluginFaults`。
-- pluginMsg 当前只支持一个实际发布端；同一进程也不得创建多个独立发布实例。多发布者冲突目前只做故障处理，不保证原发布者继续发送。
-- **接收**：`plugins.PluginMsgs()` 订阅 `pluginMsg`（不合并），`fresh(kind)` 返回 `{来源插件 id: payload}`，每个来源只取最新一条，过了 `validForMs` 的不返回。
-- **只做建议**：和外接算力一样，收到的数据只能通过接收方插件自己的钩子和限制生效。
+- **架构**：manager 始终运行 `plugin_msgd`（停车、行驶都运行）。所有发送进程经一个非阻塞 AF_UNIX / SOCK_DGRAM socket 交给 broker，只有 broker 发布 cereal `pluginMsg`；不再按发送进程占用 cereal 服务，没有发送进程数量上限。socket 是 `/tmp/xpilot-plugin-msg-<OPENPILOT_PREFIX>/socket`（默认 prefix 为空），目录权限 0700。进程锁防止第二个 broker 顶掉第一个，重启会回收旧 socket。
+- **消息**：沿用 `log.capnp @139` 的 `Custom.ExternalData` 和原服务速率类别，不加字段或服务。`source` 是插件 id，`kind` 要声明 `msg:<kind>`，`payload` 是 JSON 文本，`validForMs` 为 0 表示不过期。broker 分配每个来源递增的 `seq`（重启从 1 开始），保留发送时的单调时钟时间和 TTL，不让排队或重启延长有效期。
+- **发送**：`plugins.send_msg(plugin, kind, payload, valid_for_ms=0)`，插件类或实例均可；仍接受旧的首个位置参数 `pm`，但会忽略它。发送端不再创建 `PubMaster(["pluginMsg"])`；所有实际 cereal 发布权只属于 broker。返回 True 仅表示 datagram 已进入本机 socket，不保证通过 broker 校验或送达。broker 不在、队列满、发送失败时返回 False，不等待、不重试、不产生传输故障日志。
+- **来源认证（Linux 设备）**：broker 开启 `SO_PASSCRED`，从 `SCM_CREDENTIALS` 获取真实 PID/UID，忽略 JSON 里的 PID；UID 必须等于 broker。用 managerState 中仍在运行的 PID → 进程名对照已启用且赢得 claims 的插件，再检查该插件的 `msg:<kind>`。managerState 不新鲜或未知 PID 时拒收；自报插件 id 不授予权限。插件自有进程必须持有对应的 `process:<name>` claim。同一宿主进程内的插件共享 PID，因此这不隔离同进程中的恶意 Python 代码，也不把具有同用户任意代码执行权的插件变成沙箱。
+- **宿主承载范围**：`card` 会构造所有 active 插件，`ui` 会加载插件 UI；这两个宿主允许 active 来源。其他宿主按实际钩子 claims 限制：`plannerd` 为 `long.target` / `plan.filter` / `role:long.planner`；`controlsd` 为 `lat.correction` / `role:lateral.controller` / `role:long.owner`；`selfdrived` 为 `alert` / `event.filter` / `role:engagement.state` / `role:safety.fallback`；`modeld` 为 `role:lane_change.policy` / `role:perception.model`；`models_manager`、`modeld_tinygrad`、`modeld_warmup` 为 `role:perception.model`；`externald` 为 `external.provider`。其他进程只能凭自己的 `process:<name>` claim 发送；不自动信任它另行 fork 的未注册 PID。
+- **Mac 测试**：Darwin 没有 `SCM_CREDENTIALS`，仅在 Darwin 分支使用 datagram 自报 PID 对照测试 managerState，不使用 LOCAL_PEERPID。这只能验证传输/限流，不能证明来源真实性；Linux 分支始终用内核凭据，不会降级。CI 在 Linux 跑真实凭据 E2E。
+
+| 限制（代码常量） | 数值与计量 |
+|---|---|
+| `MAX_PAYLOAD` | 每条 JSON payload 文本 UTF-8 编码最多 16 KiB |
+| `SOURCE_HZ` | 每来源在任意最近 1 秒最多 100 条，所有 kind 合计 |
+| `SOURCE_BYTES` | 每来源在任意最近 1 秒最多 256 KiB，按实际 cereal Event 序列化字节计 |
+| `TOTAL_BYTES` | 所有来源在任意最近 1 秒合计最多 1 MiB，同样按 cereal 字节计 |
+| 公平丢弃 | N 个 active 且声明 msg 的来源各保留 `min(256 KiB, 1 MiB / N)` 的字节预算；不借用空闲来源份额，避免先到的洪泛耗尽别人的预算 |
+| `MAX_DATAGRAM` | 最多接收 128 KiB 的输入封装；畸形、被截断或无完整凭据的 datagram 拒收 |
+
+- **超限/故障**：已认证来源的超大 payload、未声明 kind、非法时间/TTL 或限流只丢当前消息；每来源每行程最多写一次 `XpilotPluginFaults`，并在私有 socket 目录原子保存去重标记，broker 重启后沿用。行程由 deviceState.startedMonoTime 标识，停车阶段为 0。伪造/未知来源和无法归属的畸形封装直接丢弃。manager 检查已退出的 Python 进程并重新启动；broker 停止期间发送者直接丢弃，有有限 TTL 的接收缓存自然过期。TTL 0 的消息依约不过期，实时建议应设置有限 TTL。
+- **接收**：`plugins.PluginMsgs()` 非 conflate 地订阅唯一 `pluginMsg` 服务；`fresh(kind)` 返回 `{source: payload}`，每种 kind、每个来源只取最新未过期消息；`latest(kind, source)` 返回该来源最新未过期 payload，没有则为 None。
+- **只做建议**：消息只经接收方插件自己的钩子和限制生效。核心控制不等待 broker，也不以 pluginMsg 的存在或成功送达为接管条件。
+- **重复验证**：`python3 tools/sp_tesla_e2e/plugin_msg_e2e.py` 输出 JSON evidence；覆盖多进程、真实 Linux 凭据、伪造来源/越权 kind、流量与公平预算、TTL、manager 重启和 broker 停止时非阻塞发送。CI host-checks 同时运行。
 
 ## 9. UI（大屏，2160×1080，UI v4：磁贴）
 

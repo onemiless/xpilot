@@ -240,7 +240,7 @@ HOST_CAPS = {
   "hooks": ("__init__", "setup", "observe_can", "publish_state", "control_sends", "service_params", "processes",
             "role_processes", "alert_source", "lane_change_policy", "lat_correction", "lat_controller", "long_owner", "long_planner",
             "long_target", "plan_filter", "event_filter", "engagement", "safety_fallback", "radar_interface", "external_provider"),
-  "msg": ("*",),  # pluginMsg transports every valid kind; no payload schema or multi-publisher broker implied.
+  "msg": ("*",),  # plugin_msgd authenticates/limits publishers; every declared kind, no payload schema.
   "rule_abi": RULE_ABI,
   "native": host_platform(),
 }

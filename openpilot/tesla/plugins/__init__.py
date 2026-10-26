@@ -16,6 +16,8 @@ import importlib
 import importlib.util
 import json
 import math
+import os
+import socket
 import sys
 import time
 import types
@@ -305,19 +307,32 @@ def services() -> list[str]:
   return sorted({svc for p in enabled for svc in p.SERVICES})
 
 
-def send_msg(pm, plugin, kind: str, payload, valid_for_ms: int = 0) -> bool:
-  """Publish one pluginMsg as plugin (class or instance): source = its id, payload = JSON of payload, validForMs
-  0 = no expiry. pm must publish "pluginMsg". A kind without a msg:<kind> claim is refused and recorded."""
-  from openpilot.cereal import messaging
+_msg_socket = None
+
+
+def send_msg(*args, valid_for_ms: int = 0) -> bool:
+  """Send advisory data to plugin_msgd without blocking. The legacy first pm argument is ignored."""
+  from openpilot.tesla import plugin_msgd
+  global _msg_socket
+  if len(args) >= 4 and not isinstance(args[1], str):
+    args = args[1:]
+  plugin, kind, payload, *ttl = args
+  if ttl:
+    valid_for_ms, = ttl
   try:
     if f"msg:{kind}" not in plugin.CLAIMS:
       raise PermissionError(f"pluginMsg {kind!r} without a msg:{kind} claim")
-    msg = messaging.new_message("pluginMsg", valid=True)
-    m = msg.pluginMsg
-    m.source, m.kind, m.payload, m.validForMs = plugin.NAME, kind, json.dumps(payload), valid_for_ms
-    pm.send("pluginMsg", msg)
-  except Exception as e:
+    data = json.dumps({"source": plugin.NAME, "kind": kind, "payload": json.dumps(payload),
+                       "validForMs": valid_for_ms, "logMonoTime": time.monotonic_ns(), "pid": os.getpid()}).encode()
+  except (TypeError, ValueError, PermissionError) as e:
     record_fault(plugin.NAME, "pluginMsg", e)
+    return False
+  if _msg_socket is None:
+    _msg_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    _msg_socket.setblocking(False)
+  try:
+    _msg_socket.sendto(data, plugin_msgd.socket_path())
+  except OSError:
     return False
   return True
 
@@ -333,10 +348,17 @@ class PluginMsgs:
   def fresh(self, kind: str, now_ns: int | None = None) -> dict:
     for e in self.messaging.drain_sock(self.sock):
       m = e.pluginMsg
-      self.last[(m.source, m.kind)] = (e.logMonoTime, m.validForMs, m.payload)
+      key = (m.source, m.kind)
+      if key not in self.last or e.logMonoTime >= self.last[key][0]:
+        self.last[key] = (e.logMonoTime, m.validForMs, m.payload)
     now_ns = time.monotonic_ns() if now_ns is None else now_ns
     return {src: json.loads(p) for (src, k), (t, valid_ms, p) in self.last.items()
             if k == kind and (valid_ms == 0 or 0 <= now_ns - t <= valid_ms * 1_000_000)}
+
+
+  def latest(self, kind: str, source: str):
+    """Latest unexpired payload for this source, or None."""
+    return self.fresh(kind).get(source)
 
 
 def _collect(params, hook: str, claim: str, where: str, *args, skip=()) -> list:
