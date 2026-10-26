@@ -7,6 +7,7 @@ import pyray as rl
 
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import gui_app
+from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.button import Button, ButtonStyle
 from openpilot.system.ui.widgets.list_view import ITEM_PADDING, ButtonAction, ListItem, TextAction, text_item, toggle_item
@@ -58,7 +59,7 @@ class Switches:
     return item
 
   def switch(self, plugin, value: bool) -> None:
-    self.errors = {plugin.NAME: switch_plugin(plugin, value, params(), jobs=self.jobs) if ui_state.is_offroad() else "park first"}
+    self.errors = {plugin.NAME: switch_plugin(plugin, value, params(), jobs=self.jobs) if ui_state.is_offroad() else tr("park first")}
     self.refresh()
 
   def refresh(self) -> None:
@@ -79,14 +80,15 @@ class PluginPage(ListPage):
     self.add(self.switches.make(plugin, plugin.DESCRIPTION))
     self.rows = [SettingRow(s) for s in plugin.SETTINGS]
     self.add(*[r.item for r in self.rows])
-    self.add(text_item("Source", "store (removable)" if plugin.NAME in jobs.installed else "built-in (switch off only)"),
-             text_item("Version", f"v{m.version}"), text_item("Author", m.author or "unknown"),
-             text_item("Category", CATEGORIES.get(plugin.CATEGORY, plugin.CATEGORY)),
-             text_item("Use", m.use.replace("both", "onroad + offroad")),
-             text_item("Claims", ", ".join(plugin.CLAIMS) or "none"), text_item("Priority", str(plugin.PRIORITY)))
+    uses = {"onroad": tr("onroad"), "offroad": tr("offroad"), "both": tr("onroad + offroad")}
+    self.add(text_item(tr("Source"), tr("store (removable)") if plugin.NAME in jobs.installed else tr("built-in (switch off only)")),
+             text_item(tr("Version"), f"v{m.version}"), text_item(tr("Author"), m.author or tr("unknown")),
+             text_item(tr("Category"), tr(CATEGORIES.get(plugin.CATEGORY, plugin.CATEGORY))),
+             text_item(tr("Use"), uses[m.use]),
+             text_item(tr("Claims"), ", ".join(plugin.CLAIMS) or tr("none")), text_item(tr("Priority"), str(plugin.PRIORITY)))
     pid = plugin.NAME
     if pid in jobs.installed:
-      self.add(ListItem(lambda: f"Store: {'working...' if jobs.busy else jobs.status}",
+      self.add(ListItem(lambda: tr("Store: {}").format(tr("working...") if jobs.busy else jobs.status),
                         action_item=ButtonAction(lambda: jobs.action(jobs.current(pid), pid), enabled=lambda: jobs.can_act(pid)),
                         callback=lambda: jobs.run(lambda: jobs.act(pid))))
 
@@ -111,7 +113,7 @@ class PluginsPage(Widget):
     self.pages: dict[str, PluginPage] = {}
     self.selected = 0
     self.fetched = False
-    self.refresh_button = Button(lambda: "working..." if jobs.busy else f"Refresh ({'failed' if jobs.failed else jobs.status})",
+    self.refresh_button = Button(lambda: tr("working...") if jobs.busy else tr("Refresh ({})").format(tr("failed") if jobs.failed else jobs.status),
                                  lambda: jobs.run(jobs.fetch), font_size=40)
     self.refresh_button.set_enabled(lambda: not jobs.busy)
     self._build()
@@ -123,22 +125,23 @@ class PluginsPage(Widget):
     self.sections: list[tuple[str, ListPage]] = []
     if LOAD_ERRORS:
       page = ListPage()
-      page.add(*[ListItem(name, description=error, action_item=TextAction("failed")) for name, error in LOAD_ERRORS.items()])
-      self.sections.append(("Failed", page))
+      page.add(*[ListItem(name, description=error, action_item=TextAction(tr("failed"))) for name, error in LOAD_ERRORS.items()])
+      self.sections.append((tr("Failed"), page))
     for title, plugins, entries in market_sections(jobs.entries):
       page = ListPage()
       for p in plugins:
-        summary = f"{p.MANIFEST.use.replace('both', 'onroad + offroad')} - v{p.MANIFEST.version} - {p.MANIFEST.author or 'unknown'} - {p.DESCRIPTION}"
+        use = {"onroad": tr("onroad"), "offroad": tr("offroad"), "both": tr("onroad + offroad")}[p.MANIFEST.use]
+        summary = f"{use} - v{p.MANIFEST.version} - {p.MANIFEST.author or tr('unknown')} - {p.DESCRIPTION}"
         if p.SETTINGS:
-          summary += f"\nTap for settings ({len(p.SETTINGS)})"
+          summary += "\n" + tr("Tap for settings ({})").format(len(p.SETTINGS))
         page.add(self.switches.make(p, summary, on_tap=lambda p=p: self._open_plugin(p)))
       for e in entries:
-        use = e.use.replace("both", "onroad + offroad") if e.use in ("onroad", "offroad", "both") else "use not declared"
+        use = {"onroad": tr("onroad"), "offroad": tr("offroad"), "both": tr("onroad + offroad")}.get(e.use, tr("use not declared"))
         page.add(InfoRow(lambda e=e: f"{e.name} - {jobs.row_value(jobs.current(e.id) or e)}",
-                         f"{use} - v{e.version} - {e.author} - {e.description}\nInstall & enable restarts while parked.",
+                         f"{use} - v{e.version} - {e.author} - {e.description}\n{tr('Install & enable restarts while parked.')}",
                          ButtonAction(lambda e=e: jobs.action(jobs.current(e.id) or e), enabled=lambda e=e: jobs.can_act(e.id)),
                          callback=lambda e=e: jobs.run(lambda: jobs.act(e.id))))
-      self.sections.append((title, page))
+      self.sections.append((tr(title), page))
     self.selected = max(0, min(self.selected, len(self.sections) - 1))
     self.buttons = [Button(title, lambda i=i: self._select(i), font_size=44) for i, (title, _) in enumerate(self.sections)]
     for b in self.buttons:

@@ -7,6 +7,8 @@ from typing import ClassVar
 import pyray as rl
 
 from openpilot.system.ui.lib.application import FONT_SCALE, FontWeight, gui_app
+from openpilot.system.ui.lib.multilang import tr
+from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.tesla.ui.tiles import ACCENT, MIN_FONT, TileSpec, fit_lines, scale
 
 DIM = rl.Color(255, 255, 255, 170)
@@ -15,7 +17,7 @@ PAD = 16
 
 
 def text_w(weight: FontWeight, text: str, size: int) -> float:
-  return rl.measure_text_ex(gui_app.font(weight), text, size, 0).x
+  return measure_text_cached(gui_app.font(weight), text, size).x
 
 
 def text(weight: FontWeight, s: str, x: float, y: float, size: int, color=rl.WHITE) -> None:
@@ -51,6 +53,7 @@ class Tile:
   PAGE: ClassVar[type | None] = None
   MICI: ClassVar[bool] = False
   COLOR: ClassVar[tuple[int, int, int]] = ACCENT  # the chosen tiles.THEMES color, set on Tile by the host
+  TRANSLATE_TITLE: ClassVar[bool] = False
 
   def state(self, sm):
     """What the face shows, as a comparable value; polled at most SPEC.hz times per second. sm has ui_state services plus
@@ -70,9 +73,10 @@ class Tile:
     if icon is not None:
       side = int(min(rect.width, rect.height) * 0.36)
       tex = gui_app.texture(icon, side, side)
-      rl.draw_texture(tex, int(rect.x + (rect.width - tex.width) / 2), int(rect.y + (rect.height - tex.height) / 2 - 16), rl.WHITE)
+      rl.draw_texture_ex(tex, rl.Vector2(rect.x + (rect.width - tex.width) / 2, rect.y + (rect.height - tex.height) / 2 - 16), 0, 1, rl.WHITE)
     size = self.title_size(rect)
-    text(FontWeight.MEDIUM, clip(FontWeight.MEDIUM, self.SPEC.title, size, rect.width - 2 * PAD), rect.x + PAD,
+    title = tr(self.SPEC.title) if self.TRANSLATE_TITLE else self.SPEC.title
+    text(FontWeight.MEDIUM, clip(FontWeight.MEDIUM, title, size, rect.width - 2 * PAD), rect.x + PAD,
          rect.y + rect.height - size - 14, size)
 
   def draw_value(self, rect: rl.Rectangle, value: str, unit: str = "", sub: str = "") -> None:

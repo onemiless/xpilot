@@ -1,21 +1,22 @@
 """Settings rows (openpilot.tesla.plugin.Setting) for the upstream Tesla options, plus label helpers shared with the
 Plugins page. Plugin settings live in each plugin's SETTINGS, not here."""
 from openpilot.tesla.plugin import Setting
+from openpilot.system.ui.lib.multilang import tr, tr_noop
 
 VEHICLE_SETTINGS = (
-  Setting('XpLongOwnerManual', 'Manual Long Owner (wiper first detent)'),
-  Setting('TeslaCoopSteering', 'Cooperative Steering'),
-  Setting('TeslaMadsScreenButton', 'MADS Screen Activation',
-          choices=(('Off', 0), ('3-Finger', 1), ('4-Finger', 2), ('5-Finger', 3))),  # upstream MadsScreenButtonType
+  Setting('XpLongOwnerManual', tr_noop('Manual Long Owner (wiper first detent)')),
+  Setting('TeslaCoopSteering', tr_noop('Cooperative Steering')),
+  Setting('TeslaMadsScreenButton', tr_noop('MADS Screen Activation'),
+          choices=((tr_noop('Off'), 0), (tr_noop('3-Finger'), 1), (tr_noop('4-Finger'), 2), (tr_noop('5-Finger'), 3))),  # upstream MadsScreenButtonType
 )
 
 
 def setting_label(setting: Setting, value, metric: bool = True) -> str:
   """A unit "km/h|mph" is metric|imperial."""
   if setting.type == 'secret':
-    return '******' if value else 'Not set'
+    return '******' if value else tr('Not set')
   if setting.type == 'text':
-    return value or 'Not set'
+    return value or tr('Not set')
   if setting.range is not None:
     unit, divisor = setting.range[3].split('|')[0 if metric else -1], setting.range[4]
     number = f'{value / divisor:.1f}' if divisor != 1 else str(value)

@@ -22,6 +22,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.sunnypilot.hardware.profile import HardwareProfile, get_hardware_profile
 from openpilot.system.ui.lib.application import MousePos, gui_app, FontWeight
+from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.lib.text_measure import measure_text_cached
 from openpilot.system.ui.widgets.list_view import button_item, text_item
 from openpilot.tesla.plugin_params import ParamsView
@@ -76,9 +77,9 @@ class AddTilesPage(ListPage):
   def __init__(self, entries, pin):
     super().__init__()
     if not entries:
-      self.add(text_item("No tiles to add", "", "Every tile is on the screen."))
+      self.add(text_item(tr("No tiles to add"), "", tr("Every tile is on the screen.")))
     for e in entries:
-      self.add(button_item(e.spec.title, "ADD", callback=lambda tid=e.spec.id: pin(tid)))
+      self.add(button_item(tr(e.spec.title) if e.plugin is None else e.spec.title, tr("ADD"), callback=lambda tid=e.spec.id: pin(tid)))
 
   def show_event(self):
     super().show_event()
@@ -207,9 +208,9 @@ class BigScreenHost:
       self._pages[tid] = page
     if e.tile.MICI:
       gui_app.push_widget(self._pages[tid])
-      self._stack.append((e.spec.title, None))  # shown by mici in FALLBACK_VIEW
+      self._stack.append((tr(e.spec.title) if e.plugin is None else e.spec.title, None))  # shown by mici in FALLBACK_VIEW
     else:
-      self._open(e.spec.title, self._pages[tid])
+      self._open(tr(e.spec.title) if e.plugin is None else e.spec.title, self._pages[tid])
 
   def _open(self, title, page) -> None:
     """Push a detail page; ListPage.open(title, sub) of the open page lands here too. page None: back one level."""
@@ -304,7 +305,7 @@ class BigScreenHost:
   def _drive_view(self) -> tuple:
     x, y, w, h = tiles.view(self._view_position)
     if self._view_drag and self._gesture.start is not None:
-      dx, dy = (p - s for p, s in zip(self._gesture.pos, self._gesture.start[:2]))
+      dx, dy = (p - s for p, s in zip(self._gesture.pos, self._gesture.start[:2], strict=True))
       col, row = self._view_position
       x += min(max(dx, -col * tiles.PITCH), (tiles.COLS - tiles.DRIVE_CELLS[2] - col) * tiles.PITCH)
       y += min(max(dy, -row * tiles.PITCH), (tiles.ROWS - tiles.DRIVE_CELLS[3] - row) * tiles.PITCH)
@@ -386,7 +387,8 @@ class BigScreenHost:
       self._blit(e, rl.Rectangle(x - grow, y - grow * h / w, w + 2 * grow, h + 2 * grow * h / w))
       if self._edit and tid != self._selected:
         rl.draw_rectangle(x, y, w, h, SHADE)
-      elif self._mode != "onroad" and not self._edit and self._gesture.start is not None and tiles.hit({tid: p}, *self._gesture.start[:2]) and not self._gesture.long:
+      elif (self._mode != "onroad" and not self._edit and self._gesture.start is not None
+            and tiles.hit({tid: p}, *self._gesture.start[:2]) and not self._gesture.long):
         rl.draw_rectangle(x, y, w, h, PRESSED)
 
   @staticmethod
@@ -462,7 +464,7 @@ class BigScreenHost:
     if drive:
       vx, vy, vw, vh = self._drive_view()
       rl.draw_rectangle_rec(rl.Rectangle(vx, vy, vw, vh), rl.Color(40, 42, 50, 255))
-      label = "Driving view"
+      label = tr("Driving view")
       width = measure_text_cached(gui_app.font(FontWeight.MEDIUM), label, 48).x
       rl.draw_text_ex(gui_app.font(FontWeight.MEDIUM), label, rl.Vector2(vx + (vw - width) / 2, vy + vh / 2 - 24), 48, 0, DIM)
     self._draw_tiles(placed, now)
@@ -476,12 +478,15 @@ class BigScreenHost:
         rl.draw_rectangle_lines_ex(rl.Rectangle(*rect), 3, rl.WHITE if visible else DIM)
       for name, (x, y, w, h) in boxes.items():
         visible = tiles.hud_visible(self._hud, name)
-        label = name.removeprefix("builtin:").replace("_", " ").title() if name.startswith("builtin:") else name
+        labels = {"builtin:blind_spot_indicators": tr("Blind spot indicators"), "builtin:torque_bar": tr("Torque bar"),
+                  "builtin:set_speed": tr("Set speed"), "builtin:steering_wheel": tr("Steering wheel"),
+                  "builtin:model_source": tr("Model source")}
+        label = labels[name] if name.startswith("builtin:") else name
         width = min(w - 24, 360)
         lines_in(rl.Rectangle(x + (w - width) / 2, y + 12, width, h - 24),
-                 [label, "Move only"] if name in tiles.HUD_REQUIRED else [label] if visible else [label, "Hidden"], 32)
+                 [label, tr("Move only")] if name in tiles.HUD_REQUIRED else [label] if visible else [label, tr("Hidden")], 32)
       for name, (x, y, w, h) in tiles.hud_buttons(boxes, self._drive_view()).items():
-        label = "Hide" if tiles.hud_visible(self._hud, name) else "Show"
+        label = tr("Hide") if tiles.hud_visible(self._hud, name) else tr("Show")
         rl.draw_rectangle_rec(rl.Rectangle(x, y, w, h), rl.WHITE)
         text(FontWeight.SEMI_BOLD, label, x + (w - text_w(FontWeight.SEMI_BOLD, label, 40)) / 2, y + (h - 40) / 2,
              40, rl.Color(20, 20, 24, 255))
@@ -507,7 +512,7 @@ class BigScreenHost:
     for name, (x, y, w, h) in tiles.bar_buttons(placed, self._layout == "drive", self._view_position).items():
       active = name == self._layout
       rl.draw_rectangle(x, y, w, h, rl.Color(*Tile.COLOR, 255) if active else rl.Color(72, 75, 88, 255))
-      label = name.capitalize()
+      label = {"park": tr("Park"), "drive": tr("Drive"), "done": tr("Done")}[name]
       width = measure_text_cached(medium, label, 56).x
       rl.draw_text_ex(medium, label, rl.Vector2(x + (w - width) / 2, y + (h - 56) / 2), 56, 0, rl.WHITE)
 
@@ -622,7 +627,7 @@ class BigScreenHost:
     drive = self._layout == "drive"
     if tiles.cell_at(x, y) is not None and tiles.cell_at(x, y) == tiles.add_cell(placed, drive, self._view_position):
       ids = tiles.addable(self._visible(self._layout), self._layouts[self._layout][1], placed)
-      self._open("add tiles", AddTilesPage([self._entries[i] for i in ids], self._pin))
+      self._open(tr("add tiles"), AddTilesPage([self._entries[i] for i in ids], self._pin))
       return
     self._selected = None
 

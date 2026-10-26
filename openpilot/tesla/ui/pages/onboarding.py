@@ -12,6 +12,7 @@ from openpilot.common.version import terms_version, terms_version_sp, training_v
 from openpilot.selfdrive.ui.ui_state import device, ui_state
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.button import Button, ButtonStyle
+from openpilot.system.ui.lib.multilang import tr
 from openpilot.tesla.ui.pages.base import body, draw_card
 from openpilot.tesla.ui.pages.terms import TermsPage
 from openpilot.tesla.ui.pages.training import TrainingGuidePage
@@ -40,10 +41,10 @@ class OnboardingPage(Widget):
     self._view = TERMS
     self._terms = TermsPage(on_accept=self._on_terms_accepted, on_decline=lambda: self._set_view(DECLINE))
     self._guide = TrainingGuidePage(on_done=self._on_completed_training)
-    self._decline_text = body("You must accept the Terms of Service to use sunnypilot.\n\n"
-                              "Decline the terms and uninstall sunnypilot from this device?")
-    self._decline_buttons = [Button("back", lambda: self._set_view(TERMS)),
-                             Button("decline & uninstall", self._on_uninstall, button_style=ButtonStyle.DANGER)]
+    self._decline_text = body(tr("You must accept the Terms of Service to use sunnypilot.\n\n" +
+                                 "Decline the terms and uninstall sunnypilot from this device?"))
+    self._decline_buttons = [Button(tr("back"), lambda: self._set_view(TERMS)),
+                             Button(tr("decline & uninstall"), self._on_uninstall, button_style=ButtonStyle.DANGER)]
 
   def _set_view(self, view: int) -> None:
     if view == GUIDE and self._view != GUIDE:
@@ -98,6 +99,6 @@ class OnboardingPage(Widget):
     if self._view == GUIDE:
       self._guide.render(rect)
     elif self._view == DECLINE:
-      draw_card(rect, "decline terms", self._decline_text, self._decline_buttons)
+      draw_card(rect, tr("decline terms"), self._decline_text, self._decline_buttons)
     else:
       self._terms.render(rect)

@@ -187,6 +187,7 @@ card 每次启动用 `cloudlog.event("xpilot.drive_snapshot", ...)` 记录本行
 | `display` | 独占显示资源；当前只做资源声明和冲突裁决 | 是 |
 | `camera:road` / `camera:wide` / `camera:driver` | 声明使用对应摄像头；当前只做声明，不授予额外访问能力 | 否 |
 | `msg:<类型>` | 发布这一类 `pluginMsg` 消息（见 8d 节），如 `msg:lanes.hint` | 否，多个插件可发同一类，用 `source` 区分 |
+| `lang:<代码>` | 提供语言包；代码限 `de`、`fr`、`pt-BR`、`es`、`tr`、`uk`、`th`、`zh-CHT`、`zh-CHS`、`ko`、`ja` | 是，同一语言按正常优先级规则只取一个 |
 
 - **冲突裁决**：两个已开启的插件声明了同一个独占资源时，`priority` 小的生效（相同则按 id），另一个整体不生效，Plugins 页显示 "conflict"。在 Plugins 页打开一个插件，会自动关掉和它冲突的插件。
 - **合并规则由宿主固定**：插件改不了。目标车速的规则见下面 `long_target`。
@@ -396,6 +397,21 @@ class MyTile(Tile):
 #### 生命周期
 
 系统没有插件生命周期 hook。需要观察行程边界时读取 `deviceState.started` 和 `deviceState.startedMonoTime`；插件进程由 `processes()` 返回，并使用 `openpilot.system.manager.process_config.only_onroad` 或 `only_offroad` 作为 `ManagerProcess.should_run` 条件。
+
+### 5.6 语言包插件
+
+语言包是商店插件：在 `plugin.json` 的 `claims` 声明一个 `lang:<代码>`，并把 PO 文件放在插件安装目录的
+`translations/app_<代码>.po`。例如简体中文声明 `lang:zh-CHS`，文件是
+`/data/xpilot_plugins/<插件 id>/translations/app_zh-CHS.po`。同一语言是独占资源；两个已开启的包冲突时沿用
+`priority` 小者优先、相同则按 id 的正常裁决。
+
+插件作者复制 `openpilot/selfdrive/ui/translations/app_en.po` 作为完整模板，翻译 `msgstr`，不要改 `msgid`。
+宿主新增或修改 Tesla UI 文案后运行 `python3 tools/xpilot_extract_strings.py` 更新英文模板。语言包启用且文件存在时，
+Tesla 设置页才显示该语言；关闭、删除或裁决落败后，已保存的语言选择回到英语。发现插件或读取 PO 出错只记录日志并回退英语，
+不能拖垮 UI。缺少单条翻译时显示英文 `msgid`。
+
+CJK 和泰文使用现有 Noto fallback；其他语言沿用主字体。字体 codepoints 从实际生效的插件 PO 读取，因此语言包中的字符会进入字体。
+选择语言会立即切换翻译表；当前已构造并缓存的页面文案在 UI 重启后全部生效，选择器会明确提示这一点。
 
 ## 6. panda 运行时规则（G1，ABI v1）
 

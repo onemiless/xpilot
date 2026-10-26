@@ -6,9 +6,10 @@ from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.widgets import DialogResult
 from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog
+from openpilot.system.ui.lib.multilang import tr, tr_noop
 from openpilot.tesla.ui.pages.base import ListPage, ParamToggle
 
-ALPHA_DESC = "Use alpha openpilot longitudinal control instead of stock ACC. This may disable Automatic Emergency Braking (AEB)."
+ALPHA_DESC = tr_noop("Use alpha openpilot longitudinal control instead of stock ACC. This may disable Automatic Emergency Braking (AEB).")
 
 EXCLUSIVE = ("JoystickDebugMode", "LongitudinalManeuverMode", "LateralManeuverMode")
 
@@ -17,23 +18,23 @@ class DeveloperPage(ListPage):
   def __init__(self):
     super().__init__()
     offroad = ui_state.is_offroad
-    self.adb = ParamToggle("Enable ADB", "AdbEnabled", "Use Android Debug Bridge (ADB) over USB or the network.", enabled=offroad)
-    self.ssh = ParamToggle("Enable SSH", "SshEnabled", "Access the device remotely using your SSH keys.")
-    keys = ssh_key_item("SSH keys", "Grant SSH access to all public keys in your GitHub settings. Only enter your own username.")
-    self.joystick = ParamToggle("Joystick debug mode", "JoystickDebugMode", "Control the car with a joystick for debugging.",
+    self.adb = ParamToggle(tr("Enable ADB"), "AdbEnabled", tr("Use Android Debug Bridge (ADB) over USB or the network."), enabled=offroad)
+    self.ssh = ParamToggle(tr("Enable SSH"), "SshEnabled", tr("Access the device remotely using your SSH keys."))
+    keys = ssh_key_item(tr("SSH keys"), tr("Grant SSH access to all public keys in your GitHub settings. Only enter your own username."))
+    self.joystick = ParamToggle(tr("Joystick debug mode"), "JoystickDebugMode", tr("Control the car with a joystick for debugging."),
                                 enabled=offroad, after=lambda v: self._exclusive("JoystickDebugMode", v))
-    self.long = ParamToggle("Longitudinal maneuver mode", "LongitudinalManeuverMode", "Run longitudinal maneuvers for testing gas and brake control.",
+    self.long = ParamToggle(tr("Longitudinal maneuver mode"), "LongitudinalManeuverMode", tr("Run longitudinal maneuvers for testing gas and brake control."),
                             enabled=lambda: ui_state.CP is not None and ui_state.has_longitudinal_control and offroad() and not ui_state.engaged,
                             after=lambda v: self._exclusive("LongitudinalManeuverMode", v, restart=True))
-    self.lat = ParamToggle("Lateral maneuver mode", "LateralManeuverMode", "Run lateral maneuvers for testing steering control.",
+    self.lat = ParamToggle(tr("Lateral maneuver mode"), "LateralManeuverMode", tr("Run lateral maneuvers for testing steering control."),
                            enabled=lambda: ui_state.CP is not None and offroad() and not ui_state.engaged,
                            after=lambda v: self._exclusive("LateralManeuverMode", v, restart=True))
-    self.alpha = ParamToggle("Alpha longitudinal", "AlphaLongitudinalEnabled", ALPHA_DESC, enabled=lambda: not ui_state.engaged, after=self._alpha)
+    self.alpha = ParamToggle(tr("Alpha longitudinal"), "AlphaLongitudinalEnabled", tr(ALPHA_DESC), enabled=lambda: not ui_state.engaged, after=self._alpha)
     self.alpha.item.set_visible(lambda: ui_state.CP is not None and ui_state.CP.alphaLongitudinalAvailable and not ui_state.is_release)
-    self.debug = ParamToggle("UI debug mode", "ShowDebugInfo", "Show touch locations and the UI frame rate.",
+    self.debug = ParamToggle(tr("UI debug mode"), "ShowDebugInfo", tr("Show touch locations and the UI frame rate."),
                              after=lambda v: (gui_app.set_show_touches(v), gui_app.set_show_fps(v)))
-    self.navigation = ParamToggle("Navigation (alpha)", "NavigationEnabled",
-                                  "Turn-by-turn navigation with a route map. Set a destination from comma connect.")
+    self.navigation = ParamToggle(tr("Navigation (alpha)"), "NavigationEnabled",
+                                  tr("Turn-by-turn navigation with a route map. Set a destination from comma connect."))
     for t in (self.joystick, self.long, self.lat, self.navigation):
       t.item.set_visible(not ui_state.is_release)
     self.toggles = (self.adb, self.ssh, self.joystick, self.long, self.lat, self.alpha, self.debug, self.navigation)
@@ -60,7 +61,7 @@ class DeveloperPage(ListPage):
         ui_state.params.put_bool("AlphaLongitudinalEnabled", True, block=True)
         restart_needed_callback()
       self.refresh()
-    gui_app.push_widget(ConfirmDialog("WARNING: alpha longitudinal control may disable Automatic Emergency Braking (AEB)", "Enable",
+    gui_app.push_widget(ConfirmDialog(tr("WARNING: alpha longitudinal control may disable Automatic Emergency Braking (AEB)"), tr("Enable"),
                                       callback=confirmed))
 
   def refresh(self) -> None:

@@ -43,6 +43,20 @@ PLURAL_SELECTORS = {
   'ja': lambda n: 0,
 }
 
+LANGUAGE_NAMES = {
+  "de": "Deutsch",
+  "fr": "Français",
+  "pt-BR": "Português",
+  "es": "Español",
+  "tr": "Türkçe",
+  "uk": "Українська",
+  "th": "ไทย",
+  "zh-CHT": "中文（繁體）",
+  "zh-CHS": "中文（简体）",
+  "ko": "한국어",
+  "ja": "日本語",
+}
+
 
 def _parse_quoted(s: str) -> str:
   """Parse a PO-format quoted string."""
@@ -158,6 +172,7 @@ class Multilang:
     self.codes: dict[str, str] = {}
     self._translations: dict[str, str] = {}
     self._plurals: dict[str, list[str]] = {}
+    self._plugin_paths = {}
     self._plural_selector = PLURAL_SELECTORS.get('en', lambda n: 0)
     self._load_languages()
 
@@ -170,18 +185,24 @@ class Multilang:
 
   def setup(self):
     try:
-      po_path = TRANSLATIONS_DIR.joinpath(f'app_{self._language}.po')
+      po_path = self.translation_path(self._language)
       self._translations, self._plurals = load_translations(po_path)
       self._plural_selector = PLURAL_SELECTORS.get(self._language, lambda n: 0)
       cloudlog.debug(f"Loaded translations for language: {self._language}")
-    except FileNotFoundError:
-      cloudlog.error(f"No translation file found for language: {self._language}, using default.")
+    except Exception:
+      cloudlog.exception(f"Failed to load translations for language: {self._language}, using English")
+      self._language = "en"
       self._translations = {}
       self._plurals = {}
+      self._plural_selector = PLURAL_SELECTORS["en"]
+
+  def translation_path(self, language_code: str):
+    return self._plugin_paths.get(language_code, TRANSLATIONS_DIR.joinpath(f'app_{language_code}.po'))
 
   def change_language(self, language_code: str) -> None:
-    self._params.put("LanguageSetting", language_code, block=True)
-    self._language = language_code
+    self._language = language_code if language_code in self.codes else "en"
+    if self._params is not None:
+      self._params.put("LanguageSetting", self._language, block=True)
     self.setup()
 
   def tr(self, text: str) -> str:
@@ -198,12 +219,30 @@ class Multilang:
   def _load_languages(self):
     with LANGUAGES_FILE.open(encoding='utf-8') as f:
       self.languages = json.load(f)
+    self._plugin_paths = {}
+    if self._params is None or not hasattr(self._params, "get_bool"):
+      self.codes = {v: k for k, v in self.languages.items()}
+      return
+    try:
+      from openpilot.tesla import manifest
+      from openpilot.tesla.plugins import active
+      for plugin in active(self._params):
+        for claim in plugin.CLAIMS:
+          if claim.startswith("lang:"):
+            code = claim.removeprefix("lang:")
+            path = manifest.INSTALL_DIR / plugin.NAME / "translations" / f"app_{code}.po"
+            if path.is_file():
+              self.languages[LANGUAGE_NAMES[code]] = code
+              self._plugin_paths[code] = path
+    except Exception:
+      cloudlog.exception("Failed to discover xpilot language packs, using English")
+      self.languages = {name: code for name, code in self.languages.items() if code == "en"}
+      self._plugin_paths = {}
     self.codes = {v: k for k, v in self.languages.items()}
 
-    if self._params is not None:
+    if self._params is not None and hasattr(self._params, "get"):
       lang = str(self._params.get("LanguageSetting")).removeprefix("main_")
-      if lang in self.codes:
-        self._language = lang
+      self._language = lang if lang in self.codes else "en"
 
 
 multilang = Multilang()

@@ -10,6 +10,7 @@ from openpilot.selfdrive.ui.mici.layouts.onboarding import QRCodeWidget
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.button import Button, ButtonStyle
+from openpilot.system.ui.lib.multilang import tr
 from openpilot.tesla.ui.pages.base import PAD, body, draw_card
 
 URL = "https://sunnypilot.ai/terms"
@@ -20,13 +21,14 @@ class TermsPage(Widget):
   def __init__(self, on_accept: Callable[[], None] | None = None, on_decline: Callable[[], None] | None = None):
     super().__init__()
     review = on_accept is None
-    self._title = "" if review else "terms of service"
-    self._text = body(f"Scan the QR code, or go to {URL}" + ("" if review else "\n\nYou must accept the Terms of Service to use sunnypilot."))
+    self._title = "" if review else tr("terms of service")
+    self._text = body(tr("Scan the QR code, or go to {}").format(URL) +
+                      ("" if review else tr("\n\nYou must accept the Terms of Service to use sunnypilot.")))
     self._qr = QRCodeWidget(URL, QR_SIZE)
     self._buttons = []
     if not review:
-      self._buttons = [Button("decline & uninstall", on_decline, button_style=ButtonStyle.DANGER),
-                       Button("accept terms", on_accept, button_style=ButtonStyle.PRIMARY)]
+      self._buttons = [Button(tr("decline & uninstall"), on_decline, button_style=ButtonStyle.DANGER),
+                       Button(tr("accept terms"), on_accept, button_style=ButtonStyle.PRIMARY)]
       for b in self._buttons:
         b.set_enabled(ui_state.is_offroad)
 

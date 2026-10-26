@@ -71,6 +71,7 @@ CLAIM_PATTERNS = (
   r"display",                          # display ownership (exclusive)
   r"camera:(road|wide|driver)",         # declarative camera use (shared)
   r"msg:[a-z][a-z0-9_.]*",              # publish pluginMsg of this kind (shared; source tells publishers apart)
+  r"lang:(de|fr|pt-BR|es|tr|uk|th|zh-CHT|zh-CHS|ko|ja)",  # provide this language pack (exclusive)
 )
 SHARED_CLAIMS = {"long.target", "plan.filter", "event.filter", "alert", "lat.correction", "power", "sound",
                  "camera:road", "camera:wide", "camera:driver"}

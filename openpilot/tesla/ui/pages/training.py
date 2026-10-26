@@ -14,6 +14,7 @@ from openpilot.selfdrive.ui.mici.layouts.onboarding import DriverCameraSetupDial
 from openpilot.selfdrive.ui.ui_state import device, ui_state
 from openpilot.sunnypilot.hardware.profile import has_driver_camera
 from openpilot.system.ui.lib.application import gui_app
+from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.button import Button, ButtonStyle
 from openpilot.tesla.ui.pages.base import BUTTON_H, PAD, body, draw_card
@@ -30,7 +31,7 @@ class TrainingGuidePage(Widget):
     self._active = False
     self._camera = DriverCameraSetupDialog()
     self._progress = FirstOrderFilter(0.0, 0.5, 1 / gui_app.target_fps)
-    self._check = Button("next", lambda: self._go(RECORD), button_style=ButtonStyle.PRIMARY)
+    self._check = Button(tr("next"), lambda: self._go(RECORD), button_style=ButtonStyle.PRIMARY)
     self._check.set_enabled(lambda: ui_state.is_offroad() and self._progress.x >= 0.999)
 
     def button(text, callback, style=ButtonStyle.NORMAL):
@@ -38,26 +39,27 @@ class TrainingGuidePage(Widget):
       b.set_enabled(ui_state.is_offroad)
       return b
 
-    nxt = lambda: self._go(self._step + 1)
+    def nxt():
+      self._go(self._step + 1)
     self._steps = {
-      ATTENTION: ("what is sunnypilot?", body("1. sunnypilot is a driver assistance system.\n"
-                                              "2. You must pay attention at all times.\n"
-                                              "3. You must be ready to take over at any time.\n"
-                                              "4. You are fully responsible for driving the car."),
-                  [button("next", nxt, ButtonStyle.PRIMARY)]),
-      PRE_DM: ("driver monitoring check", body("Next, we'll check if the device can detect the driver properly.\n"
-                                               "sunnypilot uses the cabin camera to check if the driver is distracted.\n"
-                                               "If it does not have a clear view of the driver, unplug and remount before continuing."),
-               [button("next", nxt, ButtonStyle.PRIMARY)]),
-      CHECK: ("", body("driver monitoring check\n\nLook straight ahead until the green bar is full."),
-              [button("?", lambda: self._go(BAD_FACE)), self._check]),
-      RECORD: ("driver camera data", body("Do you want to share video data for training?\n"
-                                          "Sharing your data with comma helps improve openpilot and sunnypilot for everyone."),
-               [button("no, don't upload", lambda: self._record(False)),
-                button("allow data uploading", lambda: self._record(True), ButtonStyle.PRIMARY)]),
-      BAD_FACE: ("looking for driver", body("Make sure the device can see your face.\n"
-                                            "Remount if your face is blocked, or driver monitoring has difficulty tracking your face."),
-                 [button("back", lambda: self._go(CHECK))]),
+      ATTENTION: (tr("what is sunnypilot?"), body(tr("1. sunnypilot is a driver assistance system.\n" +
+                                                     "2. You must pay attention at all times.\n" +
+                                                     "3. You must be ready to take over at any time.\n" +
+                                                     "4. You are fully responsible for driving the car.")),
+                  [button(tr("next"), nxt, ButtonStyle.PRIMARY)]),
+      PRE_DM: (tr("driver monitoring check"), body(tr("Next, we'll check if the device can detect the driver properly.\n" +
+                                                      "sunnypilot uses the cabin camera to check if the driver is distracted.\n" +
+                                                      "If it does not have a clear view of the driver, unplug and remount before continuing.")),
+               [button(tr("next"), nxt, ButtonStyle.PRIMARY)]),
+      CHECK: ("", body(tr("driver monitoring check\n\nLook straight ahead until the green bar is full.")),
+              [button(tr("?"), lambda: self._go(BAD_FACE)), self._check]),
+      RECORD: (tr("driver camera data"), body(tr("Do you want to share video data for training?\n" +
+                                                 "Sharing your data with comma helps improve openpilot and sunnypilot for everyone.")),
+               [button(tr("no, don't upload"), lambda: self._record(False)),
+                button(tr("allow data uploading"), lambda: self._record(True), ButtonStyle.PRIMARY)]),
+      BAD_FACE: (tr("looking for driver"), body(tr("Make sure the device can see your face.\n" +
+                                                   "Remount if your face is blocked, or driver monitoring has difficulty tracking your face.")),
+                 [button(tr("back"), lambda: self._go(CHECK))]),
     }
 
     def on_timeout():  # like mici: stop the driver monitoring model when the device sleeps

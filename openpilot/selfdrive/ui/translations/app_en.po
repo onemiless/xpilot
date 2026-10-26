@@ -883,3 +883,950 @@ msgstr "✓ SUBSCRIBED"
 msgid "🔥 Firehose Mode 🔥"
 msgstr "🔥 Firehose Mode 🔥"
 
+#: openpilot/tesla/ui/pages/terms.py:26
+msgid "\n\nYou must accept the Terms of Service to use sunnypilot."
+msgstr "\n\nYou must accept the Terms of Service to use sunnypilot."
+
+#: openpilot/tesla/ui/pages/models.py:61
+msgid " (active)"
+msgstr " (active)"
+
+#: openpilot/tesla/ui/settings_meta.py:10
+msgid "3-Finger"
+msgstr "3-Finger"
+
+#: openpilot/tesla/ui/settings_meta.py:10
+msgid "4-Finger"
+msgstr "4-Finger"
+
+#: openpilot/tesla/ui/settings_meta.py:10
+msgid "5-Finger"
+msgstr "5-Finger"
+
+#: openpilot/tesla/ui/pages/training.py:55
+msgid "?"
+msgstr "?"
+
+#: openpilot/tesla/ui/pages/home.py:15
+msgid "ALERT"
+msgstr "ALERT"
+
+#: openpilot/tesla/ui/pages/developer.py:22
+msgid "Access the device remotely using your SSH keys."
+msgstr "Access the device remotely using your SSH keys."
+
+#: openpilot/tesla/ui/offroad.py:64
+msgid "Actuation & Car Messages"
+msgstr "Actuation & Car Messages"
+
+#: openpilot/tesla/ui/offroad.py:67 openpilot/tesla/ui/pages/home.py:46
+msgid "Alerts"
+msgstr "Alerts"
+
+#: openpilot/tesla/ui/pages/developer.py:32
+msgid "Alpha longitudinal"
+msgstr "Alpha longitudinal"
+
+#: openpilot/tesla/ui/pages/toggles.py:30
+msgid "Always-on driver monitor"
+msgstr "Always-on driver monitor"
+
+#: openpilot/tesla/ui/pages/plugins.py:85
+msgid "Author"
+msgstr "Author"
+
+#: openpilot/tesla/ui/pages/tesla.py:16 openpilot/tesla/ui/pages/tesla.py:24
+msgid "Auto"
+msgstr "Auto"
+
+#: openpilot/tesla/ui/pages/tesla.py:12
+msgid "Auto identifies the car when it starts. Pick a model only if it is not recognized. Applies on the next start."
+msgstr "Auto identifies the car when it starts. Pick a model only if it is not recognized. Applies on the next start."
+
+#: openpilot/tesla/ui/pages/models.py:20
+msgid "Big models"
+msgstr "Big models"
+
+#: openpilot/tesla/ui/tiles.py:23
+msgid "Black"
+msgstr "Black"
+
+#: openpilot/tesla/ui/screen.py:481
+msgid "Blind spot indicators"
+msgstr "Blind spot indicators"
+
+#: openpilot/tesla/ui/offroad.py:68
+msgid "Body & Comfort"
+msgstr "Body & Comfort"
+
+#: openpilot/tesla/ui/pages/home.py:45 openpilot/tesla/ui/pages/software.py:112
+msgid "Branch"
+msgstr "Branch"
+
+#: openpilot/tesla/ui/pages/models.py:110
+msgid "CANCEL"
+msgstr "CANCEL"
+
+#: openpilot/tesla/ui/pages/models.py:120
+msgid "CLEAR"
+msgstr "CLEAR"
+
+#: openpilot/tesla/ui/pages/models.py:75 openpilot/tesla/ui/pages/models.py:80 openpilot/tesla/ui/pages/software.py:88
+msgid "CURRENT"
+msgstr "CURRENT"
+
+#: openpilot/tesla/ui/offroad.py:56
+msgid "Calibration & Vehicle Params"
+msgstr "Calibration & Vehicle Params"
+
+#: openpilot/tesla/ui/pages/models.py:110
+msgid "Cancel download"
+msgstr "Cancel download"
+
+#: openpilot/tesla/ui/pages/models.py:110
+msgid "Cancel verification"
+msgstr "Cancel verification"
+
+#: openpilot/tesla/ui/pages/home.py:46
+msgid "Car"
+msgstr "Car"
+
+#: openpilot/tesla/ui/pages/tesla.py:43
+msgid "Car model"
+msgstr "Car model"
+
+#: openpilot/tesla/ui/pages/plugins.py:86
+msgid "Category"
+msgstr "Category"
+
+#: openpilot/tesla/ui/pages/software.py:102
+msgid "Check for update"
+msgstr "Check for update"
+
+#: openpilot/tesla/ui/pages/plugins.py:88
+msgid "Claims"
+msgstr "Claims"
+
+#: openpilot/tesla/ui/pages/models.py:120
+msgid "Clear model cache"
+msgstr "Clear model cache"
+
+#: openpilot/tesla/ui/pages/models.py:121
+msgid "Clear the model cache? Selected models download again."
+msgstr "Clear the model cache? Selected models download again."
+
+#: openpilot/tesla/ui/tiles.py:21
+msgid "Cobalt"
+msgstr "Cobalt"
+
+#: openpilot/tesla/ui/pages/toggles.py:40
+msgid "Color of every tile on the home screen."
+msgstr "Color of every tile on the home screen."
+
+#: openpilot/tesla/ui/pages/home.py:45
+msgid "Commit"
+msgstr "Commit"
+
+#: openpilot/tesla/ui/pages/developer.py:24
+msgid "Control the car with a joystick for debugging."
+msgstr "Control the car with a joystick for debugging."
+
+#: openpilot/tesla/ui/offroad.py:63
+msgid "Controllers"
+msgstr "Controllers"
+
+#: openpilot/tesla/ui/settings_meta.py:8
+msgid "Cooperative Steering"
+msgstr "Cooperative Steering"
+
+#: openpilot/tesla/ui/tiles.py:22
+msgid "Crimson"
+msgstr "Crimson"
+
+#: openpilot/tesla/ui/pages/toggles.py:22
+msgid "Cruise speed set when cruise is engaged."
+msgstr "Cruise speed set when cruise is engaged."
+
+#: openpilot/tesla/ui/offroad.py:66
+msgid "Data Sources & External Compute"
+msgstr "Data Sources & External Compute"
+
+#: openpilot/tesla/ui/pages/base.py:76
+msgid "Disengage to {}"
+msgstr "Disengage to {}"
+
+#: openpilot/tesla/ui/screen.py:515
+msgid "Done"
+msgstr "Done"
+
+#: openpilot/tesla/ui/store_page.py:21
+msgid "Download the plugin list from github.com/onemiless/xpilot-plugins."
+msgstr "Download the plugin list from github.com/onemiless/xpilot-plugins."
+
+#: openpilot/tesla/ui/screen.py:515
+msgid "Drive"
+msgstr "Drive"
+
+#: openpilot/tesla/ui/offroad.py:58 openpilot/tesla/ui/pages/tesla.py:45 openpilot/tesla/ui/settings_page.py:88
+msgid "Driver Monitoring"
+msgstr "Driver Monitoring"
+
+#: openpilot/tesla/ui/pages/device.py:34
+msgid "Driver camera preview"
+msgstr "Driver camera preview"
+
+#: openpilot/tesla/ui/offroad.py:70
+msgid "Driving Overlays"
+msgstr "Driving Overlays"
+
+#: openpilot/tesla/ui/screen.py:467
+msgid "Driving view"
+msgstr "Driving view"
+
+#: openpilot/tesla/ui/pages/base.py:128
+msgid "Edit"
+msgstr "Edit"
+
+#: openpilot/tesla/ui/tiles.py:21
+msgid "Emerald"
+msgstr "Emerald"
+
+#: openpilot/tesla/ui/pages/toggles.py:36
+msgid "Enable to use sunnypilot driver assistance. Disable to use your car's stock driver assistance."
+msgstr "Enable to use sunnypilot driver assistance. Disable to use your car's stock driver assistance."
+
+#: openpilot/tesla/ui/offroad.py:57
+msgid "Engagement"
+msgstr "Engagement"
+
+#: openpilot/tesla/ui/screen.py:80
+msgid "Every tile is on the screen."
+msgstr "Every tile is on the screen."
+
+#: openpilot/tesla/ui/pages/plugins.py:129
+msgid "Failed"
+msgstr "Failed"
+
+#: openpilot/tesla/ui/pages/software.py:124
+msgid "Failed to get available branches. Ensure you're connected to the internet and try again."
+msgstr "Failed to get available branches. Ensure you're connected to the internet and try again."
+
+#: openpilot/tesla/ui/plugins_page.py:63
+msgid "Failed: {}"
+msgstr "Failed: {}"
+
+#: openpilot/tesla/ui/pages/toggles.py:19
+msgid "Following distance"
+msgstr "Following distance"
+
+#: openpilot/tesla/ui/pages/developer.py:23
+msgid "Grant SSH access to all public keys in your GitHub settings. Only enter your own username."
+msgstr "Grant SSH access to all public keys in your GitHub settings. Only enter your own username."
+
+#: openpilot/tesla/ui/tiles.py:22
+msgid "Graphite"
+msgstr "Graphite"
+
+#: openpilot/tesla/ui/screen.py:487
+msgid "Hidden"
+msgstr "Hidden"
+
+#: openpilot/tesla/ui/screen.py:489
+msgid "Hide"
+msgstr "Hide"
+
+#: openpilot/tesla/ui/offroad.py:294
+msgid "INSTALL & ENABLE"
+msgstr "INSTALL & ENABLE"
+
+#: openpilot/tesla/ui/pages/toggles.py:22
+msgid "Initial cruise speed"
+msgstr "Initial cruise speed"
+
+#: openpilot/tesla/ui/pages/plugins.py:141 openpilot/tesla/ui/store_page.py:35
+msgid "Install & enable restarts while parked."
+msgstr "Install & enable restarts while parked."
+
+#: openpilot/tesla/ui/plugins_page.py:59
+msgid "Install third-party plugins (reviewed, not signed). Restart to apply."
+msgstr "Install third-party plugins (reviewed, not signed). Restart to apply."
+
+#: openpilot/tesla/ui/pages/software.py:104
+msgid "Install {}"
+msgstr "Install {}"
+
+#: openpilot/tesla/ui/pages/developer.py:24
+msgid "Joystick debug mode"
+msgstr "Joystick debug mode"
+
+#: openpilot/tesla/ui/offroad.py:61
+msgid "Lane Change"
+msgstr "Lane Change"
+
+#: openpilot/tesla/ui/pages/toggles.py:28
+msgid "Lane departure warnings"
+msgstr "Lane departure warnings"
+
+#: openpilot/tesla/ui/pages/tesla.py:53 openpilot/tesla/ui/settings_page.py:98
+msgid "Language"
+msgstr "Language"
+
+#: openpilot/tesla/ui/pages/tesla.py:53 openpilot/tesla/ui/settings_page.py:98
+msgid "Language changes apply after the UI restarts."
+msgstr "Language changes apply after the UI restarts."
+
+#: openpilot/tesla/ui/offroad.py:59
+msgid "Lateral Planning"
+msgstr "Lateral Planning"
+
+#: openpilot/tesla/ui/pages/developer.py:29
+msgid "Lateral maneuver mode"
+msgstr "Lateral maneuver mode"
+
+#: openpilot/tesla/ui/offroad.py:55
+msgid "Lead & Object Fusion"
+msgstr "Lead & Object Fusion"
+
+#: openpilot/tesla/ui/slots/long_owner.py:16
+msgid "Long owner"
+msgstr "Long owner"
+
+#: openpilot/tesla/ui/offroad.py:60
+msgid "Longitudinal Planning"
+msgstr "Longitudinal Planning"
+
+#: openpilot/tesla/ui/pages/developer.py:26
+msgid "Longitudinal maneuver mode"
+msgstr "Longitudinal maneuver mode"
+
+#: openpilot/tesla/ui/settings_meta.py:9
+msgid "MADS Screen Activation"
+msgstr "MADS Screen Activation"
+
+#: openpilot/tesla/ui/settings_meta.py:7
+msgid "Manual Long Owner (wiper first detent)"
+msgstr "Manual Long Owner (wiper first detent)"
+
+#: openpilot/tesla/ui/screen.py:483
+msgid "Model source"
+msgstr "Model source"
+
+#: openpilot/tesla/ui/slots/models.py:9
+msgid "Models"
+msgstr "Models"
+
+#: openpilot/tesla/ui/pages/toggles.py:30
+msgid "Monitor the driver even when sunnypilot is not engaged."
+msgstr "Monitor the driver even when sunnypilot is not engaged."
+
+#: openpilot/tesla/ui/screen.py:487
+msgid "Move only"
+msgstr "Move only"
+
+#: openpilot/tesla/ui/pages/home.py:15
+msgid "NOTICE"
+msgstr "NOTICE"
+
+#: openpilot/tesla/ui/offroad.py:62
+msgid "Navigate on xpilot"
+msgstr "Navigate on xpilot"
+
+#: openpilot/tesla/ui/pages/developer.py:36
+msgid "Navigation (alpha)"
+msgstr "Navigation (alpha)"
+
+#: openpilot/tesla/ui/pages/home.py:47 openpilot/tesla/ui/slots/settings.py:50
+msgid "No alerts"
+msgstr "No alerts"
+
+#: openpilot/tesla/ui/pages/models.py:136
+msgid "No models are available for this hardware yet. Connect to the internet and refresh the model list."
+msgstr "No models are available for this hardware yet. Connect to the internet and refresh the model list."
+
+#: openpilot/tesla/ui/screen.py:80
+msgid "No tiles to add"
+msgstr "No tiles to add"
+
+#: openpilot/tesla/ui/offroad.py:103
+msgid "No {} plugin: driving assistance unavailable"
+msgstr "No {} plugin: driving assistance unavailable"
+
+#: openpilot/tesla/ui/settings_meta.py:17 openpilot/tesla/ui/settings_meta.py:19
+msgid "Not set"
+msgstr "Not set"
+
+#: openpilot/tesla/ui/slots/long_owner.py:12
+msgid "ON"
+msgstr "ON"
+
+#: openpilot/tesla/ui/pages/tesla.py:48 openpilot/tesla/ui/settings_page.py:93
+msgid "OSM Map Data"
+msgstr "OSM Map Data"
+
+#: openpilot/tesla/ui/settings_meta.py:10
+msgid "Off"
+msgstr "Off"
+
+#: openpilot/tesla/ui/pages/device.py:31
+msgid "POWER OFF"
+msgstr "POWER OFF"
+
+#: openpilot/tesla/ui/screen.py:515
+msgid "Park"
+msgstr "Park"
+
+#: openpilot/tesla/ui/offroad.py:54
+msgid "Perception Models"
+msgstr "Perception Models"
+
+#: openpilot/tesla/ui/pages/software.py:40
+msgid "Please connect to Wi-Fi to update."
+msgstr "Please connect to Wi-Fi to update."
+
+#: openpilot/tesla/ui/plugins_page.py:59
+msgid "Plugin Store"
+msgstr "Plugin Store"
+
+#: openpilot/tesla/ui/slots/settings.py:60
+msgid "Plugins"
+msgstr "Plugins"
+
+#: openpilot/tesla/ui/pages/device.py:31
+msgid "Power off"
+msgstr "Power off"
+
+#: openpilot/tesla/ui/pages/device.py:35
+msgid "Preview the cabin camera to check driver monitoring visibility. The vehicle must be off."
+msgstr "Preview the cabin camera to check driver monitoring visibility. The vehicle must be off."
+
+#: openpilot/tesla/ui/pages/plugins.py:88
+msgid "Priority"
+msgstr "Priority"
+
+#: openpilot/tesla/ui/pages/models.py:80
+msgid "QUEUED"
+msgstr "QUEUED"
+
+#: openpilot/tesla/ui/pages/device.py:49
+msgid "REBOOT"
+msgstr "REBOOT"
+
+#: openpilot/tesla/ui/pages/models.py:118
+msgid "REFRESH"
+msgstr "REFRESH"
+
+#: openpilot/tesla/ui/pages/toggles.py:31
+msgid "Record & upload cabin camera"
+msgstr "Record & upload cabin camera"
+
+#: openpilot/tesla/ui/pages/toggles.py:33
+msgid "Record & upload mic audio"
+msgstr "Record & upload mic audio"
+
+#: openpilot/tesla/ui/pages/toggles.py:33
+msgid "Record microphone audio while driving. Audio is included in dashcam videos."
+msgstr "Record microphone audio while driving. Audio is included in dashcam videos."
+
+#: openpilot/tesla/ui/store_page.py:21
+msgid "Refresh"
+msgstr "Refresh"
+
+#: openpilot/tesla/ui/pages/plugins.py:116
+msgid "Refresh ({})"
+msgstr "Refresh ({})"
+
+#: openpilot/tesla/ui/pages/models.py:118
+msgid "Refresh model list"
+msgstr "Refresh model list"
+
+#: openpilot/tesla/ui/pages/device.py:38
+msgid "Regulatory info"
+msgstr "Regulatory info"
+
+#: openpilot/tesla/ui/pages/device.py:47
+msgid "Reset calibration"
+msgstr "Reset calibration"
+
+#: openpilot/tesla/ui/pages/device.py:43
+msgid "Review training guide"
+msgstr "Review training guide"
+
+#: openpilot/tesla/ui/pages/developer.py:29
+msgid "Run lateral maneuvers for testing steering control."
+msgstr "Run lateral maneuvers for testing steering control."
+
+#: openpilot/tesla/ui/pages/developer.py:26
+msgid "Run longitudinal maneuvers for testing gas and brake control."
+msgstr "Run longitudinal maneuvers for testing gas and brake control."
+
+#: openpilot/tesla/ui/pages/tesla.py:24 openpilot/tesla/ui/pages/tesla.py:27 openpilot/tesla/ui/pages/tesla.py:86
+msgid "SELECTED"
+msgstr "SELECTED"
+
+#: openpilot/tesla/ui/slots/long_owner.py:12
+msgid "SP"
+msgstr "SP"
+
+#: openpilot/tesla/ui/pages/developer.py:23
+msgid "SSH keys"
+msgstr "SSH keys"
+
+#: openpilot/tesla/ui/slots/long_owner.py:12
+msgid "STOCK"
+msgstr "STOCK"
+
+#: openpilot/tesla/ui/offroad.py:65
+msgid "Safety Fallback & Autopilot Handoff"
+msgstr "Safety Fallback & Autopilot Handoff"
+
+#: openpilot/tesla/ui/pages/terms.py:25
+msgid "Scan the QR code, or go to {}"
+msgstr "Scan the QR code, or go to {}"
+
+#: openpilot/tesla/ui/screen.py:482
+msgid "Set speed"
+msgstr "Set speed"
+
+#: openpilot/tesla/ui/screen.py:489
+msgid "Show"
+msgstr "Show"
+
+#: openpilot/tesla/ui/pages/developer.py:34
+msgid "Show touch locations and the UI frame rate."
+msgstr "Show touch locations and the UI frame rate."
+
+#: openpilot/tesla/ui/pages/models.py:20
+msgid "Small models"
+msgstr "Small models"
+
+#: openpilot/tesla/ui/pages/plugins.py:84
+msgid "Source"
+msgstr "Source"
+
+#: openpilot/tesla/ui/pages/toggles.py:11
+msgid "Standard is recommended. Aggressive follows closer with firmer gas and braking; relaxed leaves more space."
+msgstr "Standard is recommended. Aggressive follows closer with firmer gas and braking; relaxed leaves more space."
+
+#: openpilot/tesla/ui/pages/home.py:45 openpilot/tesla/ui/slots/settings.py:40
+msgid "Status"
+msgstr "Status"
+
+#: openpilot/tesla/ui/screen.py:482
+msgid "Steering wheel"
+msgstr "Steering wheel"
+
+#: openpilot/tesla/ui/pages/plugins.py:91
+msgid "Store: {}"
+msgstr "Store: {}"
+
+#: openpilot/tesla/ui/offroad.py:105
+msgid "System update plugin incompatibility: {}: {}"
+msgstr "System update plugin incompatibility: {}: {}"
+
+#: openpilot/tesla/ui/pages/plugins.py:136
+msgid "Tap for settings ({})"
+msgstr "Tap for settings ({})"
+
+#: openpilot/tesla/ui/pages/software.py:107 openpilot/tesla/ui/pages/software.py:126
+msgid "Target branch"
+msgstr "Target branch"
+
+#: openpilot/tesla/ui/tiles.py:21
+msgid "Teal"
+msgstr "Teal"
+
+#: openpilot/tesla/ui/pages/device.py:45
+msgid "Terms & conditions"
+msgstr "Terms & conditions"
+
+#: openpilot/tesla/ui/slots/settings.py:75
+msgid "Tesla"
+msgstr "Tesla"
+
+#: openpilot/tesla/ui/pages/toggles.py:40
+msgid "Tile color"
+msgstr "Tile color"
+
+#: openpilot/tesla/ui/offroad.py:69
+msgid "Tiles"
+msgstr "Tiles"
+
+#: openpilot/tesla/ui/offroad.py:71
+msgid "Tools & Diagnostics"
+msgstr "Tools & Diagnostics"
+
+#: openpilot/tesla/ui/screen.py:481
+msgid "Torque bar"
+msgstr "Torque bar"
+
+#: openpilot/tesla/ui/pages/developer.py:37
+msgid "Turn-by-turn navigation with a route map. Set a destination from comma connect."
+msgstr "Turn-by-turn navigation with a route map. Set a destination from comma connect."
+
+#: openpilot/tesla/ui/pages/developer.py:34
+msgid "UI debug mode"
+msgstr "UI debug mode"
+
+#: openpilot/tesla/ui/pages/software.py:114
+msgid "Uninstall sunnypilot"
+msgstr "Uninstall sunnypilot"
+
+#: openpilot/tesla/ui/slots/settings.py:107 openpilot/tesla/ui/slots/settings.py:50
+msgid "Update available"
+msgstr "Update available"
+
+#: openpilot/tesla/ui/pages/home.py:43
+msgid "Update available: install it from Software"
+msgstr "Update available: install it from Software"
+
+#: openpilot/tesla/ui/pages/software.py:102
+msgid "Update: {}"
+msgstr "Update: {}"
+
+#: openpilot/tesla/ui/pages/toggles.py:31
+msgid "Upload cabin camera data to help improve driver monitoring."
+msgstr "Upload cabin camera data to help improve driver monitoring."
+
+#: openpilot/tesla/ui/pages/plugins.py:87
+msgid "Use"
+msgstr "Use"
+
+#: openpilot/tesla/ui/pages/developer.py:21
+msgid "Use Android Debug Bridge (ADB) over USB or the network."
+msgstr "Use Android Debug Bridge (ADB) over USB or the network."
+
+#: openpilot/tesla/ui/pages/developer.py:12
+msgid "Use alpha openpilot longitudinal control instead of stock ACC. This may disable Automatic Emergency Braking (AEB)."
+msgstr "Use alpha openpilot longitudinal control instead of stock ACC. This may disable Automatic Emergency Braking (AEB)."
+
+#: openpilot/tesla/ui/pages/toggles.py:27
+msgid "Use metric units"
+msgstr "Use metric units"
+
+#: openpilot/tesla/ui/pages/tesla.py:50
+msgid "Vehicle"
+msgstr "Vehicle"
+
+#: openpilot/tesla/ui/pages/home.py:45 openpilot/tesla/ui/pages/plugins.py:85 openpilot/tesla/ui/pages/software.py:111
+msgid "Version"
+msgstr "Version"
+
+#: openpilot/tesla/ui/tiles.py:22
+msgid "Violet"
+msgstr "Violet"
+
+#: openpilot/tesla/ui/pages/developer.py:64
+msgid "WARNING: alpha longitudinal control may disable Automatic Emergency Braking (AEB)"
+msgstr "WARNING: alpha longitudinal control may disable Automatic Emergency Braking (AEB)"
+
+#: openpilot/tesla/ui/pages/toggles.py:29
+msgid "Warn when you drift across a detected lane line. Only above 31 mph (50 km/h), with no turn signal."
+msgstr "Warn when you drift across a detected lane line. Only above 31 mph (50 km/h), with no turn signal."
+
+#: openpilot/tesla/ui/pages/tesla.py:45 openpilot/tesla/ui/settings_page.py:90
+msgid "When off, the DM processes do not start. Change only while parked; applies on the next drive."
+msgstr "When off, the DM processes do not start. Change only while parked; applies on the next drive."
+
+#: openpilot/tesla/ui/pages/terms.py:31
+msgid "accept terms"
+msgstr "accept terms"
+
+#: openpilot/tesla/ui/pages/models.py:105 openpilot/tesla/ui/pages/models.py:37
+msgid "active model"
+msgstr "active model"
+
+#: openpilot/tesla/ui/screen.py:630
+msgid "add tiles"
+msgstr "add tiles"
+
+#: openpilot/tesla/ui/pages/training.py:59
+msgid "allow data uploading"
+msgstr "allow data uploading"
+
+#: openpilot/tesla/ui/pages/onboarding.py:46 openpilot/tesla/ui/pages/training.py:62
+msgid "back"
+msgstr "back"
+
+#: openpilot/tesla/ui/pages/plugins.py:84
+msgid "built-in (switch off only)"
+msgstr "built-in (switch off only)"
+
+#: openpilot/tesla/ui/pages/models.py:54
+msgid "canceling..."
+msgstr "canceling..."
+
+#: openpilot/tesla/ui/pages/tesla.py:44
+msgid "car model"
+msgstr "car model"
+
+#: openpilot/tesla/ui/plugins_page.py:20
+msgid "claims"
+msgstr "claims"
+
+#: openpilot/tesla/ui/pages/models.py:120
+msgid "clearing..."
+msgstr "clearing..."
+
+#: openpilot/tesla/ui/offroad.py:119
+msgid "conflict"
+msgstr "conflict"
+
+#: openpilot/tesla/ui/pages/onboarding.py:47 openpilot/tesla/ui/pages/terms.py:30
+msgid "decline & uninstall"
+msgstr "decline & uninstall"
+
+#: openpilot/tesla/ui/pages/onboarding.py:102
+msgid "decline terms"
+msgstr "decline terms"
+
+#: openpilot/tesla/ui/pages/models.py:34
+msgid "download failed"
+msgstr "download failed"
+
+#: openpilot/tesla/ui/pages/software.py:100 openpilot/tesla/ui/pages/software.py:42 openpilot/tesla/ui/pages/software.py:71
+msgid "download update"
+msgstr "download update"
+
+#: openpilot/tesla/ui/pages/models.py:36
+msgid "downloaded"
+msgstr "downloaded"
+
+#: openpilot/tesla/ui/pages/models.py:54
+msgid "downloading"
+msgstr "downloading"
+
+#: openpilot/tesla/ui/pages/device.py:36
+msgid "driver camera"
+msgstr "driver camera"
+
+#: openpilot/tesla/ui/pages/training.py:56
+msgid "driver camera data"
+msgstr "driver camera data"
+
+#: openpilot/tesla/ui/pages/training.py:50
+msgid "driver monitoring check"
+msgstr "driver monitoring check"
+
+#: openpilot/tesla/ui/pages/training.py:54
+msgid "driver monitoring check\n\nLook straight ahead until the green bar is full."
+msgstr "driver monitoring check\n\nLook straight ahead until the green bar is full."
+
+#: openpilot/tesla/ui/offroad.py:279
+msgid "enabled {}: restarting"
+msgstr "enabled {}: restarting"
+
+#: openpilot/tesla/ui/pages/models.py:34
+msgid "error"
+msgstr "error"
+
+#: openpilot/tesla/ui/offroad.py:247
+msgid "error: {}"
+msgstr "error: {}"
+
+#: openpilot/tesla/ui/pages/plugins.py:116 openpilot/tesla/ui/pages/plugins.py:128
+msgid "failed"
+msgstr "failed"
+
+#: openpilot/tesla/ui/pages/software.py:69
+msgid "failed to update"
+msgstr "failed to update"
+
+#: openpilot/tesla/ui/offroad.py:117
+msgid "fault"
+msgstr "fault"
+
+#: openpilot/tesla/ui/pages/models.py:118
+msgid "fetching..."
+msgstr "fetching..."
+
+#: openpilot/tesla/ui/offroad.py:279
+msgid "installed {}: restart to apply"
+msgstr "installed {}: restart to apply"
+
+#: openpilot/tesla/ui/offroad.py:276
+msgid "installing {}..."
+msgstr "installing {}..."
+
+#: openpilot/tesla/ui/pages/tesla.py:55
+msgid "language"
+msgstr "language"
+
+#: openpilot/tesla/ui/offroad.py:254
+msgid "loading..."
+msgstr "loading..."
+
+#: openpilot/tesla/ui/pages/training.py:60
+msgid "looking for driver"
+msgstr "looking for driver"
+
+#: openpilot/tesla/ui/pages/models.py:78
+msgid "models"
+msgstr "models"
+
+#: openpilot/tesla/ui/offroad.py:299
+msgid "needs api {}"
+msgstr "needs api {}"
+
+#: openpilot/tesla/ui/pages/training.py:34 openpilot/tesla/ui/pages/training.py:49 openpilot/tesla/ui/pages/training.py:53
+msgid "next"
+msgstr "next"
+
+#: openpilot/tesla/ui/slots/long_owner.py:11
+msgid "no owner ABI"
+msgstr "no owner ABI"
+
+#: openpilot/tesla/ui/pages/training.py:58
+msgid "no, don't upload"
+msgstr "no, don't upload"
+
+#: openpilot/tesla/ui/pages/plugins.py:88 openpilot/tesla/ui/plugins_page.py:19
+msgid "none"
+msgstr "none"
+
+#: openpilot/tesla/ui/pages/home.py:34
+msgid "not detected yet"
+msgstr "not detected yet"
+
+#: openpilot/tesla/ui/pages/plugins.py:133 openpilot/tesla/ui/pages/plugins.py:139 openpilot/tesla/ui/pages/plugins.py:83
+msgid "offroad"
+msgstr "offroad"
+
+#: openpilot/tesla/ui/pages/plugins.py:133 openpilot/tesla/ui/pages/plugins.py:139 openpilot/tesla/ui/pages/plugins.py:83
+msgid "onroad"
+msgstr "onroad"
+
+#: openpilot/tesla/ui/pages/plugins.py:133 openpilot/tesla/ui/pages/plugins.py:139 openpilot/tesla/ui/pages/plugins.py:83
+msgid "onroad + offroad"
+msgstr "onroad + offroad"
+
+#: openpilot/tesla/ui/pages/device.py:15
+msgid "openpilot calibrates continuously; resetting is rarely needed. Mount within 4 degrees left/right and 5 up/9 down."
+msgstr "openpilot calibrates continuously; resetting is rarely needed. Mount within 4 degrees left/right and 5 up/9 down."
+
+#: openpilot/tesla/ui/offroad.py:270 openpilot/tesla/ui/pages/plugins.py:62 openpilot/tesla/ui/plugins_page.py:43
+msgid "park first"
+msgstr "park first"
+
+#: openpilot/tesla/ui/plugins_page.py:20
+msgid "priority"
+msgstr "priority"
+
+#: openpilot/tesla/ui/pages/models.py:55
+msgid "progress"
+msgstr "progress"
+
+#: openpilot/tesla/ui/pages/device.py:38
+msgid "regulatory"
+msgstr "regulatory"
+
+#: openpilot/tesla/ui/offroad.py:274
+msgid "removed {}: restart to apply"
+msgstr "removed {}: restart to apply"
+
+#: openpilot/tesla/ui/offroad.py:166
+msgid "required role {}"
+msgstr "required role {}"
+
+#: openpilot/tesla/ui/pages/plugins.py:84
+msgid "store (removable)"
+msgstr "store (removable)"
+
+#: openpilot/tesla/ui/offroad.py:176
+msgid "store busy"
+msgstr "store busy"
+
+#: openpilot/tesla/ui/offroad.py:227
+msgid "tap Refresh"
+msgstr "tap Refresh"
+
+#: openpilot/tesla/ui/pages/device.py:45
+msgid "terms"
+msgstr "terms"
+
+#: openpilot/tesla/ui/pages/terms.py:24
+msgid "terms of service"
+msgstr "terms of service"
+
+#: openpilot/tesla/ui/pages/device.py:43
+msgid "training guide"
+msgstr "training guide"
+
+#: openpilot/tesla/ui/pages/home.py:30 openpilot/tesla/ui/pages/plugins.py:134 openpilot/tesla/ui/pages/plugins.py:85 openpilot/tesla/ui/plugins_page.py:20
+msgid "unknown"
+msgstr "unknown"
+
+#: openpilot/tesla/ui/pages/software.py:64 openpilot/tesla/ui/pages/software.py:73
+msgid "up to date"
+msgstr "up to date"
+
+#: openpilot/tesla/ui/pages/software.py:59
+msgid "updater failed to respond"
+msgstr "updater failed to respond"
+
+#: openpilot/tesla/ui/pages/plugins.py:139
+msgid "use not declared"
+msgstr "use not declared"
+
+#: openpilot/tesla/ui/pages/models.py:54
+msgid "verifying"
+msgstr "verifying"
+
+#: openpilot/tesla/ui/offroad.py:307
+msgid "v{}"
+msgstr "v{}"
+
+#: openpilot/tesla/ui/offroad.py:307
+msgid "v{} -> v{}"
+msgstr "v{} -> v{}"
+
+#: openpilot/tesla/ui/offroad.py:299
+msgid "v{} installed"
+msgstr "v{} installed"
+
+#: openpilot/tesla/ui/offroad.py:306
+msgid "v{} {}"
+msgstr "v{} {}"
+
+#: openpilot/tesla/ui/pages/training.py:45
+msgid "what is sunnypilot?"
+msgstr "what is sunnypilot?"
+
+#: openpilot/tesla/ui/pages/plugins.py:116 openpilot/tesla/ui/pages/plugins.py:91 openpilot/tesla/ui/store_page.py:29
+msgid "working..."
+msgstr "working..."
+
+#: openpilot/tesla/ui/plugins_page.py:37
+msgid "{} Settings"
+msgstr "{} Settings"
+
+#: openpilot/tesla/ui/slots/settings.py:50
+msgid "{} alert"
+msgid_plural "{} alerts"
+msgstr[0] "{} alert"
+msgstr[1] "{} alerts"
+
+#: openpilot/tesla/ui/slots/settings.py:70
+msgid "{} conflict"
+msgid_plural "{} conflicts"
+msgstr[0] "{} conflict"
+msgstr[1] "{} conflicts"
+
+#: openpilot/tesla/ui/slots/settings.py:71
+msgid "{} failed"
+msgstr "{} failed"
+
+#: openpilot/tesla/ui/slots/settings.py:70
+msgid "{} on"
+msgstr "{} on"
+
+#: openpilot/tesla/ui/offroad.py:256
+msgid "{} plugins"
+msgstr "{} plugins"
+
+#: openpilot/tesla/ui/pages/models.py:50
+msgid "{} queued"
+msgstr "{} queued"
+
+#: openpilot/tesla/ui/plugins_page.py:83
+msgid "{}/{} on"
+msgstr "{}/{} on"

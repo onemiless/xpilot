@@ -11,6 +11,8 @@ from openpilot.tesla import manifest as mf
 from openpilot.tesla.manifest import CATEGORIES, conflicting
 from openpilot.tesla.plugin_params import ParamsView
 from openpilot.tesla.plugins import FAULTS_PARAM, LOAD_ERRORS, PLUGINS, REQUIRED_ROLES, PluginMsgs, is_enabled, missing_roles, resolve
+from openpilot.system.ui.lib.multilang import tr
+from openpilot.system.ui.lib.multilang import tr_noop
 
 MICI = (536, 240)
 TITLE_H = 230  # detail page title band: back button, parent name, page title
@@ -48,6 +50,27 @@ CAR_LIST = os.path.join(BASEDIR, "openpilot/sunnypilot/selfdrive/car/car_list.js
 MODEL_PARAM = "CarPlatformBundle"  # card.py fingerprints as bundle["platform"] when set; unset = auto fingerprint
 _plugin_msgs = None
 
+CATEGORY_LABELS = {
+  "perception_model": tr_noop("Perception Models"),
+  "object_fusion": tr_noop("Lead & Object Fusion"),
+  "vehicle_params": tr_noop("Calibration & Vehicle Params"),
+  "engagement": tr_noop("Engagement"),
+  "driver_monitoring": tr_noop("Driver Monitoring"),
+  "lateral_planning": tr_noop("Lateral Planning"),
+  "longitudinal_planning": tr_noop("Longitudinal Planning"),
+  "lane_change": tr_noop("Lane Change"),
+  "navigation": tr_noop("Navigate on xpilot"),
+  "controller": tr_noop("Controllers"),
+  "actuation": tr_noop("Actuation & Car Messages"),
+  "safety_fallback": tr_noop("Safety Fallback & Autopilot Handoff"),
+  "data_source": tr_noop("Data Sources & External Compute"),
+  "alerts": tr_noop("Alerts"),
+  "body_comfort": tr_noop("Body & Comfort"),
+  "ui": tr_noop("Tiles"),
+  "overlays": tr_noop("Driving Overlays"),
+  "tools": tr_noop("Tools & Diagnostics"),
+}
+
 
 def tesla_models() -> list[tuple[str, dict]]:
   """(name, CarPlatformBundle value) of each Tesla in sunnypilot's car list, in name order (bundle as params_migration writes it)."""
@@ -77,9 +100,9 @@ def plugin_notifications() -> list[tuple[int, str]]:
 
 def offroad_alerts(params) -> list[tuple[int, str]]:
   """(severity, text) of the active offroad alerts (alertmanager.set_offroad_alert), most severe first."""
-  alerts = [(1, f"No {role} plugin: driving assistance unavailable") for role in missing_roles(params)]
+  alerts = [(1, tr("No {} plugin: driving assistance unavailable").format(role)) for role in missing_roles(params)]
   warnings = ParamsView(params, mf.UPDATE_SPECS).get(mf.UPDATE_COMPAT_PARAM) or {}
-  alerts += [(1, f"System update plugin incompatibility: {name}: {reason}") for name, reason in warnings.items()]
+  alerts += [(1, tr("System update plugin incompatibility: {}: {}").format(name, reason)) for name, reason in warnings.items()]
   for key in OFFROAD_ALERT_KEYS:
     alert = params.get(key)
     if alert:
@@ -91,9 +114,9 @@ def offroad_alerts(params) -> list[tuple[int, str]]:
 def plugin_status(plugin, faults, conflicts) -> str:
   """"fault" = dropped this boot (FAULTS_PARAM), "conflict" = switched on but lost an exclusive claim."""
   if plugin.NAME in faults:
-    return "fault"
+    return tr("fault")
   if plugin.NAME in conflicts:
-    return "conflict"
+    return tr("conflict")
   if (mf.INSTALL_DIR / plugin.NAME).is_dir():
     return store.plugin_state(plugin.NAME, plugin.MANIFEST.version)
   return ""
@@ -101,7 +124,7 @@ def plugin_status(plugin, faults, conflicts) -> str:
 
 def plugin_sections():
   """(category title, plugins) for each manifest category that has plugins, in CATEGORIES order."""
-  return [(title, [p for p in PLUGINS if p.CATEGORY == c]) for c, title in CATEGORIES.items() if any(p.CATEGORY == c for p in PLUGINS)]
+  return [(CATEGORY_LABELS[c], [p for p in PLUGINS if p.CATEGORY == c]) for c in CATEGORIES if any(p.CATEGORY == c for p in PLUGINS)]
 
 
 def market_sections(entries) -> list[tuple[str, list, list]]:
@@ -111,11 +134,11 @@ def market_sections(entries) -> list[tuple[str, list, list]]:
   loaded = {p.NAME for p in PLUGINS}
   extra = [e for e in entries if e.id not in loaded]
   sections = []
-  for c, title in CATEGORIES.items():
+  for c in CATEGORIES:
     plugins = [p for p in PLUGINS if p.CATEGORY == c]
     found = [e for e in extra if (e.category if e.category in CATEGORIES else "tools") == c]
     if plugins or found:
-      sections.append((title, plugins, found))
+      sections.append((CATEGORY_LABELS[c], plugins, found))
   return sections
 
 
@@ -140,7 +163,7 @@ def switch_changes(name, value, items, enabled) -> tuple[dict[str, bool], str | 
     remaining.add(name)
   for role in REQUIRED_ROLES:
     if any(role in c for n, _, c, _ in items if n in enabled) and not any(role in c for n, _, c, _ in items if n in remaining):
-      return {}, f"required role {role}"
+      return {}, tr("required role {}").format(role)
   changes = {key: False for n, _, _, key in items if n in off and key is not None}
   changes.update({key: value for n, _, _, key in items if n == name and key is not None})
   return changes, None
@@ -150,7 +173,7 @@ def switch_plugin(plugin, value: bool, params, jobs=None) -> str | None:
   """Switch a plugin; switching on switches off every plugin sharing an exclusive claim. Clears its fault mark.
   None on success, else the required-role refusal. params = plugins.view(...); callers check offroad."""
   if jobs is not None and jobs.busy:
-    return "store busy"
+    return tr("store busy")
   if value:
     ok, reason = mf.compatible(plugin.MANIFEST, mf.HOST_CAPS)
     if not ok:
@@ -201,7 +224,7 @@ class StoreJobs:
   def __init__(self, offroad):
     self.offroad = offroad
     self.busy = False
-    self.status = "tap Refresh"
+    self.status = tr("tap Refresh")
     self.failed = False  # last fetch returned an error (status holds it)
     self.entries: list[store.IndexEntry] = []
     self.installed: dict[str, str] = store.installed_versions()
@@ -221,16 +244,16 @@ class StoreJobs:
     try:
       job()
     except Exception as e:
-      self.status = f"error: {e}"[:60]
+      self.status = tr("error: {}").format(e)[:60]
     finally:
       self.installed = store.installed_versions()
       self.states.clear()
       self.busy = False
 
   def fetch(self) -> None:
-    self.status = "loading..."
+    self.status = tr("loading...")
     entries, error = store.fetch_index()
-    self.entries, self.status, self.dirty = entries, error or f"{len(entries)} plugins", True
+    self.entries, self.status, self.dirty = entries, error or tr("{} plugins").format(len(entries)), True
     self.failed = bool(error)
 
   def current(self, pid: str) -> store.IndexEntry | None:
@@ -244,15 +267,17 @@ class StoreJobs:
     if entry is None and have is None:
       return
     if not self.offroad():
-      self.status = "park first"
+      self.status = tr("park first")
       return
     if have is not None and (entry is None or have == entry.version or not entry.installable):
       error = store.uninstall(pid)
-      self.status = f"{pid}: {error}"[:60] if error else f"removed {pid}: restart to apply"
+      self.status = f"{pid}: {error}"[:60] if error else tr("removed {}: restart to apply").format(pid)
     elif entry.installable:
-      self.status = f"installing {entry.id}..."
+      self.status = tr("installing {}...").format(entry.id)
       error = store.install(entry, activate=have is None, offroad=self.offroad)
-      self.status = f"{entry.id}: {error}"[:60] if error else (f"enabled {entry.id}: restarting" if have is None else f"installed {entry.id}: restart to apply")
+      self.status = f"{entry.id}: {error}"[:60] if error else (
+        tr("enabled {}: restarting").format(entry.id) if have is None else tr("installed {}: restart to apply").format(entry.id)
+      )
 
   def can_act(self, pid: str) -> bool:
     return not self.busy and self.offroad() and (pid in self.installed or getattr(self.current(pid), "installable", False))
@@ -260,23 +285,23 @@ class StoreJobs:
   def action(self, entry: store.IndexEntry | None, pid: str = "") -> str:
     """Button text of an entry row; entry None: a downloaded plugin pid missing from the index."""
     if entry is None:
-      return "REMOVE" if pid in self.installed else "N/A"
+      return tr("REMOVE") if pid in self.installed else tr("N/A")
     have = self.installed.get(entry.id)
     if have is not None and (have == entry.version or not entry.installable):
-      return "REMOVE"
+      return tr("REMOVE")
     if not entry.installable:
-      return "N/A"
-    return "UPDATE" if have else "INSTALL & ENABLE"
+      return tr("N/A")
+    return tr("UPDATE") if have else tr("INSTALL & ENABLE")
 
   def row_value(self, entry: store.IndexEntry) -> str:
     have = self.installed.get(entry.id)
     if not entry.installable:
-      return f"needs api {entry.api}" if have is None else f"v{have} installed"
+      return tr("needs api {}").format(entry.api) if have is None else tr("v{} installed").format(have)
     if have == entry.version:
       key = (entry.id, have)
       cached = self.states.get(key)
       now = time.monotonic()
       if cached is None or now - cached[0] >= 1:
         cached = self.states[key] = (now, store.plugin_state(entry.id, have))
-      return f"v{have} {cached[1]}"
-    return f"v{have} -> v{entry.version}" if have else f"v{entry.version}"
+      return tr("v{} {}").format(have, cached[1])
+    return tr("v{} -> v{}").format(have, entry.version) if have else tr("v{}").format(entry.version)

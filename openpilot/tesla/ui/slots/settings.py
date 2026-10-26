@@ -3,6 +3,7 @@ import pyray as rl
 
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import FontWeight
+from openpilot.system.ui.lib.multilang import tr, trn, tr_noop
 from openpilot.tesla.plugins import FAULTS_PARAM, LOAD_ERRORS, resolve
 from openpilot.tesla.ui.offroad import offroad_alerts
 from openpilot.tesla.ui.pages.developer import DeveloperPage
@@ -21,6 +22,7 @@ SIZES = ("medium", "small", "wide")
 
 class _Settings(Tile):
   ICON: str | None = None
+  TRANSLATE_TITLE = True
 
   def lines(self, state) -> list[str]:
     """Live text under the top edge (medium and larger); state is what state() returned."""
@@ -35,7 +37,7 @@ class _Settings(Tile):
 
 
 class StatusTile(_Settings):
-  SPEC = TileSpec("status", "Status", sizes=("medium", "wide", "small"), show="offroad", hz=0.5, order=0)
+  SPEC = TileSpec("status", tr_noop("Status"), sizes=("medium", "wide", "small"), show="offroad", hz=0.5, order=0)
   PAGE = HomePage
   ICON = "icons_mici/alerts_bell.png"
 
@@ -45,17 +47,17 @@ class StatusTile(_Settings):
 
   def lines(self, state):
     count, update = state
-    return [f"{count} alert{'s' if count != 1 else ''}" if count else "No alerts"] + (["Update available"] if update else [])
+    return [trn("{} alert", "{} alerts", count).format(count) if count else tr("No alerts")] + ([tr("Update available")] if update else [])
 
 
 class TogglesTile(_Settings):
-  SPEC = TileSpec("toggles", "Toggles", sizes=SIZES, show="offroad", order=1)
+  SPEC = TileSpec("toggles", tr_noop("Toggles"), sizes=SIZES, show="offroad", order=1)
   PAGE = TogglesPage
   ICON = "icons_mici/settings.png"
 
 
 class PluginsTile(_Settings):
-  SPEC = TileSpec("plugins", "Plugins", sizes=SIZES, show="offroad", hz=0.5, order=2)
+  SPEC = TileSpec("plugins", tr_noop("Plugins"), sizes=SIZES, show="offroad", hz=0.5, order=2)
   PAGE = PluginsPage
   ICON = "icons/link.png"
 
@@ -65,17 +67,18 @@ class PluginsTile(_Settings):
 
   def lines(self, state):
     active, conflicts, failed = state
-    return [f"{active} on"] + ([f"{conflicts} conflict"] if conflicts else []) + ([f"{failed} failed"] if failed else [])
+    return [tr("{} on").format(active)] + ([trn("{} conflict", "{} conflicts", conflicts).format(conflicts)] if conflicts else []) + \
+           ([tr("{} failed").format(failed)] if failed else [])
 
 
 class TeslaTile(_Settings):
-  SPEC = TileSpec("tesla", "Tesla", sizes=SIZES, show="offroad", order=3)
+  SPEC = TileSpec("tesla", tr_noop("Tesla"), sizes=SIZES, show="offroad", order=3)
   PAGE = TeslaPage
   ICON = "icons_mici/wheel.png"
 
 
 class NetworkTile(_Settings):
-  SPEC = TileSpec("network", "Network", sizes=("small", "medium", "wide"), show="offroad", hz=0.5, order=5)
+  SPEC = TileSpec("network", tr_noop("Network"), sizes=("small", "medium", "wide"), show="offroad", hz=0.5, order=5)
   PAGE = NetworkPage
   ICON = "icons_mici/settings/network/wifi_strength_full.png"
 
@@ -87,13 +90,13 @@ class NetworkTile(_Settings):
 
 
 class DeviceTile(_Settings):
-  SPEC = TileSpec("device", "Device", sizes=("small", "medium", "wide"), show="offroad", order=6)
+  SPEC = TileSpec("device", tr_noop("Device"), sizes=("small", "medium", "wide"), show="offroad", order=6)
   PAGE = DevicePage
   ICON = "icons_mici/settings/device_icon.png"
 
 
 class SoftwareTile(_Settings):
-  SPEC = TileSpec("software", "Software", sizes=("small", "medium", "wide"), show="offroad", hz=0.5, order=7)
+  SPEC = TileSpec("software", tr_noop("Software"), sizes=("small", "medium", "wide"), show="offroad", hz=0.5, order=7)
   PAGE = SoftwarePage
   ICON = "icons_mici/settings/software.png"
 
@@ -101,10 +104,10 @@ class SoftwareTile(_Settings):
     return ui_state.params.get_bool("UpdateAvailable")
 
   def lines(self, state):
-    return ["Update available"] if state else []
+    return [tr("Update available")] if state else []
 
 
 class DeveloperTile(_Settings):
-  SPEC = TileSpec("developer", "Developer", sizes=("small", "medium", "wide"), show="offroad", order=8)
+  SPEC = TileSpec("developer", tr_noop("Developer"), sizes=("small", "medium", "wide"), show="offroad", order=8)
   PAGE = DeveloperPage
   ICON = "icons_mici/settings/developer_icon.png"

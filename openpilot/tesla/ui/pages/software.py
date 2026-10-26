@@ -8,6 +8,7 @@ from openpilot.common.time_helpers import system_time_valid
 from openpilot.selfdrive.ui.mici.layouts.settings.software import UPDATER_TIMEOUT, CheckUpdateButton, _split_description
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import gui_app
+from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.widgets.confirm_dialog import alert_dialog
 from openpilot.system.ui.widgets.list_view import ButtonAction, ListItem, button_item, text_item
 from openpilot.tesla.ui.pages.base import ListPage, confirm
@@ -22,7 +23,7 @@ def _current() -> tuple[str, str]:
   if desc:
     version, branch, commit, date = desc
     return f"{version} ({date})", f"{branch} ({commit})"
-  return ui_state.params.get("Version") or "N/A", ui_state.params.get("GitBranch") or "N/A"
+  return ui_state.params.get("Version") or tr("N/A"), ui_state.params.get("GitBranch") or tr("N/A")
 
 
 class UpdateChecker:
@@ -36,12 +37,12 @@ class UpdateChecker:
 
   def press(self, value: str) -> None:
     if not system_time_valid():
-      gui_app.push_widget(alert_dialog("Please connect to Wi-Fi to update."))
+      gui_app.push_widget(alert_dialog(tr("Please connect to Wi-Fi to update.")))
       return
-    self.check("SIGHUP" if value == "download update" else "SIGUSR1")
+    self.check("SIGHUP" if value == tr("download update") else "SIGUSR1")
 
   def check(self, sig: str = "SIGUSR1") -> None:
-    self.waiting_t, self.responding, self.done_t, self.result = time.monotonic(), False, None, "checking..."
+    self.waiting_t, self.responding, self.done_t, self.result = time.monotonic(), False, None, tr("checking...")
     _signal_updater(sig)
 
   def busy(self) -> bool:
@@ -55,21 +56,21 @@ class UpdateChecker:
       if state != "idle":
         self.waiting_t, self.responding = None, True
       elif now - self.waiting_t > UPDATER_TIMEOUT:
-        self.waiting_t, self.done_t, self.result = None, now, "updater failed to respond"
+        self.waiting_t, self.done_t, self.result = None, now, tr("updater failed to respond")
       return self.result
     if self.responding:
       if state == "idle":
         self.responding, self.done_t = False, now
-        self.result = "up to date" if self.result == "checking..." else self.result
+        self.result = tr("up to date") if self.result == tr("checking...") else self.result
       else:
         self.result = state
       return self.result
     if int(params.get("UpdateFailedCount") or 0) > 0:
-      return "failed to update"
+      return tr("failed to update")
     if params.get_bool("UpdaterFetchAvailable"):
-      return "download update"
+      return tr("download update")
     if self.done_t is not None and now - self.done_t < 3.0:
-      return "up to date" if self.result in ("checking...", "") else self.result
+      return tr("up to date") if self.result in (tr("checking..."), "") else self.result
     return ""
 
 
@@ -84,7 +85,7 @@ class BranchPage(ListPage):
         branches.insert(0, b)
     current = params.get("UpdaterTargetBranch") or ""
     for b in branches:
-      self.add(button_item(b, "CURRENT" if b == current else "SELECT", callback=lambda b=b: on_select(b), enabled=ui_state.is_offroad))
+      self.add(button_item(b, tr("CURRENT") if b == current else tr("SELECT"), callback=lambda b=b: on_select(b), enabled=ui_state.is_offroad))
 
   def show_event(self):
     super().show_event()
@@ -96,21 +97,21 @@ class SoftwarePage(ListPage):
     self.checker = UpdateChecker()
     params = ui_state.params
     value = self.checker.value
-    action = ButtonAction(lambda: "DOWNLOAD" if value() == "download update" else "CHECK",
+    action = ButtonAction(lambda: tr("DOWNLOAD") if value() == tr("download update") else tr("CHECK"),
                           enabled=lambda: not ui_state.started and not self.checker.busy())
-    check = ListItem(lambda: f"Update: {value()}" if value() else "Check for update", action_item=action,
+    check = ListItem(lambda: tr("Update: {}").format(value()) if value() else tr("Check for update"), action_item=action,
                      callback=lambda: self.checker.press(value()))
-    install = button_item(lambda: f"Install {self._new_version()}", "INSTALL", callback=lambda: threading.Thread(
+    install = button_item(lambda: tr("Install {}").format(self._new_version()), tr("INSTALL"), callback=lambda: threading.Thread(
       target=lambda: params.put_bool("DoReboot", True, block=True), daemon=True).start())
     install.set_visible(lambda: ui_state.is_offroad() and params.get_bool("UpdateAvailable"))
-    branch = button_item("Target branch", lambda: params.get("UpdaterTargetBranch") or "SELECT", callback=self._choose_branch,
+    branch = button_item(tr("Target branch"), lambda: params.get("UpdaterTargetBranch") or tr("SELECT"), callback=self._choose_branch,
                          enabled=ui_state.is_offroad)
     branch.set_visible(not params.get_bool("IsTestedBranch"))
     self.add(
-      text_item("Version", lambda: _current()[0]),
-      text_item("Branch", lambda: _current()[1]),
+      text_item(tr("Version"), lambda: _current()[0]),
+      text_item(tr("Branch"), lambda: _current()[1]),
       check, install, branch,
-      button_item("Uninstall sunnypilot", "UNINSTALL", callback=lambda: confirm("Are you sure you want to uninstall?", "uninstall",
+      button_item(tr("Uninstall sunnypilot"), tr("UNINSTALL"), callback=lambda: confirm(tr("Are you sure you want to uninstall?"), "uninstall",
                                                                                 lambda: params.put_bool("DoUninstall", True, block=True))),
     )
 
@@ -120,9 +121,9 @@ class SoftwarePage(ListPage):
 
   def _choose_branch(self) -> None:
     if not ui_state.params.get("UpdaterAvailableBranches"):
-      gui_app.push_widget(alert_dialog("Failed to get available branches. Ensure you're connected to the internet and try again."))
+      gui_app.push_widget(alert_dialog(tr("Failed to get available branches. Ensure you're connected to the internet and try again.")))
       return
-    self.open("Target branch", BranchPage(self._select_branch))
+    self.open(tr("Target branch"), BranchPage(self._select_branch))
 
   def _select_branch(self, branch: str) -> None:
     if ui_state.is_offroad():
