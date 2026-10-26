@@ -471,17 +471,17 @@ class BigScreenHost:
     if drive:
       boxes = self._hud_boxes()
       for name, rect in boxes.items():
-        visible = name in tiles.HUD_REQUIRED or self._hud.get(name, [0, 0, True])[2]
+        visible = tiles.hud_visible(self._hud, name)
         rl.draw_rectangle_rec(rl.Rectangle(*rect), rl.Color(*Tile.COLOR, 255) if visible else rl.Color(60, 62, 70, 255))
         rl.draw_rectangle_lines_ex(rl.Rectangle(*rect), 3, rl.WHITE if visible else DIM)
       for name, (x, y, w, h) in boxes.items():
-        visible = name in tiles.HUD_REQUIRED or self._hud.get(name, [0, 0, True])[2]
+        visible = tiles.hud_visible(self._hud, name)
         label = name.removeprefix("builtin:").replace("_", " ").title() if name.startswith("builtin:") else name
         width = min(w - 24, 360)
         lines_in(rl.Rectangle(x + (w - width) / 2, y + 12, width, h - 24),
                  [label, "Move only"] if name in tiles.HUD_REQUIRED else [label] if visible else [label, "Hidden"], 32)
       for name, (x, y, w, h) in tiles.hud_buttons(boxes, self._drive_view()).items():
-        label = "Hide" if self._hud.get(name, [0, 0, True])[2] else "Show"
+        label = "Hide" if tiles.hud_visible(self._hud, name) else "Show"
         rl.draw_rectangle_rec(rl.Rectangle(x, y, w, h), rl.WHITE)
         text(FontWeight.SEMI_BOLD, label, x + (w - text_w(FontWeight.SEMI_BOLD, label, 40)) / 2, y + (h - 40) / 2,
              40, rl.Color(20, 20, 24, 255))
@@ -545,7 +545,7 @@ class BigScreenHost:
             if event == "tap":
               vx, vy, vw, vh = self._drive_view()
               hx, hy, _, _ = boxes[name]
-              self._hud[name] = [(hx - vx) / vw, (hy - vy) / vh, not self._hud.get(name, [0, 0, True])[2]]
+              self._hud[name] = [(hx - vx) / vw, (hy - vy) / vh, not tiles.hud_visible(self._hud, name)]
               self._save()
             return
       name = self._hud_drag or next((name for name, (bx, by, bw, bh) in reversed(list(boxes.items()))
@@ -553,7 +553,7 @@ class BigScreenHost:
       if name is not None:
         bx, by, bw, bh = boxes[name]
         vx, vy, vw, vh = self._drive_view()
-        visible = name in tiles.HUD_REQUIRED or self._hud.get(name, [0, 0, True])[2]
+        visible = tiles.hud_visible(self._hud, name)
         if event == "drag":
           self._hud_drag = name
         elif event == "drop":

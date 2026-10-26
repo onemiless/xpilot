@@ -143,21 +143,8 @@ def draw_builtin(name, rect, draw) -> None:
     return
   key = "builtin:" + name
   entry = host._hud.get(key)
-  if entry is not None and not entry[2] and key not in tiles.HUD_REQUIRED:
+  if not tiles.hud_visible(host._hud, key):
     return
   default = tiles.builtin_hud_boxes((rect.x, rect.y, rect.width, rect.height))[key]
   x, y, _, _ = tiles.hud_rect(entry, default, (rect.x, rect.y, rect.width, rect.height))
-  shifted = rl.Rectangle(rect.x + x - default[0], rect.y + y - default[1], rect.width, rect.height)
-  s = tiles.HUD_SCALE.get(key)
-  if s is None:
-    draw(shifted)
-    return
-  # Shrink around the box's top left; SP's drawing code is unchanged.
-  rl.rl_push_matrix()
-  rl.rl_translatef(x, y, 0)
-  rl.rl_scalef(s, s, 1)
-  rl.rl_translatef(-x, -y, 0)
-  try:
-    draw(shifted)
-  finally:
-    rl.rl_pop_matrix()
+  draw(rl.Rectangle(rect.x + x - default[0], rect.y + y - default[1], rect.width, rect.height))
