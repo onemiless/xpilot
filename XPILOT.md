@@ -419,6 +419,21 @@ cloudlog/logMessage 写入 rlog，无新 service/upload。缺帧不补造。
 G8 检查来自合并的 X-48。确定性 host/模型和固件测试不证明 IPC、物理触摸、总线或实车交接。
 原生 MPC pre-solve seed 与实际求解轨迹分开报告；G3 横向和 X-50 速度策略不在本改动内。
 
+固件：本分支已实现 owner/pending/DRAIN 固件状态机、A5 请求和 54 字节 health；
+Tesla 纵向能力位在 debug/release 均生效。RX/转发、TX/入队、请求、health、模式切换和 tick
+使用嵌套临界区保护，心跳丢失 SILENT 代码保持原样。
+SP→stock 按协调者 DRAIN 决定：收到与最后 SP 同计数器的 OEM 时阻断并暂停 SP TX；
+下一 OEM（SP+1）通过检查后提交 STOCK 并转发。DRAIN 最长 50 ms，失败则清 pending、
+保留 SP owner 并恢复 SP TX；此中止路径的主机恢复帧可能跳计数器。正常 SP owner 期间计数器由主机
+OEM+1 锁定，Panda 只在交接边界强制连续性，不新增正常 SP 帧的连续性检查。请求总期限仍为 250 ms。
+STOCK owner 且无 DRAIN 时，允许沿用 non-long cancel 条件的 0x2B9：
+accState=13、加速度 min/max 均为 inactive（raw 375）、无主机 AEB、原车 AEB 未激活且 checksum 正确；
+原有白名单、relay 和 Autopark 检查仍生效。其余主机纵向帧仍阻断。Cancel 不作为 SP 接管候选，
+也不更新 SP/已转发 OEM 样本；pending SP 时有效 cancel 仍放行，并以 DISENGAGED（4）清除 pending，
+无效 cancel 不改变 pending。
+真实 libsafety 回归保留全部中间 SP 帧，覆盖 25 Hz/100 Hz 相位和抖动下的活性与中止。
+X-50 自动速度策略和 G3 横向均未实现；刷写和实车接合测试须用户另行批准。
+
 ## 7. 雷达接入接口
 
 写一个声明 `source:radar` 的插件，实现 `radar_interface` 钩子（见 4.4）。插件关闭、没有声明或出错时用原车雷达。外接雷达如果需要发送报文，还要声明 `can.tx` 并携带 panda 运行时规则。

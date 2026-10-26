@@ -22,6 +22,7 @@ L23 cancel commits SP or clears a pending SP request.
 L24 cancel accepted during stock AEB or DRAIN.
 L25 relay/malformed OEM permits handoff; L26 normal SP host counter contract.
 L27 full stock forwarding queue advances the handoff reference.
+L28 valid STOCK cancel during pending SP is blocked or fails to clear pending.
 
 DRAIN abort restores SP; normal SP counter sequencing is the host's contract.
 Artifact: XPILOT_LONG_OWNER_CONTRACT_ARTIFACT=<path> python -m unittest <module>
@@ -493,7 +494,7 @@ class TestTeslaLongOwnerContract(unittest.TestCase):
       self.assertFalse(self.d.s.safety_tx_hook(msg), bad)
 
   def test_L23_pending_SP_cancel_is_never_a_candidate(self):
-    for lo, hi in ((375, 375), (374, 375), (375, 376)):
+    for lo, hi in ((374, 375), (375, 376)):
       d = OwnerDrive()
       d.reply(SP)
       d.set_time(10_000)
@@ -549,6 +550,21 @@ class TestTeslaLongOwnerContract(unittest.TestCase):
     self.assertEqual(d.rx(long_msg(1), available=False), (-1, True))
     d.reply(SP)
     d.set_time(15_000)
+    self.assertTrue(d.tx(1))
+    self.assertEqual(d.owner, SP)
+
+  def test_L28_pending_SP_cancel_allowed_and_clears_pending(self):
+    d = self.d
+    d.reply(SP)
+    d.set_time(10_000)
+    bad = long_msg(1, bus=0, state=13)
+    bad.data[7] ^= 1
+    self.assertFalse(d.s.safety_tx_hook(bad))
+    self.assertEqual(d.reply()[1:5], (STOCK, SP, OK, 10))
+    self.assertTrue(d.s.safety_tx_hook(long_msg(1, bus=0, state=13)))
+    self.assertEqual(d.reply()[1:5], (STOCK, NONE, DISENGAGED, 0))
+    self.assertFalse(d.tx(1))
+    d.reply(SP)
     self.assertTrue(d.tx(1))
     self.assertEqual(d.owner, SP)
 
