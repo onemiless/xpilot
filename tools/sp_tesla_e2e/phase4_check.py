@@ -316,7 +316,7 @@ def event_filter_checks():
   ret, _ = state.update(parsers)
   ret.gearShifter, ret.cruiseState.available, ret.cruiseState.enabled = car.CarState.GearShifter.drive, True, True
   ret.doorOpen = ret.seatbeltUnlatched = ret.steerFaultPermanent = False
-  events = CarEvents(cp).update(ret, structs.CarState(), structs.CarControl()).names
+  events = CarEvents(cp).update(ret, structs.CarState(), structs.CarControl(), types.SimpleNamespace(longOwner='stock')).names
   sd = driver([])
   check("C28", ret.invalidLkasSetting and EN.invalidLkasSetting in events and
         step(sd, events=events) == (False, False) and sd.events.has(EN.invalidLkasSetting),
