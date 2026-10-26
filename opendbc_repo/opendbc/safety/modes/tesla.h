@@ -520,7 +520,10 @@ static bool tesla_tx_hook(const CANPacket_t *msg) {
       violation = true;
     }
     if (tesla_long_owner == TESLA_LONG_STOCK) {
-      tx = cancel && (tesla_long_pending != TESLA_LONG_SP);
+      tx = cancel;
+      if (cancel && !violation && (tesla_long_pending == TESLA_LONG_SP)) {
+        tesla_long_clear(TESLA_LONG_DISENGAGED);
+      }
       if ((tesla_long_pending == TESLA_LONG_SP) && (frame.acc_state != 13U)) {
         uint32_t gap = safety_get_ts_elapsed(frame.ts, tesla_long_forwarded.ts);
         if (!tesla_long_envelope(&frame, &tesla_long_forwarded)) {

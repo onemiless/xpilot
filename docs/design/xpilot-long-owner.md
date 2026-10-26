@@ -108,7 +108,7 @@ age zero; refusals to a request may still report MODE/ARGUMENT.
 | 1 | MODE | Not Tesla safety mode |
 | 2 | ARGUMENT | Unknown target or nonzero param2 |
 | 3 | NOT_CAPABLE | Long safety parameter bit not set |
-| 4 | DISENGAGED | DI cruise not engaged |
+| 4 | DISENGAGED | DI cruise not engaged, or valid host cancel clears pending SP while owner STOCK |
 | 5 | STANDSTILL | Vehicle not moving |
 | 6 | AEB | Stock AEB active, including current OEM payload |
 | 7 | GAS | Gas pressed |
@@ -178,10 +178,11 @@ commit SP and be admitted. Other SP long actuation is blocked. Capability
 without a request is not ownership. With long capability and owner STOCK, host
 0x2B9 is blocked except for the existing non-long cancel rule: accState 13
 (`ACC_CANCEL_GENERIC_SILENT`), both acceleration endpoints inactive (raw 375),
-no host AEB event, no stock AEB, valid checksum, and no DRAIN/pending SP takeover.
+no host AEB event, no stock AEB, valid checksum, and no DRAIN.
 The existing TX whitelist, relay and Autopark checks still apply. Cancel never
-acts as an SP takeover candidate (including while pending), never clears pending
-merely by being a cancel, and never updates remembered SP/forwarded OEM samples.
+acts as an SP takeover candidate (including while pending), and never updates
+remembered SP/forwarded OEM samples. A valid cancel during pending SP is admitted
+and clears pending with DISENGAGED (4); an invalid cancel leaves pending intact.
 This lets driver/DM/controls cancel stock ACC while STOCK remains owner. Without
 long capability, the original non-actuating cancel-only path remains.
 
