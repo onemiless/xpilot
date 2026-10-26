@@ -27,6 +27,10 @@ LAYOUT_PARAM = "XpilotTileLayout"
 layout_version = 0  # bumped on every layout save in this process; HUD readers reload on change
 THEME_PARAM = "XpilotTileTheme"  # a THEMES name
 LAYOUT_SPEC = {LAYOUT_PARAM: {"type": "JSON"}, THEME_PARAM: {"type": "STRING"}}  # kept by plugin_params.ParamsView as files, not compiled params
+HUD_SCALES = (0.75, 1.0, 1.25, 1.5)
+HUD_REQUIRED = {"builtin:steering_wheel", "builtin:model_source", "builtin:blind_spot_indicators"}
+# Hidden until the user shows them: the set speed is on the speed tile, keep the video clear (owner 2026-10-26).
+HUD_HIDDEN_DEFAULT = {"builtin:set_speed"}
 
 LONG_PRESS = 0.6  # s held without moving: enters edit mode
 SLOP = 24         # px a press may move and still tap / long-press
@@ -72,28 +76,36 @@ def view_position(saved) -> tuple[int, int]:
 
 
 def hud_layout(saved) -> dict:
-  """Valid saved plugin HUD fractions and visibility; invalid entries use the widget default."""
+  """Valid saved HUD fractions, visibility and optional scale; invalid entries use the widget default."""
   drive = saved.get("drive") if isinstance(saved, dict) else None
   hud = drive.get("hud") if isinstance(drive, dict) else None
   if not isinstance(hud, dict):
     return {}
-  return {name: [*entry[:2], entry[2] or name in HUD_REQUIRED] for name, entry in hud.items() if isinstance(name, str) and isinstance(entry, list)
-          and len(entry) == 3 and all(type(v) in (int, float) and 0 <= v <= 1 for v in entry[:2]) and type(entry[2]) is bool}
+  out = {}
+  for name, entry in hud.items():
+    if not (isinstance(name, str) and isinstance(entry, list) and len(entry) in (3, 4)
+            and all(type(v) in (int, float) and 0 <= v <= 1 for v in entry[:2]) and type(entry[2]) is bool):
+      continue
+    value = [*entry[:2], entry[2] or name in HUD_REQUIRED]
+    if len(entry) == 4 and type(entry[3]) in (int, float) and entry[3] in HUD_SCALES:
+      value.append(max(1.0, entry[3]) if name in HUD_REQUIRED else entry[3])
+    out[name] = value
+  return out
+
+
+def hud_scale(entry) -> float:
+  return float(entry[3]) if entry is not None and len(entry) == 4 else 1.0
 
 
 def hud_rect(entry, default, view) -> tuple[float, float, float, float]:
   """Clamp a HUD rectangle to its view; saved fractions locate its top left."""
   vx, vy, vw, vh = view
   x, y, w, h = default
-  w, h = min(w, vw), min(h, vh)
+  s = min(hud_scale(entry), vw / w, vh / h)
+  w, h = w * s, h * s
   if entry is not None:
     x, y = vx + entry[0] * vw, vy + entry[1] * vh
   return min(max(x, vx), vx + vw - w), min(max(y, vy), vy + vh - h), w, h
-
-
-HUD_REQUIRED = {"builtin:steering_wheel", "builtin:model_source", "builtin:blind_spot_indicators"}
-# Hidden until the user shows them: the set speed is on the speed tile, keep the video clear (owner 2026-10-26).
-HUD_HIDDEN_DEFAULT = {"builtin:set_speed"}
 
 
 def hud_visible(hud: dict, name: str) -> bool:
@@ -102,31 +114,20 @@ def hud_visible(hud: dict, name: str) -> bool:
   return hud[name][2] if name in hud else name not in HUD_HIDDEN_DEFAULT
 
 
-def hud_buttons(boxes, view) -> dict:
-  """Hide/Show corners, nearest free position when HUD boxes overlap."""
-  vx, vy, vw, vh = view
-  bw, bh, gap = 144, 64, 8
+def hud_controls(box, required: bool) -> dict:
+  """Controls above a selected HUD box, or below when it is at the screen top."""
+  x, y, w, h = box
+  widths, bh, gap = ((96, 96) if required else (160, 96, 96)), 72, 8
+  total = sum(widths) + gap * (len(widths) - 1)
+  bx = min(max(x + (w - total) / 2, 0), SCREEN[0] - total)
+  by = y - bh - gap
+  if by < 0:
+    by = y + h + gap
+  names = ("smaller", "bigger") if required else ("toggle", "smaller", "bigger")
   out = {}
-  for name, (x, y, w, h) in boxes.items():
-    if name in HUD_REQUIRED:
-      continue
-    bx = min(max(x + w - bw - gap, vx), vx + vw - bw)
-    by = y + gap if w >= bw + 2 * gap and h >= bh + 2 * gap else y - bh - gap
-    if by < vy:
-      by = y + h + gap
-    by = min(by, vy + vh - bh)
-    xs = {bx, vx, vx + vw - bw}
-    ys = {by, vy, vy + vh - bh}
-    for px, py, pw, ph in out.values():
-      xs.update((px - bw - gap, px + pw + gap))
-      ys.update((py - bh - gap, py + ph + gap))
-    candidates = sorted(((cx, cy) for cx in xs for cy in ys if vx <= cx <= vx + vw - bw and vy <= cy <= vy + vh - bh),
-                        key=lambda p: (abs(p[0] - bx) + abs(p[1] - by), p[1], p[0]))
-    # shortcut: if every candidate overlaps, keep the preferred corner; add collision resolution if more HUD boxes are added
-    cx, cy = next(((cx, cy) for cx, cy in candidates
-                  if all(cx + bw <= px or px + pw <= cx or cy + bh <= py or py + ph <= cy for px, py, pw, ph in out.values())),
-                  (bx, by))
-    out[name] = (cx, cy, bw, bh)
+  for name, bw in zip(names, widths, strict=True):
+    out[name] = (bx, by, bw, bh)
+    bx += bw + gap
   return out
 
 
@@ -249,19 +250,23 @@ def hit(placed: dict[str, tuple[int, int, str]], x: float, y: float) -> str | No
 BAR_NAMES = ("park", "drive", "done")
 
 
-def bar_buttons(placed: dict[str, tuple[int, int, str]], started: bool, view_pos=DRIVE_CELLS[:2]) -> dict[str, tuple[int, int, int, int]]:
+def bar_buttons(placed: dict[str, tuple[int, int, str]], started: bool, view_pos=DRIVE_CELLS[:2], at=None) -> dict[str, tuple[int, int, int, int]]:
   """Seat-sized buttons over four cells of an edge row, never the Driving view; three never fit stacked in one cell. The
   bar reserves no cells: it takes the span covering the fewest tiles and the "+" cell (bottom middle first)."""
   w, h, gap = 320, 160, 10
-  rows = [0 if view_pos[1] else ROWS - 1] if started else [ROWS - 1, 0]
-  used = {c for col, row, size in placed.values() for c in _cells(col, row, size)}
-  add = add_cell(placed, started, view_pos)
-  used |= {add} if add else set()
-  span = {(c, r) for r in range(ROWS) for c in range(COLS)} - blocked(started, view_pos)
-  options = [(row, c0) for row in rows for c0 in (2, 1, 3, 0, 4) if {(c0 + i, row) for i in range(4)} <= span]
-  row, c0 = min(options, key=lambda o: len({(o[1] + i, o[0]) for i in range(4)} & used))
-  x0 = cell_rect(c0, row)[0] + (4 * PITCH - GAP - 3 * w - 2 * gap) // 2
-  y = cell_rect(c0, row)[1] + (CELL - h) // 2
+  if at is None:
+    rows = [0 if view_pos[1] else ROWS - 1] if started else [ROWS - 1, 0]
+    used = {c for col, row, size in placed.values() for c in _cells(col, row, size)}
+    add = add_cell(placed, started, view_pos)
+    used |= {add} if add else set()
+    span = {(c, r) for r in range(ROWS) for c in range(COLS)} - blocked(started, view_pos)
+    options = [(row, c0) for row in rows for c0 in (2, 1, 3, 0, 4) if {(c0 + i, row) for i in range(4)} <= span]
+    row, c0 = min(options, key=lambda o: len({(o[1] + i, o[0]) for i in range(4)} & used))
+    x0 = cell_rect(c0, row)[0] + (4 * PITCH - GAP - 3 * w - 2 * gap) // 2
+    y = cell_rect(c0, row)[1] + (CELL - h) // 2
+  else:
+    x0 = min(max(at[0], 0), SCREEN[0] - 3 * w - 2 * gap)
+    y = min(max(at[1], 0), SCREEN[1] - h)
   return {name: (x0 + i * (w + gap), y, w, h) for i, name in enumerate(BAR_NAMES)}
 
 

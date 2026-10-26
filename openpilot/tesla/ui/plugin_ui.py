@@ -19,6 +19,19 @@ HUD_REFRESH_S = 1.0  # s between reads of the saved HUD layout
 MAX_FAILURES = 3  # a widget that raises this many times in a row is not drawn again
 
 
+def draw_in(default, target, draw) -> None:
+  """Draw default-space content uniformly transformed into target."""
+  rl.rl_push_matrix()
+  try:
+    rl.rl_translatef(target.x, target.y, 0.0)
+    scale = target.width / default.width
+    rl.rl_scalef(scale, scale, 1.0)
+    rl.rl_translatef(-default.x, -default.y, 0.0)
+    draw()
+  finally:
+    rl.rl_pop_matrix()
+
+
 class HudOverlay(Widget):
   """Drawn over the mici onroad HUD. Subclass in a plugin's ui.py; must construct with no arguments."""
 
@@ -113,8 +126,9 @@ class Overlays:
       if entry is not None and not entry[2]:
         return
       default = widget.default_rect(rect)
-      widget.render(rl.Rectangle(*tiles.hud_rect(entry, (default.x, default.y, default.width, default.height),
-                                                (rect.x, rect.y, rect.width, rect.height))))
+      target = rl.Rectangle(*tiles.hud_rect(entry, (default.x, default.y, default.width, default.height),
+                                            (rect.x, rect.y, rect.width, rect.height)))
+      draw_in(default, target, lambda: widget.render(default))
 
     rl.begin_scissor_mode(int(rect.x), int(rect.y), int(rect.width), int(rect.height))
     try:
@@ -136,7 +150,7 @@ class Overlays:
 
 
 def draw_builtin(name, rect, draw) -> None:
-  """Offset the original SP drawing rectangle; keep safety indications visible even in hand-edited files."""
+  """Transform original SP drawing into its saved box; keep safety indications visible in hand-edited files."""
   host = gui_app.host
   if host is None:
     draw(rect)
@@ -145,6 +159,7 @@ def draw_builtin(name, rect, draw) -> None:
   entry = host._hud.get(key)
   if not tiles.hud_visible(host._hud, key):
     return
-  default = tiles.builtin_hud_boxes((rect.x, rect.y, rect.width, rect.height))[key]
-  x, y, _, _ = tiles.hud_rect(entry, default, (rect.x, rect.y, rect.width, rect.height))
-  draw(rl.Rectangle(rect.x + x - default[0], rect.y + y - default[1], rect.width, rect.height))
+  default = rl.Rectangle(*tiles.builtin_hud_boxes((rect.x, rect.y, rect.width, rect.height))[key])
+  target = rl.Rectangle(*tiles.hud_rect(entry, (default.x, default.y, default.width, default.height),
+                                        (rect.x, rect.y, rect.width, rect.height)))
+  draw_in(default, target, lambda: draw(rect))

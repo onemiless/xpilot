@@ -22,8 +22,8 @@ Failure cases listed before implementation:
 - T9  edit ops: resize does not cycle through the tile's sizes or drops the position, unpin/pin do not move between pinned
       and hidden, a drop does not fix the tile at the drop cell (pulled back inside the grid), does not free other fixed
       tiles it now overlaps, moves a tile onto the drive view, or reorders the list
-- T17 edit bar: Park, Drive and Done buttons overlap each other or leave the screen; the bar covers a tile or the add
-      cell while a clear four-cell edge span exists; the drive bar stays outside the view (supersedes the old in-view bar)
+- T17 edit bar: Park, Drive and Done buttons overlap each other or leave the screen; the default bar covers a tile or
+      the add cell while a clear four-cell edge span exists; a moved bar is not clamped fully on screen
 - T33 edit bar reserves cells (owner 2026-10-26): edit mode places tiles differently from normal mode, a tile dropped
       on a cell under the bar does not land there, or the add cell skips a free cell under the bar
 - T10 hit tests: a gap hits a tile, a cell center does not map back to its cell, corner buttons leave their tile or
@@ -44,16 +44,16 @@ Failure cases listed before implementation:
 - T20 a view drag drops off screen or between cells; tiles, add cell, edit bar or overlay zones use the old position
 - T21 a fixed tile covered by the moved view overlaps it instead of flowing into a free cell
 - T22 an onroad tap or drag starting outside the view changes layout/pages or reaches a mici widget
-- T23 HUD fractions/visibility do not round-trip, or missing/invalid saved HUD entries lose the default position
-- T24 a dragged HUD box leaves the view, or its relative position changes when the view moves
+- T23 HUD fractions/visibility/scale do not round-trip, old 3-value entries stop loading, or a bad scale loses position
+- T24 a dragged/scaled HUD box leaves the view, changes aspect ratio, or its relative position changes when the view moves
 - T25 TileSpec accepts a missing show, or a drive/park add list offers tiles belonging only to the other mode
 - T26 adding, dropping or fixing a tile can occupy any cell inside any supported drive-view position
 - T27 an existing theme changes when adding the black theme (Outline renamed Black by T30)
 - T28 edit buttons are under 152 px high, overlap a tile/add cell/view, or leave the screen
 - T29 built-in HUD defaults/fractions are lost, invalid entries survive, or protected indicators can hide
 - T30 Black is missing or old Outline does not resolve to Black
-- T31 a hideable HUD box lacks a >=120x64 button, or a required box has one
-- T32 HUD buttons overlap each other, leave the view/screen, or miss the inside/above/below corner placement
+- T31 a selected HUD box lacks resize controls, or a required box has a visibility toggle
+- T32 HUD controls leave the screen, overlap their own box, or overlap each other
 """
 import ast
 import itertools
@@ -367,6 +367,10 @@ def check_bar(errors):
   full = [(f"t{i}", "small", ("small",), None) for i in range(T.COLS * T.ROWS - 1)]
   if T.add_cell(T.place(full, False), False) is None:
     errors.append("T33 add cell missing with one free cell")
+  for at in ((-10000, -10000), (10000, 10000)):
+    moved = T.bar_buttons({}, False, at=at)
+    if any(not inside(r, (0, 0, *T.SCREEN)) for r in moved.values()):
+      errors.append(f"T17 moved bar not clamped: {at} -> {moved}")
 
 
 def check_gesture(errors):
@@ -458,6 +462,17 @@ def check_hud(errors):
   saved = json.loads(json.dumps({"drive": {"hud": {"example": entry}}}))
   if T.hud_layout(saved) != {"example": entry}:
     errors.append("T23 HUD position/visibility did not round trip")
+  scaled = [0.4, 0.3, False, 1.5]
+  if T.hud_layout({"drive": {"hud": {"example": scaled}}}) != {"example": scaled}:
+    errors.append("T23 4-value HUD entry did not round trip")
+  for bad_scale in (0.6, "1", True):
+    got = T.hud_layout({"drive": {"hud": {"example": [0.4, 0.3, False, bad_scale]}}}).get("example")
+    if got is None or got[:3] != entry or T.hud_scale(got) != 1.0:
+      errors.append(f"T23 bad HUD scale lost position/visibility: {bad_scale!r} -> {got}")
+  required = next(iter(T.HUD_REQUIRED))
+  got = T.hud_layout({"drive": {"hud": {required: [0.4, 0.3, False, 0.75]}}}).get(required)
+  if got != [0.4, 0.3, True, 1.0]:
+    errors.append(f"T23 required HUD shrank/hid: {got}")
   bad = [None, [], {}, {"drive": []}, {"drive": {"hud": []}}]
   bad += [{"drive": {"hud": {"example": v}}} for v in
           (None, [], [0, 0], [0, 0, 1], [True, 0, True], [-0.1, 0, True], [0, 1.1, True], [float("nan"), 0, True], [0, float("inf"), True])]
@@ -468,6 +483,13 @@ def check_hud(errors):
     r = T.hud_rect([x, y, True], default, view)
     if not inside(r, view):
       errors.append(f"T24 HUD leaves view: {r}")
+  r = T.hud_rect([0, 0, True, 1.5], default, view)
+  if r[2:] != (default[2] * 1.5, default[3] * 1.5) or abs(r[2] / r[3] - default[2] / default[3]) > 1e-9 or not inside(r, view):
+    errors.append(f"T24 scaled HUD size/aspect/bounds: {r}")
+  too_large = (20, 30, T.MICI[0] * 2, 120)
+  r = T.hud_rect([1, 1, True, 1.5], too_large, view)
+  if not inside(r, view) or abs(r[2] / r[3] - too_large[2] / too_large[3]) > 1e-9 or r[2] != T.MICI[0]:
+    errors.append(f"T24 oversized HUD did not shrink to fit: {r}")
   for pos in itertools.product(range(3), range(2)):
     vx, vy, vw, vh = T.view(pos)
     rect = T.hud_rect(entry, (vx + 20, vy + 30, 120, 48), (vx, vy, vw, vh))
@@ -538,44 +560,31 @@ def check_builtin_hud(errors):
       errors.append(f"T28 moved view/bar/tiles overlap: {pos}")
 
 
-def check_hud_buttons(errors):
-  if not hasattr(T, "hud_buttons"):
-    errors.extend(["T31 HUD buttons missing", "T32 HUD button placement missing"])
+def check_hud_controls(errors):
+  if not hasattr(T, "hud_controls"):
+    errors.extend(["T31 HUD controls missing", "T32 HUD control placement missing"])
     return
-  rng = random.Random(29)
-  for pos in itertools.product(range(3), range(2)):
-    view = T.view(pos)
-    vx, vy, vw, vh = view
-    layouts = [T.builtin_hud_boxes(view)]
-    layouts += [{"large": (vx + 200, vy + 200, 400, 240)},
-                {"small": (vx + 200, vy + 200, 80, 40)}, {"top": (vx, vy, 80, 40)}]
-    layouts += [{str(i): (vx + vw - 80, vy + vh - 40, 80, 40) for i in range(12)}]
-    for _ in range(100):
-      layouts.append({str(i): T.hud_rect([rng.random(), rng.random(), True],
-                     (vx, vy, rng.randint(40, 600), rng.randint(30, 300)), view) for i in range(12)})
-    for boxes in layouts:
-      buttons = T.hud_buttons(boxes, view)
-      if set(buttons) != set(boxes) - T.HUD_REQUIRED or any(w < 120 or h < 64 for _, _, w, h in buttons.values()):
-        errors.append(f"T31 missing/required/small HUD button: {buttons}")
+  boxes = [(0, 0, 120, 48), (2040, 0, 120, 48), (0, 1032, 120, 48), (2040, 1032, 120, 48), T.VIEW]
+  for box in boxes:
+    for required in (False, True):
+      controls = T.hud_controls(box, required)
+      expected = {"smaller", "bigger"} if required else {"toggle", "smaller", "bigger"}
+      if set(controls) != expected:
+        errors.append(f"T31 wrong HUD controls required={required}: {controls}")
         return
-      if any(not inside(r, view) or not inside(r, (0, 0, *T.SCREEN)) for r in buttons.values()):
-        errors.append(f"T32 HUD button leaves view/screen: {buttons}")
+      if any(not inside(r, (0, 0, *T.SCREEN)) or overlap(r, box) for r in controls.values()):
+        errors.append(f"T32 HUD controls leave screen/cover box: {box} {controls}")
         return
-      if any(overlap(a, b) for a, b in itertools.combinations(buttons.values(), 2)):
-        errors.append(f"T32 HUD buttons overlap: {buttons}")
+      if any(overlap(a, b) for a, b in itertools.combinations(controls.values(), 2)):
+        errors.append(f"T32 HUD controls overlap: {controls}")
         return
-    large = T.hud_buttons(layouts[1], view)["large"]
-    small = T.hud_buttons(layouts[2], view)["small"]
-    top = T.hud_buttons(layouts[3], view)["top"]
-    if not inside(large, layouts[1]["large"]) or small[1] + small[3] > vy + 200 or top[1] < vy + 40:
-      errors.append(f"T32 inside/above/below placement: {large}, {small}, {top}")
 
 
 def main() -> int:
   errors: list[str] = []
   for check in (check_grid, check_view, check_place, check_show, check_spec, check_layout, check_edit, check_hits, check_bar, check_gesture,
                 check_poll, check_fit, check_text, check_view_saved, check_view_moved, check_view_covered,
-                check_hud, check_explicit_show, check_view_exclusion, check_themes, check_builtin_hud, check_hud_buttons):
+                check_hud, check_explicit_show, check_view_exclusion, check_themes, check_builtin_hud, check_hud_controls):
     try:
       check(errors)
     except Exception as e:
