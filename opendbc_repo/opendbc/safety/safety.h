@@ -288,8 +288,6 @@ int safety_rx_fwd_hook(const CANPacket_t *msg, bool *valid, bool tx_available) {
     bool well_formed = (GET_LEN(msg) == 8U) && (msg->extended == 0U);
     if (well_formed) {
       tesla_stock_aeb = (msg->data[2] & 0x03U) == 1U;
-    }
-    if (well_formed) {
       *valid = safety_rx_hook(msg);
     } else {
       *valid = false;

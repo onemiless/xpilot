@@ -506,8 +506,8 @@ static bool tesla_tx_hook(const CANPacket_t *msg) {
       // Don't allow any acceleration limits above the safety limits
       violation |= longitudinal_accel_checks(raw_accel_max, TESLA_LONG_LIMITS);
       violation |= longitudinal_accel_checks(raw_accel_min, TESLA_LONG_LIMITS);
-    } else if (!cancel) {
-      violation = true;
+    } else {
+      violation |= !cancel;
     }
   }
 
