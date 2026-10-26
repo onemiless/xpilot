@@ -10,7 +10,7 @@ from openpilot.tesla import store
 from openpilot.tesla import manifest as mf
 from openpilot.tesla.manifest import CATEGORIES, conflicting
 from openpilot.tesla.plugin_params import ParamsView
-from openpilot.tesla.plugins import FAULTS_PARAM, LOAD_ERRORS, PLUGINS, REQUIRED_ROLES, is_enabled, missing_roles, resolve
+from openpilot.tesla.plugins import FAULTS_PARAM, LOAD_ERRORS, PLUGINS, REQUIRED_ROLES, PluginMsgs, is_enabled, missing_roles, resolve
 
 MICI = (536, 240)
 TITLE_H = 230  # detail page title band: back button, parent name, page title
@@ -46,6 +46,7 @@ with open(os.path.join(BASEDIR, "openpilot/selfdrive/selfdrived/alerts_offroad.j
 
 CAR_LIST = os.path.join(BASEDIR, "openpilot/sunnypilot/selfdrive/car/car_list.json")
 MODEL_PARAM = "CarPlatformBundle"  # card.py fingerprints as bundle["platform"] when set; unset = auto fingerprint
+_plugin_msgs = None
 
 
 def tesla_models() -> list[tuple[str, dict]]:
@@ -53,6 +54,25 @@ def tesla_models() -> list[tuple[str, dict]]:
   with open(CAR_LIST) as f:
     cars = json.load(f)
   return sorted((name, {**data, "name": name}) for name, data in cars.items() if data.get("brand") == "tesla")
+
+
+def plugin_notifications() -> list[tuple[int, str]]:
+  global _plugin_msgs
+  try:
+    if _plugin_msgs is None:
+      _plugin_msgs = PluginMsgs()
+    messages = _plugin_msgs.fresh("host.notify")
+  except Exception:
+    return []
+  notifications = []
+  for source, payload in messages.items():
+    if not isinstance(payload, dict):
+      continue
+    text, severity = payload.get("text"), payload.get("severity", 0)
+    if not isinstance(text, str) or type(severity) is not int or not (text := text.strip()[:80]):
+      continue
+    notifications.append((max(0, min(1, severity)), f"{source}: {text}"))
+  return notifications
 
 
 def offroad_alerts(params) -> list[tuple[int, str]]:
@@ -64,6 +84,7 @@ def offroad_alerts(params) -> list[tuple[int, str]]:
     alert = params.get(key)
     if alert:
       alerts.append((alert.get("severity", 0), alert.get("text", key).replace("%1", alert.get("extra", ""))))
+  alerts += plugin_notifications()
   return sorted(alerts, key=lambda a: -a[0])
 
 

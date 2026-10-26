@@ -15,6 +15,7 @@ from openpilot.system.ui.widgets.label import UnifiedLabel
 from openpilot.system.ui.widgets.scroller import Scroller
 from openpilot.system.ui.lib.application import gui_app, FontWeight, TextAlignment, TextAlignmentVertical
 from openpilot.system.ui.lib.multilang import tr
+from openpilot.tesla.ui.offroad import plugin_notifications
 
 REFRESH_INTERVAL = 5.0  # seconds
 
@@ -207,6 +208,7 @@ class MiciOffroadAlerts(Scroller):
     self.params = Params()
     self.sorted_alerts: list[AlertData] = []
     self.alert_items: list[AlertItem] = []
+    self._plugin_notifications = []
 
     # Create empty state label
     self._empty_label = UnifiedLabel(tr("no alerts"), 65, FontWeight.DISPLAY, rl.WHITE,
@@ -259,12 +261,28 @@ class MiciOffroadAlerts(Scroller):
     drop_realtime()
     while True:
       self._pending_params = ({"UpdaterNewDescription": self.params.get("UpdaterNewDescription")} |
-                              {alert_data.key: self.params.get(alert_data.key) for alert_data in self.sorted_alerts})
+                              {alert_data.key: self.params.get(alert_data.key) for alert_data in self.sorted_alerts
+                               if alert_data.key != "XpilotPluginNotify"})
       time.sleep(REFRESH_INTERVAL)
 
   def _refresh(self, pending_params: dict) -> int:
     """Refresh alerts from params and return active count."""
     active_count = 0
+
+    notifications = plugin_notifications()
+    if notifications != self._plugin_notifications:
+      old = [item for item in self.alert_items if item.alert_data.key == "XpilotPluginNotify"]
+      self.alert_items = [item for item in self.alert_items if item not in old]
+      self._scroller.items[:] = [item for item in self._scroller.items if item not in old]
+      self.sorted_alerts = [alert for alert in self.sorted_alerts if alert.key != "XpilotPluginNotify"]
+      for severity, text in notifications:
+        alert_data = AlertData(key="XpilotPluginNotify", text=text, severity=severity, visible=True)
+        alert_item = AlertItem(alert_data)
+        self.sorted_alerts.append(alert_data)
+        self.alert_items.append(alert_item)
+        self._scroller.add_widget(alert_item)
+      self._plugin_notifications = notifications
+    active_count += len(notifications)
 
     # Handle UpdateAvailable alert specially
     update_available = pending_params["UpdateAvailable"]
@@ -292,7 +310,7 @@ class MiciOffroadAlerts(Scroller):
 
     # Handle regular alerts
     for alert_data in self.sorted_alerts:
-      if alert_data.key == "UpdateAvailable":
+      if alert_data.key in ("UpdateAvailable", "XpilotPluginNotify"):
         continue  # Skip, already handled above
 
       text = ""

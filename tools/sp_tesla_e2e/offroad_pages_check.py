@@ -29,6 +29,8 @@ Failure cases listed before implementation:
 - O16 either settings page omits the text editor or its offroad entry/commit gates (GPU case 28 exercises both)
 - O17 existing BOOL/range/choices row kinds or labels change
 - O18 manual owner setting is absent, not BOOL/default-off, or either UI bypasses the offroad setting gate
+- O19 plugin notifications lose their source, severity clamp or 80-character limit, malformed input leaks through,
+     a reader error breaks alerts, or the mici alert list does not include them
 """
 import ast
 import json
@@ -259,6 +261,28 @@ def check_alerts(errors: list) -> None:
     errors.append(f"O8 offroad alerts: {offroad.offroad_alerts(params)}")
   if offroad.offroad_alerts(FakeParams()):
     errors.append("O8 alerts shown with no alert param set")
+
+  class FakeReader:
+    def fresh(self, kind):
+      assert kind == "host.notify"
+      return {"weather": {"severity": 9, "text": "  " + "x" * 90 + "  "},
+              "not-a-dict": "bad", "not-text": {"text": 3}, "not-severity": {"text": "bad", "severity": "1"}}
+
+  original = getattr(offroad, "_plugin_msgs", None)
+  try:
+    offroad._plugin_msgs = FakeReader()
+    notifications = offroad.offroad_alerts(FakeParams())
+    if notifications != [(1, "weather: " + "x" * 80)]:
+      errors.append(f"O19 plugin notifications: {notifications}")
+    offroad._plugin_msgs = type("BrokenReader", (), {"fresh": lambda self, kind: (_ for _ in ()).throw(OSError("broken"))})()
+    if offroad.offroad_alerts(FakeParams()):
+      errors.append("O19 reader error leaked into offroad alerts")
+  finally:
+    offroad._plugin_msgs = original
+
+  mici = (PKG / "selfdrive/ui/mici/layouts/offroad_alerts.py").read_text()
+  if "plugin_notifications()" not in mici:
+    errors.append("O19 mici alert list misses plugin notifications")
 
 
 def check_sources(errors: list) -> None:
