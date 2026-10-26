@@ -78,6 +78,8 @@ typedef struct {
 
 static uint8_t tesla_long_owner = TESLA_LONG_STOCK;
 static uint8_t tesla_long_pending = TESLA_LONG_NONE;
+// App control/health share this state; body has neither consumer.
+// cppcheck-suppress misra-c2012-8.9
 static uint8_t tesla_long_refusal = TESLA_LONG_OK;
 static uint32_t tesla_long_request_ts = 0U;
 static uint32_t tesla_long_drain_ts = 0U;
