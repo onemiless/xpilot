@@ -90,6 +90,7 @@ procs = [
 
   NativeProcess("loggerd", "openpilot/system/loggerd", ["./loggerd"], logging),
   NativeProcess("encoderd", "openpilot/system/loggerd", ["./encoderd"], only_onroad),
+  PythonProcess("plugin_msgd", "openpilot.tesla.plugin_msgd", always_run),
   PythonProcess("logmessaged", "openpilot.system.logmessaged", always_run),
 
   NativeProcess("camerad", "openpilot/system/camerad", ["./camerad"], driverview, enabled=not WEBCAM),

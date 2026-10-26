@@ -204,9 +204,12 @@ Owner itself is not silently reversed by AEB or refusal.
 
 ## Reset, routing and IRQ boundaries
 
-`tesla_init`, every safety mode set and SILENT reset to STOCK, pending absent,
-age zero, reason OK, DRAIN inactive, no remembered counters/envelopes. Non-Tesla mode cannot
-retain a Tesla capability. Existing heartbeat timeout -> SILENT and relay
+`tesla_init` reads the longitudinal capability bit before resetting ownership:
+capable starts SP, otherwise STOCK, without a policy or manual request. Every
+safety mode set clears pending, age, refusal, DRAIN and remembered counters/envelopes;
+a Tesla mode then initializes its owner from that mode's capability bit. Non-Tesla
+modes reset to STOCK and cannot retain a Tesla capability. SILENT remains the
+physical relay bypass. Existing heartbeat timeout -> SILENT and relay
 behavior stay unchanged. Release/debug must both honor the long capability
 bit; implementation removes only that ALLOW_DEBUG gate.
 

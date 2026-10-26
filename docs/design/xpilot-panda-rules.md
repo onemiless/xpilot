@@ -76,7 +76,7 @@ Each 44-byte field record, starting at offset 84:
 A frame is exempt only when it has at least one field and **every** field value
 occurs in that field's exempt list. Exempt frames skip controls_allowed and all
 session budget checks/updates; they still update last TX for the interval gate.
-All other TX requires controls_allowed. auto_speed and ambient have no exemptions.
+All other TX requires controls_allowed. Rule data declares any exemptions.
 Navassist uses request 3 and reason 4 as exemptions, permitting cancel to release
 lamps even after disengagement or budget exhaustion.
 
@@ -198,7 +198,7 @@ Manifest load checks complete TX coverage, masks, counters, checksums, field and
 session bounds as well as ownership/bus/type/size. Numeric `can.tx` address/bus
 pairs must equal the rules' TX pairs. `RULE_ABI`/`HOST_CAPS.rule_abi` are 1.
 The sole byte encoder is `openpilot/tesla/panda_rules.py`; T32 fixtures import it.
-No production host validation reads legacy safety.json/headers.
+Host validation reads runtime rules from plugin manifests.
 
 `XpilotPandaRules` is BYTES: **complete table bytes followed immediately by a
 4-byte little-endian CRC32 of those table bytes**. Total param size is 20..4100;
@@ -260,13 +260,11 @@ bytes, trace.jsonl, native.log, result.json and SHA-256 input identities; no dev
 
 ## Migration / proof boundary
 
-Production includes only the runtime engine. auto_speed.h, ambient_light.h,
-registry.h, gen_safety.py and safety.json remain solely as differential/reference
-fixtures in this task; delete them after X-33 lands and differential gates pass.
-The pinned navassist header is a test fixture, not production firmware. Deliberate
-differences from the old headers: cancel skips session budget; tick-based expiry
-latches invalidate stale templates and retire expired interval/session markers
-across full timer cycles; mismatched standard/extended CAN ID types are rejected.
-Short-stream verdicts remain equivalent; the tick may clear expired flags/count
-before the old headers' lazy TX checks do. R14-R17 cover the corrected boundaries.
+Production and tests include only the runtime engine and rule-data fixtures.
+The legacy compiled plugin interface, registry, headers and generator were removed
+in X-20261026-57 after the X-32 differential proof. R8 retains deterministic replay
+using rule data; R9-R17 keep exact budgets, expiry, cancel and CAN ID boundaries.
+Cancel skips session budget; tick-based expiry latches invalidate stale templates
+and retire expired interval/session markers across full timer cycles; mismatched
+standard/extended CAN ID types are rejected.
 No signature or network authentication work is included. No device/flash proof.

@@ -43,7 +43,6 @@ jobs:
     - name: Generated files are current
       run: |
         python3 openpilot/tesla/plugins/gen_params.py --check
-        python3 openpilot/tesla/plugins/gen_safety.py --check
     - name: Auto-merge classifier
       run: python3 tools/ci/pr_risk.py --check
     - name: XPILOT.md section 11 host checks
@@ -55,6 +54,8 @@ jobs:
           python3 tools/sp_tesla_e2e/$check.py > /tmp/xpilot-ci/$check.json
           echo "::endgroup::"
         done
+    - name: Plugin message broker end to end (Linux credentials)
+      run: python3 tools/sp_tesla_e2e/plugin_msg_e2e.py
     - name: Store activation transaction end to end
       run: python3 tools/sp_tesla_e2e/store_activation_e2e.py --output /tmp/xpilot-ci/store-activation
     - name: Plugin repository end to end

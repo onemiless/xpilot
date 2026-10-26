@@ -54,7 +54,8 @@ settings actions, store refresh/install, or reboot/reset/uninstall confirmation.
 29. Non-printable/non-ASCII/overlong touch or hardware input changes the keyboard/param instead of preserving it with an error.
 30. Secret content or its stored length appears in row/keyboard draw calls or logs, including immediately after typing.
 31. Onroad row entry or confirmation after an offroad->onroad transition writes a setting.
-33. Long owner chip draws without live/valid ABI, loses STOCK/SP/long active/refusal, or fails in big screen/mici rendering.
+33. The G8 owner is drawn on the video, or its onroad tile ignores live/valid ABI or loses STOCK/SP/ON/refusal.
+34. Started in P does not show the offroad screen, a long press does not switch onroad/offroad, or a gear change keeps the switch.
 32. Empty secret lacks Not set, Cancel changes storage, or existing BOOL/range/choices controls change.
 """
 import argparse
@@ -183,7 +184,8 @@ def host_check(output):
     recv_frame = {'carState': 1}
     alive = {'carControlSP': True}
     valid = {'carControlSP': True}
-  state.sm = SM(carState=types.SimpleNamespace(vCruiseCluster=70, vEgoCluster=18, vEgo=18, steeringAngleDeg=0,
+  state.engaged = False
+  state.sm = SM(carState=types.SimpleNamespace(gearShifter='drive', vCruiseCluster=70, vEgoCluster=18, vEgo=18, steeringAngleDeg=0,
                                                leftBlindspot=True, rightBlindspot=True),
                 controlsState=types.SimpleNamespace(deprecated=types.SimpleNamespace(vCruise=70),
                   lateralControlState=types.SimpleNamespace(which=lambda: 'torqueState')),
@@ -424,6 +426,21 @@ def host_check(output):
     frame()
     check(color() == neutral, '14 stale onroad texture')
     cases.append({'id': 14, 'park_rgb': accent, 'onroad_rgb': neutral})
+    state.sm['carState'].gearShifter = 'park'
+    frame()
+    check(host._mode != 'onroad', '34 started in P is not offroad')
+    host._screen_override = 'onroad'
+    frame()
+    check(host._mode == 'onroad', '34 long-press override to onroad ignored')
+    state.sm['carState'].gearShifter = 'drive'
+    frame()
+    check(host._mode == 'onroad' and host._screen_override is None, '34 gear change kept the override')
+    host._screen_override = 'offroad'
+    frame()
+    check(host._mode != 'onroad', '34 onroad long-press override to offroad ignored')
+    host._screen_override = None
+    frame()
+    cases.append({'id': 34, 'park_offroad': True, 'override': True})
     before = tuple(host._view)
     saved = host._layout_params.get(tiles.LAYOUT_PARAM)
     outside = center(tiles.tile_rect(next(iter(host._placed.values()))))
@@ -535,6 +552,9 @@ def host_check(output):
           drag(center(r), (center(r)[0] + 260, center(r)[1] + 100))
           check(host._hud == before and host._view_position == view_before and host._hud_drag is None and
                 host._layout_params.get(tiles.LAYOUT_PARAM) == saved_before, '26 button drag moved/toggled/saved: ' + name)
+          if not tiles.hud_visible(host._hud, name):  # hidden by default (set speed): Show first
+            touch(center(r))
+            check(tiles.hud_visible(host._hud, name), '25 Show failed: ' + name)
           touch(center(r))
           check(host._hud.get(name, [0, 0, True])[2] is False, '25 Hide failed: ' + name)
           saved_hidden = host._layout_params.get(tiles.LAYOUT_PARAM)
@@ -694,7 +714,10 @@ def host_check(output):
     defaults = tiles.builtin_hud_boxes((0, 0, *tiles.MICI))
     point = hud_body('builtin:set_speed')
     drag(point, (point[0] + 320, point[1]))
+    check(not host._hud['builtin:set_speed'][2], '21 set speed not hidden by default')
+    touch(center(tiles.hud_buttons(host._hud_boxes(), host._drive_view())['builtin:set_speed']))  # Show it again
     moved = list(host._hud['builtin:set_speed'])
+    check(moved[2], '21 set speed Show failed')
     touch(center(tiles.hud_buttons(host._hud_boxes(), host._drive_view())['builtin:torque_bar']))
     check(not host._hud['builtin:torque_bar'][2], '21 torque bar button did not hide')
     for name in ('builtin:steering_wheel', 'builtin:model_source'):
@@ -735,47 +758,22 @@ def host_check(output):
     check(host._hud == raw and builtin_draws.get('set_speed', [])[-1] == before, '21 moving view lost built-in fractions')
     cases.append({'id': 21, 'saved': raw, 'draws': builtin_draws, 'restart': True})
 
-    from openpilot.tesla.ui.slots.long_owner import LongOwnerChip
-    check(plugin_ui._classes('openpilot.tesla.ui.slots.long_owner', plugin_ui.HudOverlay) == [LongOwnerChip], '33 core discovery')
-    chip = LongOwnerChip()
-    chip.plugin_id = 'LongOwnerChip'
-    renderer.plugin_overlays._entries.append([None, chip, 0])
-    texts = []
-    original_text = rl.draw_text_ex
-    def capture_owner(font, text, *args):
-      texts.append(text)
-      return original_text(font, text, *args)
-    rl.draw_text_ex = capture_owner
-    host._hud = {}
+    from openpilot.tesla.ui.slots import long_owner
+    check(not plugin_ui._classes('openpilot.tesla.ui.slots.long_owner', plugin_ui.HudOverlay), '33 owner drawn on the video')
+    check(long_owner.LongOwnerTile.SPEC.show == 'onroad', '33 owner tile not onroad')
     cc = state.sm['carControlSP']
-    for label, owner, active, refusal in (('stock', 'stock', False, ''), ('sp', 'sp', True, 'GAS')):
+    seen = []
+    for owner, active, refusal, want in (('stock', False, '', ('STOCK', '', '')), ('sp', True, 'GAS', ('SP', 'ON', 'GAS'))):
       cc.longOwnerAvailable, cc.longOwner, cc.longActive, cc.longOwnerRefusal = True, owner, active, refusal
-      texts.clear()
-      frame(name='long-owner-' + label)
-      check(any(owner.upper() in t for t in texts) and any(('ACTIVE' if active else 'IDLE') in t for t in texts), '33 chip state')
-      if refusal:
-        check(any(refusal in t for t in texts), '33 chip refusal')
+      seen.append(long_owner.owner_state(state.sm))
+      check(seen[-1] == want, f'33 owner tile state {seen[-1]}')
     for field in ('available', 'alive', 'valid'):
       cc.longOwnerAvailable = field != 'available'
       state.sm.alive['carControlSP'] = field != 'alive'
       state.sm.valid['carControlSP'] = field != 'valid'
-      texts.clear()
-      frame()
-      check(not any('SP |' in t or 'STOCK |' in t for t in texts), '33 chip ABI/liveness gate ' + field)
+      check(long_owner.owner_state(state.sm)[0] == '-', '33 owner tile ABI/liveness gate ' + field)
     cc.longOwnerAvailable = state.sm.alive['carControlSP'] = state.sm.valid['carControlSP'] = True
-    chip.update()
-    texts.clear()
-    rl.begin_texture_mode(logical)
-    rl.clear_background(rl.BLACK)
-    chip.render(chip.default_rect(rl.Rectangle(0, 0, *tiles.MICI)))
-    rl.end_texture_mode()
-    image = rl.load_image_from_texture(logical.texture)
-    rl.image_flip_vertical(image)
-    check(rl.export_image(image, str(output / 'long-owner-mici.png')), '33 export mici')
-    rl.unload_image(image)
-    check(any('SP | ACTIVE' in t for t in texts), '33 mici chip missing')
-    rl.draw_text_ex = original_text
-    cases.append({'id': 33, 'mici': texts, 'firmware_gate': True, 'live_valid_gate': True})
+    cases.append({'id': 33, 'states': seen, 'firmware_gate': True, 'live_valid_gate': True})
 
 
 

@@ -405,11 +405,6 @@ class TestTeslaLongitudinalSafety(TestTeslaSafetyBase):
   RELAY_MALFUNCTION_ADDRS = {0: (MSG_DAS_steeringControl, MSG_APS_eacMonitor, MSG_DAS_Control)}
   FWD_BLACKLISTED_ADDRS = {2: [MSG_DAS_steeringControl, MSG_APS_eacMonitor, MSG_DAS_Control]}
 
-  def setUp(self):
-    super().setUp()
-    # Limit-only fixtures start in SP; G8 E2E exercises the actual request/handshake.
-    self.safety.test_long_fixture_sp()
-
   def test_no_aeb(self):
     for aeb_event in range(4):
       self.assertEqual(self._tx(self._long_control_msg(10, aeb_event=aeb_event)), aeb_event == 0)

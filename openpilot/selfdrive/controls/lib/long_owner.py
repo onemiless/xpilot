@@ -33,6 +33,7 @@ class LongOwner:
     self.request_since = 0.
     self.request_refusal = 0
     self.request_seen = False
+    self.panda_fault = False
 
   def refuse(self, reason, now):
     self.reason = reason
@@ -67,7 +68,10 @@ class LongOwner:
           self.refuse(f'panda:{p.longOwnerRefusal}', now)
         elif now - self.request_since > .5:
           self.locked, self.reason, self.request = True, 'ackMismatch', 255
-      if enabled and (not sm.all_checks(['pandaStates']) or p.faults or p.faultStatus != 'none' or CS.accFaulted):
+      # A temporary panda fault (e.g. interruptRateCan2, seen on the car 2026-10-26) only pauses new requests;
+      # stale pandaStates, a permanent fault or an ACC fault lock switching until disengage.
+      self.panda_fault = bool(p.faults) or p.faultStatus != 'none'
+      if enabled and (not sm.all_checks(['pandaStates']) or p.faultStatus == 'faultPerm' or CS.accFaulted):
         self.locked, self.reason = True, 'fault'
     elif self.seen_abi:
       # Losing/resetting the owner ABI must never re-enable the legacy SP path.
@@ -86,7 +90,7 @@ class LongOwner:
         desired = self.manual_target
       if desired != self.desired:
         self.desired, self.confirm_since = desired, now
-      if (desired is not None and desired != self.owner and self.request == 255 and
+      if (desired is not None and desired != self.owner and self.request == 255 and not self.panda_fault and
           now - self.confirm_since >= 1. and now >= self.cooldown_until and not self.locked):
         oem = sm['carStateSP'].teslaLongControl
         accel = ctx.LoC.last_output_accel if self.owner == 'sp' else CS.aEgo

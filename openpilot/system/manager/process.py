@@ -168,6 +168,9 @@ class PythonProcess(ManagerProcess):
     if self.shutting_down:
       self.stop()
 
+    if self.proc is not None and self.proc.exitcode is not None:
+      self.stop()
+
     if self.proc is not None:
       return
 

@@ -5,7 +5,7 @@ plugin.json:
   id           directory name                     name, description, author, version   shown on the Plugins page
   api          API_VERSION this plugin targets    category  one of CATEGORIES
   use          onroad | offroad | both (required; metadata, not hook gating)
-  entry        "module:Class" inside the plugin package (e.g. "plugin:AutoSpeed")
+  entry        "module:Class" inside the plugin package (e.g. "plugin:Example")
   priority     lower wins an exclusive claim (then id); also orders plugins in a category. Default 100
   enable_param BOOL param that switches the plugin; null = always on
   claims       resources the plugin uses (see CLAIM_PATTERNS); the host refuses anything unclaimed
@@ -30,7 +30,6 @@ import sys
 API_VERSION = 1
 PLUGINS_DIR = Path(__file__).resolve().parent / "plugins"  # built-in plugins (in git)
 INSTALL_DIR = Path(os.environ.get("XPILOT_PLUGINS_DIR", "/data/xpilot_plugins"))  # downloaded plugins (store.py)
-SAFETY_JSON = Path(__file__).resolve().parents[2] / "opendbc_repo/opendbc/safety/plugins/safety.json"
 _COMMON = Path(__file__).resolve().parents[1] / "common"
 
 # id -> title, in pipeline order. The first 12 sit on the control path.
@@ -57,7 +56,7 @@ CATEGORIES = {
 
 # Exclusive unless shared() (SHARED_CLAIMS and every msg:<kind>): only one active plugin may hold it.
 CLAIM_PATTERNS = (
-  r"can\.tx:0x[0-9A-Fa-f]{1,8}:[0-7]",  # send this CAN address on this bus (needs a panda safety plugin)
+  r"can\.tx:0x[0-9A-Fa-f]{1,8}:[0-7]",  # send this CAN address on this bus (needs a runtime panda rule)
   r"process:[a-z][a-z0-9_]*",           # run this manager process
   r"source:[a-z][a-z0-9_.]*",           # be the provider of this data, e.g. source:radar, source:lanes
   r"role:[a-z][a-z0-9_.]*",             # own a replaceable stage, e.g. role:lane_change.policy
@@ -133,11 +132,6 @@ def _setting(d: dict, params: dict) -> Setting:
   rng = d.get("range")
   return Setting(d["key"], d["label"], tuple(rng) if rng else None,
                  tuple((str(label), int(v)) for label, v in d["choices"]) if d.get("choices") else None, kind, length)
-
-
-def safety_profiles() -> dict:
-  """Legacy generator fixture only; runtime manifests use rules."""
-  return json.loads(SAFETY_JSON.read_text())
 
 
 def parse(path: Path) -> Manifest:
@@ -245,7 +239,7 @@ HOST_CAPS = {
   "hooks": ("__init__", "setup", "observe_can", "publish_state", "control_sends", "service_params", "processes",
             "role_processes", "alert_source", "lane_change_policy", "lat_correction", "lat_controller", "long_owner", "long_planner",
             "long_target", "plan_filter", "event_filter", "engagement", "safety_fallback", "radar_interface"),
-  "msg": ("*",),  # pluginMsg transports every valid kind; no payload schema or multi-publisher broker implied.
+  "msg": ("*",),  # plugin_msgd authenticates/limits publishers; every declared kind, no payload schema.
   "rule_abi": RULE_ABI,
   "native": host_platform(),
 }

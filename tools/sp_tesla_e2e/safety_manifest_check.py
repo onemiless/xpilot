@@ -60,7 +60,7 @@ def main():
     base = dict(id='fixture', api=1, category='tools', use='both', entry='plugin:P')
     valid = sample_rule()
     cases = [('valid', dict(rules=[valid], claims=['can.tx:0x600:1']), None),
-             ('G7', dict(safety={'profile': 'auto_speed'}), 'safety'),
+             ('G7', dict(safety={'profile': 'sender_a'}), 'safety'),
              ('G7-legacy', dict(safety={}), 'safety'),
              ('G8', dict(rules=[{**valid, 'tx_address': 0x488}], claims=['can.tx:0x488:1']), 'mode-owned'),
              ('G9-count', dict(rules=[{**valid, 'tx_address': 0x600+i} for i in range(9)], claims=[f'can.tx:{0x600+i:#x}:1' for i in range(9)]), '8'),

@@ -10,6 +10,6 @@
 
 - [ ] Host checks (XPILOT.md section 11) pass locally
 - [ ] Build / safety tests / MISRA (only if panda safety or compiled code changed): paste commands, results and the machine below. CI does not run these.
-- [ ] New safety header is `<plugin id>.h`; every TX allowed without `controls_allowed` is in XPILOT.md section 6
+- [ ] CAN permissions use runtime Panda rules; every exemption from `controls_allowed` is declared in the rule data
 - [ ] Tested on a device (commit on the device: )
 - [ ] Companion pull request in onemiless/xpilot-plugins (link, if any): 

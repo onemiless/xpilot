@@ -94,15 +94,15 @@ static void tesla_long_clear(uint8_t reason) {
   tesla_long_refusal = reason;
 }
 
-static void tesla_long_reset(void) {
-  tesla_long_owner = TESLA_LONG_STOCK;
+static void tesla_long_reset(bool longitudinal) {
+  tesla_longitudinal = longitudinal;
+  tesla_long_owner = longitudinal ? TESLA_LONG_SP : TESLA_LONG_STOCK;
   tesla_long_clear(TESLA_LONG_OK);
   tesla_long_request_ts = 0U;
   tesla_long_drain_ts = 0U;
   tesla_long_oem = (TeslaLongFrame){0};
   tesla_long_forwarded = (TeslaLongFrame){0};
   tesla_long_sp = (TeslaLongFrame){0};
-  tesla_longitudinal = false;
 }
 
 static TeslaLongFrame tesla_long_frame(const CANPacket_t *msg) {
@@ -587,9 +587,8 @@ static safety_config tesla_init(uint16_t param) {
   const uint16_t TESLA_FLAG_FSD_14 = 2;
   tesla_fsd_14 = GET_FLAG(param, TESLA_FLAG_FSD_14);
 
-  tesla_long_reset();
   const uint16_t TESLA_FLAG_LONGITUDINAL_CONTROL = 1;
-  tesla_longitudinal = GET_FLAG(param, TESLA_FLAG_LONGITUDINAL_CONTROL);
+  tesla_long_reset(GET_FLAG(param, TESLA_FLAG_LONGITUDINAL_CONTROL));
 
   const uint16_t TESLA_PARAM_SP_VEHICLE_BUS = 1;
   const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_3_FINGER = 2;
