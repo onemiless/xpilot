@@ -63,12 +63,13 @@ CLAIM_PATTERNS = (
   r"role:[a-z][a-z0-9_.]*",             # own a replaceable stage, e.g. role:lane_change.policy
   r"long\.target",                      # long_target hook (shared, merged by the host)
   r"plan\.filter",                      # plan_filter hook (shared, chained in priority order)
+  r"event\.filter",                     # event_filter hook (shared, allowlisted deletions only)
   r"alert",                             # alert_source hook (shared, first alert per severity in priority order)
   r"lat\.correction",                   # lat_correction hook (shared, chained, total change capped by the host)
   r"external\.provider",                # external_provider hook (shared, all bridged by externald)
   r"msg:[a-z][a-z0-9_.]*",              # publish pluginMsg of this kind (shared; source tells publishers apart)
 )
-SHARED_CLAIMS = {"long.target", "plan.filter", "alert", "lat.correction", "external.provider"}
+SHARED_CLAIMS = {"long.target", "plan.filter", "event.filter", "alert", "lat.correction", "external.provider"}
 
 
 def shared(claim: str) -> bool:
@@ -219,7 +220,7 @@ RULE_ABI = 1
 HOST_CAPS = {
   "hooks": ("__init__", "setup", "observe_can", "publish_state", "control_sends", "service_params", "processes",
             "role_processes", "alert_source", "lane_change_policy", "lat_correction", "lat_controller", "long_planner",
-            "long_target", "plan_filter", "engagement", "safety_fallback", "radar_interface", "external_provider"),
+            "long_target", "plan_filter", "event_filter", "engagement", "safety_fallback", "radar_interface", "external_provider"),
   "msg": ("*",),  # pluginMsg transports every valid kind; no payload schema or multi-publisher broker implied.
   "rule_abi": RULE_ABI,
   "native": host_platform(),

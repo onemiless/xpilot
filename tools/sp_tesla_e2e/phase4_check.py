@@ -37,6 +37,16 @@ Failure cases listed before implementation:
 - C19 selfdrived sets state_machine.state to enabled through the wrapper for replay, then an update without ENABLE
       differs from bare SP instead of staying enabled; resetting state leaves stale enabled_prev
 - C20 observe_can sends continue when core_alive is false.
+- C21 a filter drops any non-allowlisted event (including ENABLE, door/seatbelt/steer/gear disables).
+- C22 a filter drops a FLOOR/FLOOR_SP event, or a valid first list is applied before a bad second list is rejected.
+- C23 a raising filter runs again, loses events, hides xpilotPluginFault, or latches both axes off.
+- C24 garbage output (non-list, unknown name, bool, wrong shape) is accepted or partially applied.
+- C25 two enabled event.filter claimants conflict, run outside (priority, id) order, or run after fallback.
+- C26 a filter off at startup is called, or cannot withdraw its policy while its own switch is off.
+- C27 a valid filter fails to permit SP engagement with invalidLkasSetting; copies/counters/CarState change.
+- C28 without a filter, real Tesla CAN -> CarState -> SP events hides stock Autosteer or permits engagement.
+- C29 a filter fault from before selfdrived restart runs again, hides its alert or latches the axes, including
+      a filter that also owns an engagement role.
 """
 import ast
 import hashlib
@@ -180,6 +190,146 @@ def step(s, CS=None, events=(), events_sp=()):
   s.mads.update(CS)
   s.CS_prev = CS
   return s.enabled, s.active
+
+
+
+def event_filter_checks():
+  from openpilot.tesla import manifest as mf
+  from openpilot.selfdrive.selfdrived.events import EVENTS
+  from openpilot.selfdrive.car.car_events import CarEvents
+  from opendbc.can import CANPacker
+  from opendbc.car.tesla.carstate import CarState
+  from opendbc.car.tesla.values import CAR, DBC, CANBUS
+  from opendbc.car import Bus, structs
+
+  errors, records = [], []
+
+  def check(code, condition, detail):
+    records.append(dict(case=code, passed=bool(condition), detail=detail))
+    if not condition:
+      errors.append(f"{code} {detail}")
+
+  def filter_plugin(name, fn, priority=100, toggle=None):
+    return type(name, (Plugin,), dict(NAME=name, ENABLE_PARAM=toggle, CLAIMS=("event.filter",), PRIORITY=priority,
+                                     event_filter=classmethod(lambda cls, *a: fn(*a))))
+
+  def driver(filters, params=None, fallback=None):
+    plugins.PLUGINS = default_plugins() + tuple(filters)
+    if fallback is not None:
+      plugins.PLUGINS += (role_plugin("rep_fb", core_host.FALLBACK, "safety_fallback", fallback),)
+    sd = selfdrive(params)
+    plugins.install_core(sd)
+    return sd
+
+  # C21/C22/C24: both lists must be valid before any deletion; bad output is never reused.
+  forbidden = {e for e, types_ in EVENTS.items() if any(et in types_ for et in
+               (ET.NO_ENTRY, ET.USER_DISABLE, ET.SOFT_DISABLE, ET.IMMEDIATE_DISABLE, ET.ENABLE))}
+  forbidden -= {EN.invalidLkasSetting}
+  outputs = [("C21", ([EN.invalidLkasSetting, e], [])) for e in sorted(forbidden - core_host.FLOOR)]
+  outputs += [("C22", ([EN.invalidLkasSetting, e], [])) for e in sorted(core_host.FLOOR)]
+  outputs += [("C22", ([EN.invalidLkasSetting], [e])) for e in sorted(core_host.FLOOR_SP)]
+  outputs += [("C24", bad) for bad in (None, [], "bad", ((), []), ([], ()), ([999999], []),
+                                     ([True], []), ([float(EN.invalidLkasSetting)], []), ([EN.invalidLkasSetting], [999999]))]
+  for code, output in outputs:
+    FAULTS.clear()
+    calls = []
+    def invalid(ctx, CS, names, names_sp):
+      calls.append(1)
+      names.clear()
+      names_sp.clear()
+      return output
+    sd = driver([filter_plugin("bad_filter", invalid)])
+    events = sorted({EN.invalidLkasSetting, EN.buttonEnable, EN.doorOpen, *core_host.FLOOR})
+    step(sd, events=events, events_sp=core_host.FLOOR_SP)
+    first = (sd.events.names.copy(), sd.events_sp.names.copy())
+    step(sd, events=events, events_sp=core_host.FLOOR_SP)
+    check(code, sd.events.names == events and set(sd.events_sp.names) == core_host.FLOOR_SP and
+          len(calls) == 1 and "bad_filter" in FAULTS and not sd.state_machine._h.latched and
+          first == (sd.events.names, sd.events_sp.names), repr(output))
+
+  FAULTS.clear()
+  calls = []
+  def raises(ctx, CS, names, names_sp):
+    calls.append(1)
+    names.clear()
+    raise RuntimeError("filter")
+  sd = driver([filter_plugin("raising_filter", raises)])
+  engaged = step(sd, events=[EN.buttonEnable])
+  step(sd, events=[EN.invalidLkasSetting])
+  check("C23", engaged == (True, True) and len(calls) == 1 and "raising_filter" in FAULTS and
+        sd.events.has(EN.invalidLkasSetting) and sd.events_sp.has(ENSP.xpilotPluginFault) and
+        not sd.state_machine._h.latched, "raise stops only the filter, preserves events and shows fault")
+
+  calls = []
+  def ordered(name):
+    def apply(ctx, CS, names, names_sp):
+      calls.append((name, names.copy()))
+      return ([EN.invalidLkasSetting] if name == "a" else []), []
+    return apply
+  filters = [filter_plugin("b", ordered("b"), 20), filter_plugin("z", ordered("z"), 10),
+             filter_plugin("a", ordered("a"), 10)]
+  fallback = types.SimpleNamespace(update=lambda ctx, CS, names, names_sp: (calls.append(("fallback", names.copy())) or names, names_sp))
+  sd = driver(filters, fallback=fallback)
+  step(sd, events=[EN.invalidLkasSetting, EN.buttonEnable, EN.fcw])
+  resolved, conflicts = plugins.resolve(sd.params)
+  check("C25", [name for name, _ in calls] == ["a", "z", "b", "fallback"] and
+        EN.invalidLkasSetting in calls[0][1] and all(EN.invalidLkasSetting not in names for _, names in calls[1:]) and
+        {f.NAME for f in filters} <= resolved and not ({f.NAME for f in filters} & conflicts.keys()) and sd.events.has(EN.fcw) and
+        mf.shared("event.filter") and mf._CLAIM_RE.fullmatch("event.filter") is not None and
+        "event_filter" in mf.HOST_CAPS["hooks"], "shared claim, priority/id order, SP -> filters -> fallback -> floors")
+
+  calls = []
+  def switched(ctx, CS, names, names_sp):
+    calls.append(1)
+    return ([EN.invalidLkasSetting] if ctx.params.get_bool("Mixed") else []), []
+  toggle = filter_plugin("switched", switched, toggle="Mixed")
+  sd = driver([toggle], Params({"Mixed": False}))
+  step(sd, events=[EN.invalidLkasSetting])
+  off = sd.events.has(EN.invalidLkasSetting) and not calls
+  sd = driver([toggle], Params({"Mixed": True}))
+  out = step(sd, events=[EN.invalidLkasSetting, EN.buttonEnable])
+  on = not sd.events.has(EN.invalidLkasSetting)
+  refs = sd.events, sd.events_sp
+  counters = sd.events.event_counters.copy()
+  sd.update_events(cs(invalidLkasSetting=True))
+  check("C27", out == (True, True) and not sd.events.has(EN.invalidLkasSetting) and
+        refs == (sd.events, sd.events_sp) and counters == sd.events.event_counters,
+        "valid filter permits SP engagement without replacing event objects or advancing counters")
+  sd.params.values["Mixed"] = False
+  step(sd, events=[EN.invalidLkasSetting])
+  check("C26", off and on and sd.events.has(EN.invalidLkasSetting), "switch off restores event")
+
+  # C28: the port must preserve the actual DAS_settings signal all the way into SP's no-entry event.
+  cp = structs.CarParams(carFingerprint=CAR.TESLA_MODEL_3.value, brand="tesla", pcmCruise=True)
+  cp_sp = structs.CarParamsSP()
+  state = CarState(cp, cp_sp)
+  parsers = state.get_can_parsers(cp, cp_sp)
+  msg = CANPacker(DBC[CAR.TESLA_MODEL_3][Bus.party]).make_can_msg("DAS_settings", CANBUS.autopilot_party,
+                                                               {"DAS_autosteerEnabled": 1})
+  _ = parsers[Bus.ap_party].vl["DAS_settings"]
+  parsers[Bus.ap_party].update([(0, [msg])])
+  ret, _ = state.update(parsers)
+  ret.gearShifter, ret.cruiseState.available, ret.cruiseState.enabled = car.CarState.GearShifter.drive, True, True
+  ret.doorOpen = ret.seatbeltUnlatched = ret.steerFaultPermanent = False
+  events = CarEvents(cp).update(ret, structs.CarState(), structs.CarControl()).names
+  sd = driver([])
+  check("C28", ret.invalidLkasSetting and EN.invalidLkasSetting in events and
+        step(sd, events=events) == (False, False) and sd.events.has(EN.invalidLkasSetting),
+        "no filter: packed stock Autosteer signal -> true CarState -> no-entry")
+
+  for owns_role in (False, True):
+    calls = []
+    cls = filter_plugin("earlier_filter", lambda *a: (calls.append(1) or [EN.invalidLkasSetting], []))
+    if owns_role:
+      cls.CLAIMS += (core_host.ENGAGEMENT,)
+      cls.engagement = classmethod(lambda cls, sd: types.SimpleNamespace(state_machine=sd.state_machine, mads=sd.mads))
+    sd = driver([cls], Params({plugins.FAULTS_PARAM: {"earlier_filter": "selfdrived.event_filter: RuntimeError('earlier')"}}))
+    out = step(sd, events=[EN.buttonEnable])
+    step(sd, events=[EN.invalidLkasSetting])
+    check("C29", not calls and out == (True, True) and not sd.state_machine._h.latched and
+          sd.events.has(EN.invalidLkasSetting) and sd.events_sp.has(ENSP.xpilotPluginFault),
+          f"persisted filter fault survives restart without an axis latch; owns_role={owns_role}")
+  return errors, records
 
 
 def main() -> int:
@@ -555,7 +705,9 @@ def main() -> int:
     if bool(sent) != alive:
       errors.append(f'C20 observe_can core_alive={alive}: sent={sent}')
 
-  print(json.dumps({"errors": errors, "sp_frames": len(traces),
+  filter_errors, filter_cases = event_filter_checks()
+  errors += filter_errors
+  print(json.dumps({"errors": errors, "event_filter_cases": filter_cases, "sp_frames": len(traces),
                     "trace_sha256": hashlib.sha256(json.dumps(traces, sort_keys=True).encode()).hexdigest(),
                     "sequences": list(sequences)}, indent=1))
   return 1 if errors else 0

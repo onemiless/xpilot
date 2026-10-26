@@ -22,7 +22,7 @@ Failure cases listed before implementation:
 - M14 a missing/invalid use is accepted or discovery loses the rejection reason
 - M15 a plugin tile show conflicts with its declared use
 - M16 requires accepts malformed fields, unknown hooks/messages/native ABI, or an unavailable rule ABI
-- M17 HOST_CAPS hooks drift from Plugin methods, or optional requires breaks API 1 plugins
+- M17 HOST_CAPS hooks drift from Plugin methods plus optional event_filter, or requires breaks API 1 plugins
 - M18 ABI 1 is not advertised after the runtime engine lands
 """
 import json
@@ -74,7 +74,7 @@ def capability_checks() -> list[str]:
   if not hasattr(mf, "compatible"):
     return ["M16 missing compatible", "M17 missing HOST_CAPS"]
   hooks = {name for name, value in vars(Plugin).items() if callable(value) or isinstance(value, classmethod)}
-  if set(mf.HOST_CAPS["hooks"]) != hooks or mf.RULE_ABI != 1 or mf.HOST_CAPS["rule_abi"] != 1:
+  if set(mf.HOST_CAPS["hooks"]) != hooks | {"event_filter"} or mf.RULE_ABI != 1 or mf.HOST_CAPS["rule_abi"] != 1:
     errors.append("M18 hook inventory or missing rule ABI 1")
   m = mf.load_all()[0][0]
   for requires, ok, reason in (({}, True, ""), ({"hooks": ["setup"]}, True, ""),

@@ -230,6 +230,11 @@ def install_core(selfdrive) -> None:
   install(selfdrive)
 
 
+def event_filters(params) -> list:
+  """selfdrived: shared event policies, frozen at startup in (priority, id) order."""
+  return sorted((c for c in active(params) if "event.filter" in c.CLAIMS), key=lambda c: (c.PRIORITY, c.NAME))
+
+
 def processes(core: set[str] | None = None, role_procs: dict | None = None) -> list:
   """manager: claimed extra processes and SP role processes selected by their current owner."""
   procs = []
