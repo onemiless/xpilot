@@ -1,6 +1,6 @@
 """CarState failure cases:
-CS1 stock Autosteer enabled still raises invalidLkasSetting.
-CS2 the Autosteer override changes another CarState field.
+CS1 stock Autosteer enabled no longer raises invalidLkasSetting (except MISSING_DAS_SETTINGS).
+CS2 the SP extension changes the source invalidLkasSetting or another CarState field.
 """
 import re
 import unittest
@@ -79,13 +79,11 @@ class TestTeslaCarState(unittest.TestCase):
                 before = ret.to_dict()
                 update_ext(state, ret, ret_sp, can_parsers)
                 after = ret.to_dict()
-                before.pop("invalidLkasSetting")
-                after.pop("invalidLkasSetting")
-                self.assertEqual(after, before, "CS2: only invalidLkasSetting may change")
+                self.assertEqual(after, before, "CS2: SP extension preserves CarState")
 
               with patch.object(CarStateExt, "update", check_update):
                 ret, _ = cs.update(parsers)
-              self.assertFalse(ret.invalidLkasSetting, "CS1: stock Autosteer is allowed")
+              self.assertEqual(ret.invalidLkasSetting, bool(autosteer and not flags), "CS1: stock Autosteer signal")
 
 
 class TestTeslaFingerprint(unittest.TestCase):

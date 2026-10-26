@@ -22,8 +22,12 @@ Failure cases listed before implementation:
 - M14 a missing/invalid use is accepted or discovery loses the rejection reason
 - M15 a plugin tile show conflicts with its declared use
 - M16 requires accepts malformed fields, unknown hooks/messages/native ABI, or an unavailable rule ABI
-- M17 HOST_CAPS hooks drift from Plugin methods, or optional requires breaks API 1 plugins
+- M17 HOST_CAPS hooks drift from Plugin methods plus optional event_filter, or requires breaks API 1 plugins
 - M18 ABI 1 is not advertised after the runtime engine lands
+- M19 unknown/null/non-string setting type, or text/secret mixed with range/choices, loads anyway
+- M20 max_len zero, >256, bool, non-integer, or used without text/secret is accepted
+- M21 text/secret on an undeclared or non-STRING param is accepted
+- M22 text/secret default/cap length or existing BOOL/range/choices metadata changes
 """
 import json
 from pathlib import Path
@@ -74,7 +78,7 @@ def capability_checks() -> list[str]:
   if not hasattr(mf, "compatible"):
     return ["M16 missing compatible", "M17 missing HOST_CAPS"]
   hooks = {name for name, value in vars(Plugin).items() if callable(value) or isinstance(value, classmethod)}
-  if set(mf.HOST_CAPS["hooks"]) != hooks or mf.RULE_ABI != 1 or mf.HOST_CAPS["rule_abi"] != 1:
+  if set(mf.HOST_CAPS["hooks"]) != hooks | {"event_filter"} or mf.RULE_ABI != 1 or mf.HOST_CAPS["rule_abi"] != 1:
     errors.append("M18 hook inventory or missing rule ABI 1")
   m = mf.load_all()[0][0]
   for requires, ok, reason in (({}, True, ""), ({"hooks": ["setup"]}, True, ""),
@@ -97,8 +101,49 @@ def capability_checks() -> list[str]:
   return errors
 
 
+def text_setting_checks() -> list[str]:
+  errors = []
+  with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    cases = []
+    for kind in ("number", None, 1, [], {}):
+      cases.append(("M19", {"type": kind}, {"type": "STRING"}))
+    for kind in ("text", "secret"):
+      for extra in ({"range": [0, 2, 1, "", 1]}, {"choices": [["A", 1]]}):
+        cases.append(("M19", {"type": kind, **extra}, {"type": "STRING"}))
+      for length in (0, 257, -1, True, 1.5, "64", None):
+        cases.append(("M20", {"type": kind, "max_len": length}, {"type": "STRING"}))
+      for spec in (None, {"type": "BOOL"}, {"type": "INT"}, {"type": "JSON"}):
+        cases.append(("M21", {"type": kind}, spec))
+    cases.append(("M20", {"max_len": 64}, {"type": "BOOL"}))
+    for i, (case, fields, spec) in enumerate(cases):
+      name = f"bad_{i}"
+      write(root, name, settings=[{"key": "Value", "label": "Value", **fields}], params={"Value": spec} if spec else {})
+      try:
+        mf.parse(root / name / "plugin.json")
+        errors.append(f"{case} invalid setting accepted (fixture {i})")
+      except ValueError:
+        pass
+    for kind in ("text", "secret"):
+      for length in (None, 1, 256):
+        name = f"valid_{kind}_{length}"
+        fields = {"type": kind, **({"max_len": length} if length is not None else {})}
+        write(root, name, settings=[{"key": "Value", "label": "Value", **fields}], params={"Value": {"type": "STRING"}})
+        setting = mf.parse(root / name / "plugin.json").settings[0]
+        if getattr(setting, "type", None) != kind or getattr(setting, "max_len", None) != (64 if length is None else length):
+          errors.append("M22 text/secret metadata lost")
+    write(root, "legacy", settings=[{"key": "Bool", "label": "Bool"},
+          {"key": "Range", "label": "Range", "range": [0, 10, 1, "%", 1]},
+          {"key": "Choice", "label": "Choice", "choices": [["A", 1], ["B", 2]]}])
+    legacy = mf.parse(root / "legacy/plugin.json").settings
+    if legacy != (mf.Setting("Bool", "Bool"), mf.Setting("Range", "Range", (0, 10, 1, "%", 1)),
+                  mf.Setting("Choice", "Choice", choices=(("A", 1), ("B", 2)))):
+      errors.append("M22 legacy metadata changed")
+  return errors
+
+
 def main() -> int:
-  errors = capability_checks()
+  errors = capability_checks() + text_setting_checks()
   from openpilot.tesla.ui.tiles import TileSpec
   try:
     TileSpec("missing", "Missing")

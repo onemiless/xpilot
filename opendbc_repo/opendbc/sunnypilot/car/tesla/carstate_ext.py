@@ -23,8 +23,6 @@ class CarStateExt:
     self.active_touch_points = 0
 
   def update(self, ret: structs.CarState, ret_sp: structs.CarStateSP, can_parsers: dict[StrEnum, CANParser]) -> None:
-    # User decision 2026-10-25: allow stock Autosteer; the mixed AP plugin will own this later.
-    ret.invalidLkasSetting = False
     if self.CP_SP.flags & TeslaFlagsSP.HAS_VEHICLE_BUS:
       cp_adas = can_parsers[Bus.adas]
 

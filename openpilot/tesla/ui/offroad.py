@@ -148,7 +148,9 @@ def switch_plugin(plugin, value: bool, params, jobs=None) -> str | None:
 
 
 def setting_kind(setting) -> str:
-  """toggle (no range/choices), buttons (≤5 values) or cycle (a button stepping to the next value)."""
+  """text/secret, toggle, buttons (≤5 values), or cycle (stepping to the next value)."""
+  if setting.type in ("text", "secret"):
+    return setting.type
   if setting.range is None and setting.choices is None:
     return "toggle"
   from openpilot.tesla.ui.settings_meta import setting_choices

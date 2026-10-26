@@ -13,6 +13,7 @@ from openpilot.system.ui.widgets.scroller_tici import Scroller
 from openpilot.tesla.plugins import view
 from openpilot.tesla.ui.offroad import next_choice, setting_kind
 from openpilot.tesla.ui.settings_meta import setting_choices, setting_label
+from openpilot.tesla.ui.setting_keyboard import edit_text_setting
 
 HEADER_COLOR = rl.Color(140, 144, 156, 255)
 HEADER_H = 110
@@ -114,13 +115,17 @@ def set_param(key: str, value) -> None:
 
 
 class SettingRow:
-  """A row for one plugin/vehicle Setting: toggle, ≤5 buttons, or a button stepping to the next value. refresh() reloads it."""
+  """A plugin/vehicle Setting row: text/secret editor, toggle, buttons, or next-value button. refresh() reloads it."""
 
   def __init__(self, setting, title: str | None = None):
     self.setting = setting
     self.kind = setting_kind(setting)
     title = title or setting.label
-    if self.kind == "toggle":
+    if self.kind in ("text", "secret"):
+      action = ButtonAction("Edit", enabled=ui_state.is_offroad)
+      action.set_value(lambda: setting_label(setting, self._value()))
+      self.item = ListItem(title=title, action_item=action, callback=lambda: edit_text_setting(setting, params(), self.refresh))
+    elif self.kind == "toggle":
       self.item = toggle_item(title, initial_state=bool(self._value()), callback=self._set, enabled=ui_state.is_offroad)
     elif self.kind == "buttons":
       self.choices = setting_choices(setting, ui_state.is_metric)

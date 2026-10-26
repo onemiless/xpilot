@@ -24,6 +24,10 @@ Failure cases listed before implementation:
      view leaves the content rect
 - O11 a tesla UI module uses a pyray type in a | union annotation without from __future__ import annotations
      (pyray types are functions on the device: TypeError at import, UI exits)
+- O14 non-printable/non-ASCII or overlong text/secret input is accepted; valid empty/space/boundary input is lost
+- O15 secret label leaks content/length, empty secret lacks Not set, or new paths contain logging/fault output
+- O16 either settings page omits the text editor or its offroad entry/commit gates (GPU case 28 exercises both)
+- O17 existing BOOL/range/choices row kinds or labels change
 """
 import ast
 import json
@@ -130,7 +134,7 @@ def check_plugins(errors: list) -> None:
   for p in PLUGINS:
     for s in p.SETTINGS:
       kind = offroad.setting_kind(s)
-      if kind not in ("toggle", "buttons", "cycle") or (kind == "toggle") != (s.range is None and s.choices is None):
+      if kind not in ("text", "secret", "toggle", "buttons", "cycle") or (kind == "toggle") != (s.type is None and s.range is None and s.choices is None):
         errors.append(f"O3 setting {s.key} kind {kind}")
   if offroad.next_choice([("a", 1), ("b", 2)], 2) != 1 or offroad.next_choice([("a", 1), ("b", 2)], 9) != 1:
     errors.append("O3 next_choice does not wrap or recover from an unknown value")
@@ -276,9 +280,55 @@ def check_sources(errors: list) -> None:
       errors.append(f"O11 {path.relative_to(ROOT)}: rl type in a | union without from __future__ import annotations")
 
 
+def check_text_settings(errors: list) -> None:
+  from openpilot.tesla.ui.settings_meta import setting_label
+  from types import SimpleNamespace
+  for kind in ("text", "secret"):
+    setting = SimpleNamespace(key="Value", label="Value", type=kind, max_len=64, range=None, choices=None)
+    if offroad.setting_kind(setting) != kind:
+      errors.append("O16 text/secret row falls through to toggle")
+    if kind == "secret":
+      if [setting_label(setting, v) for v in (None, "", "a", "longer-value")] != ["Not set", "Not set", "******", "******"]:
+        errors.append("O15 secret label reveals value/length or empty label wrong")
+    elif setting_label(setting, None) != "Not set" or setting_label(setting, "hello") != "hello":
+      errors.append("O14 text label wrong")
+    try:
+      real = mf.Setting("Value", "Value", type=kind, max_len=64)
+    except TypeError:
+      errors.append("O14 missing input validation")
+      continue
+    for value in ("\x00", "\n", "\t", "\x1f", "\x7f", "é", "a" * 65):
+      if not real.input_error(value):
+        errors.append("O14 invalid input accepted")
+    for value in ("", " ", " !~", "a" * 64):
+      if real.input_error(value):
+        errors.append("O14 valid input refused")
+  paths = ["tesla/ui/setting_keyboard.py", "tesla/ui/settings_page.py", "tesla/ui/pages/base.py", "tesla/ui/settings_meta.py"]
+  tree = ast.parse((PKG / "tesla/manifest.py").read_text())
+  setting_source = "\n".join(ast.get_source_segment((PKG / "tesla/manifest.py").read_text(), n) for n in tree.body
+                             if isinstance(n, (ast.ClassDef, ast.FunctionDef)) and n.name in ("Setting", "_setting"))
+  if re.search(r"\b(cloudlog|print|logging|record_fault)\b", setting_source):
+    errors.append("O15 logging/fault output in manifest Setting")
+  for name in paths:
+    path = PKG / name
+    if not path.exists():
+      errors.append("O16 shared keyboard missing")
+      continue
+    if re.search(r"\b(cloudlog|print|logging|record_fault)\b", path.read_text()):
+      errors.append("O15 logging/fault output in setting paths: " + name)
+  for name in ("tesla/ui/settings_page.py", "tesla/ui/pages/base.py"):
+    if "edit_text_setting(" not in (PKG / name).read_text():
+      errors.append("O16 settings page missing shared editor: " + name)
+  for setting, kind, label, value in ((mf.Setting("b", "Bool"), "toggle", "True", True),
+      (mf.Setting("r", "Range", (0, 10, 1, "%", 1)), "cycle", "5%", 5),
+      (mf.Setting("c", "Choice", choices=(("A", 1), ("B", 2))), "buttons", "B", 2)):
+    if offroad.setting_kind(setting) != kind or setting_label(setting, value) != label:
+      errors.append("O17 legacy row changed")
+
+
 def main() -> int:
   errors: list[str] = []
-  for check in (check_tiles, check_pages, check_plugins, check_store, check_market, check_models, check_view, check_alerts, check_sources):
+  for check in (check_tiles, check_pages, check_plugins, check_store, check_market, check_models, check_view, check_alerts, check_sources, check_text_settings):
     try:
       check(errors)
     except Exception as e:
