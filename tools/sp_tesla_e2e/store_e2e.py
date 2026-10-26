@@ -4,7 +4,7 @@ discovery -> enable via the params view -> the plugin's hook runs in the host. U
   python3 tools/sp_tesla_e2e/store_e2e.py --repo ~/xpilot-plugins
 
 Failure cases listed before running:
-- E1 an index entry from the repository is not installable on this host, or fails to install
+- E1 a platform-compatible index entry is not installable on this host, or fails to install
 - E2 an installed repository plugin is not discovered, or reports a load error
 - E3 a plugin that is off by default is active before it is switched on
 - E4 after switching on, its alert hook is not collected or gives no alert when it should (overspeed_warning)
@@ -16,6 +16,9 @@ Failure cases listed before running:
 - E7 an installed model plugin (op_models) owns role:perception.model while off, does not take it from sp_models when
      switched on, or does not start its own op_modeld process
 - E9 repository source/archive lacks valid use or a tile conflicts with use
+- E10 a mismatched native-platform plugin is not refused with the platform reason and no writes, then skipped
+- E11 a mismatched native-platform plugin is accidentally offered as installable or accepted
+- E12 a matching native-platform plugin skips the full install/discovery/activation checks (simulate aarch64 too)
 """
 import argparse
 import http.server
@@ -94,7 +97,18 @@ def main() -> int:
   entries, err = store.fetch_index((TMP / "index.json").as_uri())
   if err or not entries:
     errors.append(f"E1 index: {err}")
+  skipped = {}
   for e in entries:
+    if not mf.platform_ok(e.platform):
+      before = {p: p.read_bytes() if p.is_file() else None for p in TMP.rglob("*")}
+      r = store.install(e)
+      after = {p: p.read_bytes() if p.is_file() else None for p in TMP.rglob("*")}
+      if e.installable or r is None:
+        errors.append(f"E11 {e.id}: mismatched platform accepted, installable={e.installable}, result={r}")
+      if r != f"not installable (api {e.api} vs {mf.API_VERSION}, platform {e.platform}, or a built-in id)" or after != before:
+        errors.append(f"E10 {e.id}: platform refusal={r}, unchanged={after == before}")
+      skipped[e.id] = r
+      continue
     if not e.installable or (r := store.install(e)) is not None:
       errors.append(f"E1 {e.id}: installable={e.installable} {r if e.installable else ''}")
 
@@ -104,7 +118,7 @@ def main() -> int:
 
   from openpilot.tesla import plugins
   from openpilot.tesla.plugin_params import ParamsView
-  ids = {e.id for e in entries}
+  ids = {e.id for e in entries} - skipped.keys()
   found = {c.NAME for c in plugins.PLUGINS} & ids
   if found != ids or ids & set(plugins.LOAD_ERRORS):
     errors.append(f"E2 discovered {found}, load errors {plugins.LOAD_ERRORS}")
@@ -144,7 +158,7 @@ def main() -> int:
       errors.append(f"E7 owner off={off} on={on}, op_modeld onroad-only={runs}")
 
   server.shutdown()
-  print(json.dumps({"installed": sorted(found), "errors": errors}, indent=1))
+  print(json.dumps({"installed": sorted(found), "skipped": skipped, "errors": errors}, indent=1))
   return 1 if errors else 0
 
 
