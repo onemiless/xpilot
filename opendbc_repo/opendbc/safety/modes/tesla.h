@@ -443,6 +443,7 @@ static bool tesla_tx_hook(const CANPacket_t *msg) {
 
   bool tx = true;
   bool violation = false;
+  bool cancel = false;
 
   // Don't send any messages when Autopark is active
   if (tesla_autopark) {
@@ -493,6 +494,8 @@ static bool tesla_tx_hook(const CANPacket_t *msg) {
     int raw_accel_max = ((msg->data[6] & 0x1FU) << 4) | (msg->data[5] >> 4);
     int raw_accel_min = ((msg->data[5] & 0x0FU) << 5) | (msg->data[4] >> 3);
     int acc_state = msg->data[1] >> 4;
+    cancel = (acc_state == 13) && (raw_accel_max == TESLA_LONG_LIMITS.inactive_accel) &&
+             (raw_accel_min == TESLA_LONG_LIMITS.inactive_accel);
 
     if (tesla_longitudinal) {
       // Prevent both acceleration from being negative, as this could cause the car to reverse after coming to standstill
@@ -503,16 +506,8 @@ static bool tesla_tx_hook(const CANPacket_t *msg) {
       // Don't allow any acceleration limits above the safety limits
       violation |= longitudinal_accel_checks(raw_accel_max, TESLA_LONG_LIMITS);
       violation |= longitudinal_accel_checks(raw_accel_min, TESLA_LONG_LIMITS);
-    } else {
-      // Can only send cancel longitudinal messages when not controlling longitudinal
-      if (acc_state != 13) {  // ACC_CANCEL_GENERIC_SILENT
-        violation = true;
-      }
-
-      // No actuation is allowed when not controlling longitudinal
-      if ((raw_accel_max != TESLA_LONG_LIMITS.inactive_accel) || (raw_accel_min != TESLA_LONG_LIMITS.inactive_accel)) {
-        violation = true;
-      }
+    } else if (!cancel) {
+      violation = true;
     }
   }
 
@@ -523,8 +518,8 @@ static bool tesla_tx_hook(const CANPacket_t *msg) {
       violation = true;
     }
     if (tesla_long_owner == TESLA_LONG_STOCK) {
-      tx = false;
-      if (tesla_long_pending == TESLA_LONG_SP) {
+      tx = cancel && (tesla_long_pending != TESLA_LONG_SP);
+      if ((tesla_long_pending == TESLA_LONG_SP) && (frame.acc_state != 13U)) {
         uint32_t gap = safety_get_ts_elapsed(frame.ts, tesla_long_forwarded.ts);
         if (!tesla_long_envelope(&frame, &tesla_long_forwarded)) {
           tesla_long_clear(TESLA_LONG_ENVELOPE);
@@ -540,7 +535,7 @@ static bool tesla_tx_hook(const CANPacket_t *msg) {
         }
       }
     }
-    if (tx && !violation) {
+    if (tx && !violation && (tesla_long_owner == TESLA_LONG_SP)) {
       tesla_long_sp = frame;
     }
   }

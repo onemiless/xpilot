@@ -16,8 +16,14 @@ L16 release ignores capability. L17 rules grant 2B9 on any bus/length.
 L18 IRQ or full queue lets owner decision race queue admission.
 L19 healthy OEM25Hz/host100Hz at phase0..40ms+jitter0..10ms expires.
 L20 AEB incorrectly subject to normal I1/I2.
+L21 stock-owner cancel blocked or changes handoff samples.
+L22 stock owner accepts non-cancel/actuating/bad-checksum cancel.
+L23 cancel commits SP or clears a pending SP request.
+L24 cancel accepted during stock AEB or DRAIN.
+L25 relay/malformed OEM permits handoff; L26 normal SP host counter contract.
+L27 full stock forwarding queue advances the handoff reference.
 
-DRAIN abort restores SP (counter jump allowed only there); failures keep owner.
+DRAIN abort restores SP; normal SP counter sequencing is the host's contract.
 Artifact: XPILOT_LONG_OWNER_CONTRACT_ARTIFACT=<path> python -m unittest <module>
 """
 import hashlib
@@ -223,7 +229,7 @@ class TestTeslaLongOwnerContract(unittest.TestCase):
     self.assertEqual(d.reply()[2], STOCK)
     d.set_time(90_000)
     self.assertEqual(d.reply()[1:4], (SP, NONE, DRAIN_TIMEOUT))
-    self.assertTrue(d.tx(3))  # sole allowed I1 exception after DRAIN abort
+    self.assertTrue(d.tx(3))  # host can resume after the blocked DRAIN slot
     EVIDENCE['cases']['DRAIN_abort_counter_jump'] = d.outputs
 
   def test_L6_L7_stock_to_SP_candidates(self):
@@ -450,6 +456,101 @@ class TestTeslaLongOwnerContract(unittest.TestCase):
     text=(ROOT/'panda/board/drivers/can_common.h').read_text().split('void can_send(')[1]
     self.assertLess(text.index('ENTER_CRITICAL()'),text.index('safety_tx_hook('))
     self.assertLess(text.index('can_push('),text.index('EXIT_CRITICAL()'))
+
+  def test_L21_stock_cancel_preserves_handoff_reference(self):
+    for engaged in (False, True):
+      d = OwnerDrive()
+      d.s.set_controls_allowed(engaged)
+      d.set_time(5_000)
+      self.assertTrue(d.s.safety_tx_hook(long_msg(6, bus=0, state=13)))
+      self.assertEqual(d.reply()[1:4], (STOCK, NONE, OK))
+      d.s.set_controls_allowed(True)
+      self.assertEqual(d.reply(SP)[2], SP)
+      d.set_time(10_000)
+      self.assertTrue(d.tx(1))  # last forwarded OEM is still counter 0
+      self.assertEqual(d.reply()[1:4], (SP, NONE, OK))
+    EVIDENCE['cases']['L21'] = {'cancel_allowed_controls_on_and_off': True, 'handoff_uses_OEM_counter': 0}
+
+  def test_L22_stock_blocks_everything_except_inactive_cancel(self):
+    for state in range(16):
+      for lo, hi in ((375, 375), (374, 375), (375, 376)):
+        d = OwnerDrive()
+        self.assertEqual(bool(d.s.safety_tx_hook(long_msg(1, bus=0, state=state, lo=lo, hi=hi))),
+                         state == 13 and lo == hi == 375, (state, lo, hi))
+        self.assertEqual(d.owner, STOCK)
+    for aeb in (1, 2, 3):
+      self.assertFalse(self.d.s.safety_tx_hook(long_msg(1, bus=0, state=13, aeb=aeb)))
+    for bad in ('checksum', 'extended', 'length', 'bus'):
+      msg = long_msg(1, bus=0, state=13)
+      if bad == 'checksum':
+        msg.data[7] ^= 1
+      elif bad == 'extended':
+        msg.extended = 1
+      elif bad == 'length':
+        msg.data_len_code = 7
+      else:
+        msg.bus = 1
+      self.assertFalse(self.d.s.safety_tx_hook(msg), bad)
+
+  def test_L23_pending_SP_cancel_is_never_a_candidate(self):
+    for lo, hi in ((375, 375), (374, 375), (375, 376)):
+      d = OwnerDrive()
+      d.reply(SP)
+      d.set_time(10_000)
+      self.assertFalse(d.s.safety_tx_hook(long_msg(1, bus=0, state=13, lo=lo, hi=hi)))
+      self.assertEqual(d.reply()[1:5], (STOCK, SP, OK, 10))
+      self.assertTrue(d.tx(1))
+      self.assertEqual(d.reply()[1:4], (SP, NONE, OK))
+
+  def test_L24_cancel_blocked_by_stock_AEB_and_DRAIN(self):
+    d = self.d
+    d.rx(long_msg(1, aeb=1))
+    self.assertFalse(d.s.safety_tx_hook(long_msg(2, bus=0, state=13)))
+    self.assertEqual(d.owner, STOCK)
+    d = OwnerDrive()
+    d.takeover()
+    d.reply(STOCK)
+    d.set_time(40_000)
+    d.rx(long_msg(1))
+    self.assertFalse(d.s.safety_tx_hook(long_msg(2, bus=0, state=13)))
+    self.assertEqual(d.reply()[1:4], (SP, STOCK, OK))
+
+  def test_L25_relay_and_malformed_OEM_abort_pending(self):
+    d = self.d
+    d.reply(SP)
+    d.s.set_relay_malfunction(True)
+    self.assertFalse(d.tx(1))
+    self.assertEqual(d.reply()[1:4], (STOCK, NONE, RELAY))
+    self.assertFalse(d.s.safety_tx_hook(long_msg(1, bus=0, state=13)))
+    for malformed in ('extended', 'length'):
+      d = OwnerDrive()
+      d.reply(SP)
+      msg = long_msg(1)
+      if malformed == 'extended':
+        msg.extended = 1
+      else:
+        msg.data_len_code = 7
+      self.assertEqual(d.rx(msg), (-1, False))
+      self.assertEqual(d.reply()[1:4], (STOCK, NONE, RX_INVALID))
+      self.assertFalse(d.tx(1))
+
+  def test_L26_normal_SP_counter_is_host_responsibility(self):
+    d = self.d
+    d.takeover()
+    for counter in (1, 4, 0):
+      d.set_time(d.now + 10_000)
+      self.assertTrue(d.tx(counter))
+      self.assertEqual(d.owner, SP)
+    EVIDENCE['cases']['L26'] = {'accepted_counters': [1, 1, 4, 0], 'scope': 'Panda checks continuity only at handoff; host must lock OEM+1'}
+
+  def test_L27_full_queue_keeps_last_forwarded_OEM(self):
+    d = self.d
+    d.set_time(10_000)
+    self.assertEqual(d.rx(long_msg(1), available=False), (-1, True))
+    d.reply(SP)
+    d.set_time(15_000)
+    self.assertTrue(d.tx(1))
+    self.assertEqual(d.owner, SP)
 
   @classmethod
   def tearDownClass(cls):

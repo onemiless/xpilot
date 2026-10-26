@@ -377,7 +377,12 @@ Tesla 纵向能力位在 debug/release 均生效。RX/转发、TX/入队、请�
 使用嵌套临界区保护，心跳丢失 SILENT 代码保持原样。
 SP→stock 按协调者 DRAIN 决定：收到与最后 SP 同计数器的 OEM 时阻断并暂停 SP TX；
 下一 OEM（SP+1）通过检查后提交 STOCK 并转发。DRAIN 最长 50 ms，失败则清 pending、
-保留 SP owner 并恢复 SP TX；仅此中止路径允许 SP 计数器跳跃。请求总期限仍为 250 ms。
+保留 SP owner 并恢复 SP TX；此中止路径的主机恢复帧可能跳计数器。正常 SP owner 期间计数器由主机
+OEM+1 锁定，Panda 只在交接边界强制连续性，不新增正常 SP 帧的连续性检查。请求总期限仍为 250 ms。
+STOCK owner 且无 DRAIN/pending SP 接管时，允许沿用 non-long cancel 条件的 0x2B9：
+accState=13、加速度 min/max 均为 inactive（raw 375）、无主机 AEB、原车 AEB 未激活且 checksum 正确；
+原有白名单、relay 和 Autopark 检查仍生效。其余主机纵向帧仍阻断。Cancel 不作为 SP 接管候选，
+也不更新 SP/已转发 OEM 样本；pending SP 时 cancel 阻断且不因 cancel 本身清除 pending。
 真实 libsafety 回归保留全部中间 SP 帧，覆盖 25 Hz/100 Hz 相位和抖动下的活性与中止。
 未发布新的 HOST_CAPS/claim；X-49 必须同步健康包消费者并验证主机控制链后，才能进入另行授权的刷写/人工接合测试；
 X-50 自动速度策略和 G3 横向均未实现。本任务没有设备或刷写证明。

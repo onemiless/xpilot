@@ -10,13 +10,19 @@ or flashing in X-48. G3 lateral handoff is separate.
 
 I1: a single owner decides each normal bus-0 0x2B9 admission. Consecutive
 accepted counters increase by exactly +1 modulo 8 across a handoff; no duplicate
-counter is admitted. Ownership changes only on an admitted handoff frame.
+counter is admitted at that boundary. During normal SP ownership the host supplies
+the OEM+1 counter lock; Panda retains the existing acceleration/checksum checks
+and does not require counter continuity except at handoff. I1 for the complete
+output stream therefore depends on that host contract. Ownership changes only on
+an admitted handoff frame. Inactive host cancel while STOCK owns longitudinal is
+a separate cruise-cancel admission, excluded from the normal actuation stream;
+it cannot commit ownership or change remembered SP/forwarded OEM samples.
 Emergency OEM AEB passthrough is an explicit exception to normal counter/source
 arbitration: it must never be delayed by a continuity gate.
 
 I2: the gap between the last old-source frame and first new-source frame is
 inclusive **5000..80000 us** (5..80 ms). This allows a one-off phase change,
-with a counter jump permitted only after DRAIN abort. Outside handoffs OEM freshness remains 60 ms at 25 Hz.
+with a host counter jump expected after DRAIN abort. Outside handoffs OEM freshness remains 60 ms at 25 Hz.
 Offline tests prove safety RX/TX/FWD verdicts; physical queueing, arbitration
 and bus timing require later vehicle validation.
 
@@ -34,14 +40,15 @@ The handoff gap is 70 ms with counters 1,2. No host cadence change is required.
 While DRAIN is active, owner remains SP but host 0x2B9 TX is blocked. DRAIN
 expires at age >= **50000 us** or on any failed accept condition. Abort clears
 pending, records the refusal and restores normal SP acceptance without changing
-owner. Its next frame may jump a counter; this is the sole normal I1 exception
-and the vehicle DI is expected to tolerate it (physical validation remains).
+owner. Its next frame may jump a counter; this is the expected recovery exception
+to the host's normal OEM+1 sequence, and the vehicle DI is expected to tolerate it
+(physical validation remains). Panda does not impose a normal-SP continuity gate.
 The 250 ms request deadline still applies throughout DRAIN.
 
 The executable property must retain every intervening host transmission and
 assert both directions commit before deadline with perfect 25 Hz OEM, healthy
 100 Hz host, every phase 0..40 ms and jitter 0..10 ms. I1/I2 apply; only DRAIN
-abort may produce an SP counter jump. The previous open liveness contradiction
+abort is the modeled host counter-jump exception. The previous open liveness contradiction
 is superseded by this coordinator decision (2026-10-26).
 
 ## Authority and request (ABI 1)
@@ -124,7 +131,8 @@ gas, brake, Autopark, RX, OEM freshness, target-specific checks, deadline,
 counter, envelope, existing long checks. A failed safety gate clears pending and records its reason. Counter mismatch
 or a gap below 5 ms only blocks that candidate, retaining pending until a
 valid candidate or the deadline; these waiting conditions are not refusals. Ordinary owner SP frames
-continue to obey the existing actuation limits; rejection never grants OEM
+continue to obey the existing actuation limits and checksum checks, with counters
+provided by the host OEM+1 lock rather than a Panda continuity check; rejection never grants OEM
 ownership automatically. No Params writes or policy evaluation in firmware.
 
 ## Gates and constants
@@ -167,8 +175,15 @@ actually admitted OEM counter/envelope. Only an otherwise allowed SP frame
 with `(last_forwarded_OEM_counter+1) mod 8`, gap in 5000..80000 us and
 matching envelope, can atomically
 commit SP and be admitted. Other SP long actuation is blocked. Capability
-without a request is not ownership. With long capability and owner STOCK, host 0x2B9 including cancel is blocked.
-Without long capability, the original non-actuating cancel-only path remains.
+without a request is not ownership. With long capability and owner STOCK, host
+0x2B9 is blocked except for the existing non-long cancel rule: accState 13
+(`ACC_CANCEL_GENERIC_SILENT`), both acceleration endpoints inactive (raw 375),
+no host AEB event, no stock AEB, valid checksum, and no DRAIN/pending SP takeover.
+The existing TX whitelist, relay and Autopark checks still apply. Cancel never
+acts as an SP takeover candidate (including while pending), never clears pending
+merely by being a cancel, and never updates remembered SP/forwarded OEM samples.
+This lets driver/DM/controls cancel stock ACC while STOCK remains owner. Without
+long capability, the original non-actuating cancel-only path remains.
 
 SP -> STOCK: keep admitting SP while pending until a validated OEM counter
 equals `last_accepted_SP_counter` (duplicate). Block that OEM and enter DRAIN
