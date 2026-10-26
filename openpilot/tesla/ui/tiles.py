@@ -120,12 +120,15 @@ def hud_buttons(boxes, view) -> dict:
   return out
 
 
+HUD_SCALE = {"builtin:set_speed": 0.6}  # SP's mici set speed is sized for the whole mici screen (owner 2026-10-26)
+
+
 def builtin_hud_boxes(view) -> dict:
   """Current mici footprints; safety indications may move but never hide."""
   x, y, w, h = view
   return {"builtin:blind_spot_indicators": (x + 20, y + 100, w - 40, 128),
           "builtin:torque_bar": (x + w / 2 - 155, y + h - 90, 310, 90),
-          "builtin:set_speed": (x, y, 192, 162),
+          "builtin:set_speed": (x, y, 192 * HUD_SCALE["builtin:set_speed"], 162 * HUD_SCALE["builtin:set_speed"]),
           "builtin:steering_wheel": (x + 10, y + h - 100, 110, 100),
           "builtin:model_source": (x + w - 85, y + h - 66, 75, 52)}
 

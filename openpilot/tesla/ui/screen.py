@@ -108,6 +108,7 @@ class BigScreenHost:
     self._view_position = tiles.view_position(saved)
     self._hud, self._hud_drag = tiles.hud_layout(saved), None
     self._view_drag = False
+    self._screen_override, self._last_gear, self._last_engaged = None, None, False
     specs = [e.spec for e in self._entries.values()]
     self._layouts = {mode: tiles.arrange(specs, saved, mode) for mode in ("park", "drive")}
     self._layout = "park"  # the layout the tile screen shows and edit mode edits; onroad always shows "drive"
@@ -243,12 +244,29 @@ class BigScreenHost:
     if top is not self._main and self._is_modal(top):
       top.set_visible(lambda: self._host_pass)  # hidden in the mici texture pass, drawn by _draw_offroad
 
+  def _onroad(self) -> bool:
+    """Started and not parked shows the drive layout; P shows the offroad screen (owner 2026-10-26). A long press switches
+    between them while started; the choice lasts until the gear changes or openpilot engages."""
+    if not ui_state.started:
+      self._screen_override = None
+      return False
+    sm = ui_state.sm
+    gear = sm['carState'].gearShifter
+    engaged = ui_state.engaged
+    if gear != self._last_gear or (engaged and not self._last_engaged):
+      self._screen_override = None
+    self._last_gear, self._last_engaged = gear, engaged
+    if self._screen_override is not None:
+      return self._screen_override == "onroad"
+    return str(gear) != "park"
+
   def viewport(self) -> rl.Rectangle | None:
     onroad = self._mode == "onroad"
-    if onroad != ui_state.started:
+    started = self._onroad()
+    if onroad != started:
       self._gesture = tiles.Gesture()
       self._view_drag = False
-    if ui_state.started:
+    if started:
       self._mode = "onroad"
       self._hud_drag = None
       self._edit, self._drag, self._selected, self._layout = False, None, None, "park"
@@ -260,7 +278,7 @@ class BigScreenHost:
       onboarding = self._main is None or gui_app.widget_in_stack(self._main._onboarding_window)
       top = gui_app.get_active_widget()
       self._mode, self._view = offroad.view_mode(onboarding, top is self._main, self._is_modal(top))
-    if onroad != ui_state.started:
+    if onroad != started:
       self._theme()
     self._refresh_faces()
     return rl.Rectangle(*self._view) if self._view is not None else None
@@ -281,7 +299,7 @@ class BigScreenHost:
       self._faced[tid] = self._face(self._entries[tid], p[2], self._now)
 
   def to_logical(self, x: float, y: float) -> tuple[float, float]:
-    return offroad.to_logical(None if ui_state.started else self._view, x, y)
+    return offroad.to_logical(None if self._mode == "onroad" else self._view, x, y)
 
   def _drive_view(self) -> tuple:
     x, y, w, h = tiles.view(self._view_position)
@@ -558,9 +576,13 @@ class BigScreenHost:
           self._save()
         return
       if self._mode == "onroad":
+        if event == "long":
+          self._screen_override = "offroad"
         return
     tid = tiles.hit(placed, sx, sy)
-    if event == "long" and not self._edit:
+    if event == "long" and ui_state.started:
+      self._screen_override = "onroad"  # tiles are edited only when not started
+    elif event == "long" and not self._edit:
       self._edit, self._selected = True, tid
     elif event == "drag" and self._edit and tid is not None:
       self._drag = self._selected = tid

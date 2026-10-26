@@ -12,7 +12,7 @@ class LongOwnerChip(HudOverlay):
     self.state = None
 
   def default_rect(self, view):
-    return rl.Rectangle(view.x + 195, view.y + 8, 270, 52)
+    return rl.Rectangle(view.x + view.width - 140, view.y + 8, 132, 24)
 
   def update(self):
     sm = ui_state.sm
@@ -25,7 +25,9 @@ class LongOwnerChip(HudOverlay):
     cc = self.state
     font = gui_app.font(FontWeight.MEDIUM)
     color = rl.ORANGE if cc.longOwnerRefusal else rl.WHITE
-    rl.draw_rectangle_rounded(rect, .2, 4, rl.Color(0, 0, 0, 190))
-    rl.draw_text_ex(font, f"{str(cc.longOwner).upper()} | {'ACTIVE' if cc.longActive else 'IDLE'}",
-                    rl.Vector2(rect.x + 8, rect.y + 3), 22, 0, color)
-    rl.draw_text_ex(font, (cc.longOwnerRefusal or 'OK')[:30], rl.Vector2(rect.x + 8, rect.y + 29), 16, 0, color)
+    rl.draw_rectangle_rounded(rect, .3, 4, rl.Color(0, 0, 0, 150))
+    # one short line: owner, ON while it controls, and the refusal reason only while there is one
+    label = ("SP" if str(cc.longOwner) == "sp" else "STOCK") + (" ON" if cc.longActive else "")
+    if cc.longOwnerRefusal:
+      label += " " + str(cc.longOwnerRefusal)[:12]
+    rl.draw_text_ex(font, label, rl.Vector2(rect.x + 6, rect.y + 3), 18, 0, color)
