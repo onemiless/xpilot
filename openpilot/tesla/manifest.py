@@ -65,9 +65,15 @@ CLAIM_PATTERNS = (
   r"event\.filter",                     # event_filter hook (shared, allowlisted deletions only)
   r"alert",                             # alert_source hook (shared, first alert per severity in priority order)
   r"lat\.correction",                   # lat_correction hook (shared, chained, total change capped by the host)
+  r"power",                            # reboot/shutdown through host_api (shared, parked only)
+  r"net\.wifi",                         # Wi-Fi changes through host_api (exclusive, parked only)
+  r"sound",                            # custom sound through host_api (shared, parked only)
+  r"display",                          # display ownership (exclusive)
+  r"camera:(road|wide|driver)",         # declarative camera use (shared)
   r"msg:[a-z][a-z0-9_.]*",              # publish pluginMsg of this kind (shared; source tells publishers apart)
 )
-SHARED_CLAIMS = {"long.target", "plan.filter", "event.filter", "alert", "lat.correction"}
+SHARED_CLAIMS = {"long.target", "plan.filter", "event.filter", "alert", "lat.correction", "power", "sound",
+                 "camera:road", "camera:wide", "camera:driver"}
 
 
 def shared(claim: str) -> bool:
@@ -240,6 +246,7 @@ HOST_CAPS = {
             "role_processes", "alert_source", "lane_change_policy", "lat_correction", "lat_controller", "long_owner", "long_planner",
             "long_target", "plan_filter", "event_filter", "engagement", "safety_fallback", "radar_interface"),
   "msg": ("*",),  # plugin_msgd authenticates/limits publishers; every declared kind, no payload schema.
+  "host_api": ("parked", "reboot", "shutdown", "wifi_connect", "wifi_forget", "hotspot", "play_sound", "data_dir"),
   "rule_abi": RULE_ABI,
   "native": host_platform(),
 }
@@ -254,9 +261,9 @@ def compatible(manifest, caps) -> tuple[bool, str]:
   if manifest.platform is not None and not all(manifest.platform.get(k) == v for k, v in caps["native"].items()):
     return False, f"built for {manifest.platform}, this device is {caps['native']}"
   requires = manifest.requires
-  if not isinstance(requires, dict) or set(requires) - {"hooks", "msg", "rule_abi", "native"}:
-    return False, "bad requires: expected hooks/msg/rule_abi/native object"
-  for key in ("hooks", "msg"):
+  if not isinstance(requires, dict) or set(requires) - {"hooks", "msg", "host_api", "rule_abi", "native"}:
+    return False, "bad requires: expected hooks/msg/host_api/rule_abi/native object"
+  for key in ("hooks", "msg", "host_api"):
     names = requires.get(key, [])
     if not isinstance(names, list) or not all(isinstance(n, str) and re.fullmatch(r"[a-z_][a-z0-9_.]*", n) for n in names):
       return False, f"bad requires.{key}: expected names"
