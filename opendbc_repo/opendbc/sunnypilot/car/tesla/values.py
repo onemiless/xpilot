@@ -27,3 +27,4 @@ class TeslaSafetyFlagsSP:
   MADS_SCREEN_BUTTON_3_FINGER = 2
   MADS_SCREEN_BUTTON_4_FINGER = 4
   MADS_SCREEN_BUTTON_5_FINGER = 8
+  STOCK_AP = 16  # xpilot EAP plugin: panda forwards all stock AP frames and blocks openpilot's 0x488/0x2B9/0x27D

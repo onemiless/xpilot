@@ -441,6 +441,10 @@ app 固件专用 CAPS/STATUS/BEGIN/COMMIT/CLEAR 及 EP2 64 字节记录见合同
 
 Tesla 接管例外（用户 2026-10-25 决定）：`safety.h` 的最低频率检查遵守 `ignore_frequency_check`，时效、校验和、计数器和质量检查不变；G4（用户 2026-10-26 决定）移除 SP 扩展的全局 `invalidLkasSetting=False`，CarState 保留真实原车 Autosteer 设置。仅开启 `tesla_mixed_control` 时由其 `event.filter` 删除该事件，关闭或未安装插件即恢复 SP 行为。插件 1.1.0 声明 `requires.hooks=["event_filter"]`；旧宿主拒绝未知 claim，必须同一次 offroad 会话先更新系统再安装插件。此任务不实现 AP owner/交接（G3），不改上游 `carstate.py` 或 panda 安全逻辑。
 
+### 原车 AP 模式 `role:stock.ap`（EAP 插件，用户 2026-10-27 决定）
+
+独占 claim `role:stock.ap` 的插件生效时，card 在插件 `setup` 之后给 `CP_SP.safetyParam` 置固定位 `TeslaSafetyFlagsSP.STOCK_AP`（16，宿主按 claim 设置，插件代码不写 safetyParam）。panda `tesla.h` 看到该位后：bus 2 的 0x488/0x2B9/0x27D 全部转发（原车 Autosteer、TACC、EAC 和 NoA 照常工作，不受 `tesla_stock_lkas`、long owner 影响）；openpilot 自己在 bus 0 发的 0x488/0x2B9/0x27D 一律拒绝。runtime rules（bus 1）不变，`controls_allowed` 来自原车 cruise 状态。持有者同时声明 `role:engagement.state`，返回永不接管的状态机、`mads=None`，所以 SP 不接管。改位需要刷 panda；检查：`test_tesla.py` SA1–SA3、`plugin_host_check.py` P50。插件 `tesla_eap`（插件仓库）在此模式下按 t2can Advanced EAP 规则，在 NoA 变道请求（0x24A）后按设定延时拨一次转向杆（0x249）。
+
 ### G8 动态纵向 owner（X-20261026-49C，host + X-48 固件）
 
 线协议和 DRAIN 时序见 [wire contract](docs/design/xpilot-long-owner.md)，主机实现、

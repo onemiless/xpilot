@@ -33,6 +33,9 @@ REQUIRED_ROLES = ("role:perception.model", "role:engagement.state", "role:safety
 ROLE_PROCESSES = {"role:perception.model": ("models_manager", "modeld", "modeld_tinygrad", "modeld_warmup")}
 
 
+STOCK_AP = "role:stock.ap"  # exclusive: the holder runs the car on its stock AP (panda TeslaSafetyFlagsSP.STOCK_AP)
+
+
 def _import_installed(m, module: str):
   """Import INSTALL_DIR/<id> as package xpilot_ext.<id> and return its entry module."""
   pkg = f"xpilot_ext.{m.id}"
@@ -181,6 +184,9 @@ class CarPlugins:
 
   def setup(self, CP_SP) -> None:
     self._each("setup", CP_SP)
+    if any(STOCK_AP in p.CLAIMS for p in self.plugins):  # EAP mode: panda forwards the stock AP, SP sends no controls
+      from opendbc.sunnypilot.car.tesla.values import TeslaSafetyFlagsSP
+      CP_SP.safetyParam |= TeslaSafetyFlagsSP.STOCK_AP
     rules = []
     for p in list(self.plugins):
       try:

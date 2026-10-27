@@ -27,6 +27,8 @@ static bool tesla_stock_lkas_prev = false;
 
 // Only Summon is currently supported due to Autopark not setting Autopark state properly
 static bool tesla_autopark = false;
+// xpilot stock AP mode (EAP plugin): forward every stock AP frame, openpilot sends no steering/long/EAC frames
+static bool tesla_stock_ap = false;
 static bool tesla_autopark_prev = false;
 
 // Detected VEHICLE bus
@@ -452,6 +454,11 @@ static bool tesla_tx_hook(const CANPacket_t *msg) {
     violation = true;
   }
 
+  // Stock AP mode: the stock system owns 0x488, 0x2B9 and 0x27D
+  if (tesla_stock_ap) {
+    violation = true;
+  }
+
   // Steering control: (0.1 * val) - 1638.35 in deg.
   if (msg->addr == 0x488U) {
     // We use 1/10 deg as a unit here
@@ -550,7 +557,7 @@ static bool tesla_tx_hook(const CANPacket_t *msg) {
 static bool tesla_fwd_hook(int bus_num, int addr) {
   bool block_msg = false;
 
-  if (bus_num == 2) {
+  if ((bus_num == 2) && !tesla_stock_ap) {
     if (!tesla_autopark) {
       // APS_eacMonitor
       if (addr == 0x27d) {
@@ -565,7 +572,7 @@ static bool tesla_fwd_hook(int bus_num, int addr) {
     }
   }
 
-  if ((bus_num == 2) && (addr == 0x2b9) && (tesla_long_owner == TESLA_LONG_SP) && !tesla_stock_aeb) {
+  if ((bus_num == 2) && (addr == 0x2b9) && (tesla_long_owner == TESLA_LONG_SP) && !tesla_stock_aeb && !tesla_stock_ap) {
     block_msg = true;
   }
   return block_msg;
@@ -594,8 +601,10 @@ static safety_config tesla_init(uint16_t param) {
   const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_3_FINGER = 2;
   const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_4_FINGER = 4;
   const uint16_t TESLA_PARAM_SP_MADS_SCREEN_BUTTON_5_FINGER = 8;
+  const uint16_t TESLA_PARAM_SP_STOCK_AP = 16;
 
   tesla_has_vehicle_bus = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_VEHICLE_BUS);
+  tesla_stock_ap = GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_STOCK_AP);
 
   if (GET_FLAG(current_safety_param_sp, TESLA_PARAM_SP_MADS_SCREEN_BUTTON_3_FINGER)) {
     tesla_mads_screen_button_fingers = 3U;

@@ -57,6 +57,8 @@ Run from the repo root with the openpilot python env. Native-only modules (Param
 - P46 aggregate rule/count overflow drops and faults only the offending plugin
 - P47 no rules or a disabled plugin explicitly replaces a stale table with an empty table
 - P48 a critical rule-owner fault raises the rules feature fault for pandad revocation
+- P50 an active role:stock.ap holder does not set TeslaSafetyFlagsSP.STOCK_AP in CP_SP.safetyParam, the bit is set
+     without a holder, or other bits change
 - P49 long.owner constructor/desired raises, returns a bad value, runs again after fault or restart, or loses exclusivity
 - P50 four-finger edge: off/old ABI/disengaged/held/stale/wrong-bus/malformed input toggles; 3/5 fingers or wipers toggle; MADS 3-finger collides
 - P51 shadow logs non-SP/old ABI/stale/wrong bus/malformed CAN or exceeds 25 Hz; OEM endpoints/counter or SP accel are lost
@@ -461,6 +463,12 @@ def rule_checks(plugins):
     RECORD_FAULT('first', 'card.control_sends', RuntimeError('critical'))
   assert params.get_bool('XpilotPandaRulesFault'), 'P48'
   (ARTIFACTS / 'compiled-rules.bin').write_bytes(expected)
+  eap = type('eap', (Plugin,), dict(NAME='eap', ENABLE_PARAM=None, CLAIMS=(plugins.STOCK_AP,), MANIFEST=replace(template, id='eap', rules=[])))
+  for classes, want in (((eap,), 0x11), ((first,), 0x01)):
+    with patch.object(plugins, 'PLUGINS', classes):
+      CP_SP = types.SimpleNamespace(safetyParam=0x01)
+      plugins.CarPlugins(CP, Params({})).setup(CP_SP)
+    assert CP_SP.safetyParam == want, f'P50 safetyParam {CP_SP.safetyParam:#x} != {want:#x}'
   return []
 
 
