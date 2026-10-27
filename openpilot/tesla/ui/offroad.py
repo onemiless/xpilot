@@ -192,13 +192,29 @@ def switch_plugin(plugin, value: bool, params, jobs=None) -> str | None:
 
 
 def setting_kind(setting) -> str:
-  """text/secret, toggle, buttons (≤5 values), or cycle (stepping to the next value)."""
+  """text/secret, toggle, stepper (numeric range: -/+), buttons (≤5 choices), or cycle (stepping to the next choice)."""
   if setting.type in ("text", "secret"):
     return setting.type
   if setting.range is None and setting.choices is None:
     return "toggle"
+  if setting.range is not None:
+    return "stepper"
   from openpilot.tesla.ui.settings_meta import setting_choices
   return "buttons" if len(setting_choices(setting)) <= 5 else "cycle"
+
+
+def step_value(setting, value, delta: int) -> int:
+  """One -/+ step on a range setting, on the step grid from minimum and inside [minimum, maximum].
+  A value outside the range or off the grid first snaps back (toward delta); a missing value gives minimum."""
+  minimum, maximum, step = setting.range[:3]
+  top = minimum + (maximum - minimum) // step * step
+  if not isinstance(value, int):
+    return minimum
+  v = min(max(value, minimum), top)
+  q, r = divmod(v - minimum, step)
+  if v != value or r:
+    return minimum + (q + (1 if delta > 0 and r else 0)) * step
+  return min(max(v + (step if delta > 0 else -step), minimum), top)
 
 
 def next_choice(choices: list[tuple[str, int]], value) -> int:

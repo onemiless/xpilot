@@ -29,6 +29,8 @@ Failure cases listed before implementation:
 - O16 either settings page omits the text editor or its offroad entry/commit gates (GPU case 28 exercises both)
 - O17 existing BOOL/range/choices row kinds or labels change
 - O18 manual owner setting is absent, not BOOL/default-off, or either UI bypasses the offroad setting gate
+- O20 a numeric (range) setting has no -/+ stepper on either settings page, a step leaves [min, max] or the step grid,
+     or an off-grid/unknown stored value does not snap back into range
 - O19 plugin notifications lose their source, severity clamp or 80-character limit, malformed input leaks through,
      a reader error breaks alerts, or the mici alert list does not include them
 """
@@ -137,7 +139,7 @@ def check_plugins(errors: list) -> None:
   for p in PLUGINS:
     for s in p.SETTINGS:
       kind = offroad.setting_kind(s)
-      if kind not in ("text", "secret", "toggle", "buttons", "cycle") or (kind == "toggle") != (s.type is None and s.range is None and s.choices is None):
+      if kind not in ("text", "secret", "toggle", "buttons", "cycle", "stepper") or (kind == "toggle") != (s.type is None and s.range is None and s.choices is None):
         errors.append(f"O3 setting {s.key} kind {kind}")
   if offroad.next_choice([("a", 1), ("b", 2)], 2) != 1 or offroad.next_choice([("a", 1), ("b", 2)], 9) != 1:
     errors.append("O3 next_choice does not wrap or recover from an unknown value")
@@ -345,10 +347,23 @@ def check_text_settings(errors: list) -> None:
     if "edit_text_setting(" not in (PKG / name).read_text():
       errors.append("O16 settings page missing shared editor: " + name)
   for setting, kind, label, value in ((mf.Setting("b", "Bool"), "toggle", "True", True),
-      (mf.Setting("r", "Range", (0, 10, 1, "%", 1)), "cycle", "5%", 5),
+      (mf.Setting("r", "Range", (0, 10, 1, "%", 1)), "stepper", "5%", 5),
       (mf.Setting("c", "Choice", choices=(("A", 1), ("B", 2))), "buttons", "B", 2)):
     if offroad.setting_kind(setting) != kind or setting_label(setting, value) != label:
       errors.append("O17 legacy row changed")
+
+
+def check_stepper(errors: list) -> None:
+  r = mf.Setting("r", "Range", (20, 140, 5, "km/h", 1))
+  if offroad.setting_kind(r) != "stepper" or offroad.setting_kind(mf.Setting("s", "Small", (0, 2, 1, "%", 1))) != "stepper":
+    errors.append("O20 range setting is not a stepper")
+  cases = ((70, 1, 75), (70, -1, 65), (140, 1, 140), (20, -1, 20), (72, 1, 75), (72, -1, 70), (None, 1, 20), (999, -1, 140))
+  for value, delta, want in cases:
+    if offroad.step_value(r, value, delta) != want:
+      errors.append(f"O20 step_value({value}, {delta}) != {want}")
+  for name in ("tesla/ui/settings_page.py", "tesla/ui/pages/base.py"):
+    if "step_value(" not in (PKG / name).read_text():
+      errors.append("O20 no -/+ stepper in " + name)
 
 
 def check_long_owner(errors):
@@ -366,7 +381,7 @@ def check_long_owner(errors):
 def main() -> int:
   errors: list[str] = []
   for check in (check_tiles, check_pages, check_plugins, check_store, check_market, check_models, check_view, check_alerts,
-                check_sources, check_text_settings, check_long_owner):
+                check_sources, check_text_settings, check_stepper, check_long_owner):
     try:
       check(errors)
     except Exception as e:

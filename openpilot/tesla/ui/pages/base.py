@@ -12,7 +12,7 @@ from openpilot.system.ui.widgets.label import UnifiedLabel, gui_label
 from openpilot.system.ui.widgets.list_view import ListItem, MultipleButtonAction, ButtonAction, toggle_item
 from openpilot.system.ui.widgets.scroller_tici import Scroller
 from openpilot.tesla.plugins import view
-from openpilot.tesla.ui.offroad import next_choice, setting_kind
+from openpilot.tesla.ui.offroad import next_choice, setting_kind, step_value
 from openpilot.tesla.ui.settings_meta import setting_choices, setting_label
 from openpilot.tesla.ui.setting_keyboard import edit_text_setting
 
@@ -116,7 +116,7 @@ def set_param(key: str, value) -> None:
 
 
 class SettingRow:
-  """A plugin/vehicle Setting row: text/secret editor, toggle, buttons, or next-value button. refresh() reloads it."""
+  """A plugin/vehicle Setting row: text/secret editor, toggle, -/+ stepper, buttons, or next-value button. refresh() reloads it."""
 
   def __init__(self, setting, title: str | None = None, translate: bool = False):
     self.setting = setting
@@ -130,6 +130,16 @@ class SettingRow:
       self.item = ListItem(title=title, action_item=action, callback=lambda: edit_text_setting(setting, params(), self.refresh))
     elif self.kind == "toggle":
       self.item = toggle_item(title, initial_state=bool(self._value()), callback=self._set, enabled=ui_state.is_offroad)
+    elif self.kind == "stepper":
+      def label():
+        value = setting_label(setting, self._value(), ui_state.is_metric)
+        return tr(value) if translate else value
+      def step(i):
+        if i != 1:
+          self._set(step_value(setting, self._value(), 1 if i == 2 else -1))
+        self.item.action_item.set_selected_button(1)
+      self.item = ListItem(title=title, action_item=MultipleButtonAction(["-", label, "+"], 220, 1, callback=step))
+      self.item.action_item.set_enabled(ui_state.is_offroad)
     elif self.kind == "buttons":
       choices = setting_choices(setting, ui_state.is_metric)
       self.choices = [(tr(label), value) for label, value in choices] if translate else choices

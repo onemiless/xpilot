@@ -99,7 +99,7 @@ panda/board/xpilot_rules.h   app EP2 loader
 | `priority` | 数字越小越优先：争同一个独占资源时它赢；同类插件的执行顺序也按它，数字相同按 id |
 | `enable_param` | BOOL 总开关；`null` 表示一直开启。关闭时 card 不创建插件、进程不启动、plan filter/目标车速不加载、UI 不显示。车端下一次行程生效，UI 1 秒内生效 |
 | `claims` | 要用的资源，见下表；没声明的一律被拒绝 |
-| `settings` | 设置项：只有 key 和 label 是开关；带 `range: [最小, 最大, 步长, 单位, 除数]` 或 `choices: [[标签, 值], ...]` 是选择项；`type: "text"` / `"secret"` 是文本 / 秘密输入，见下文 |
+| `settings` | 设置项：只有 key 和 label 是开关；带 `range: [最小, 最大, 步长, 单位, 除数]` 或 `choices: [[标签, 值], ...]` 是选择项（`range` 在大屏和 mici 上都是 -/+ 步进：每次一个步长，限制在 [最小, 最大]，不在步长网格上的旧值先吸附回网格，`offroad_pages_check.py` O20）；`type: "text"` / `"secret"` 是文本 / 秘密输入，见下文 |
 | `params` | 参数声明，格式见 `gen_params.py`；改完运行 `python3 openpilot/tesla/plugins/gen_params.py` |
 | `rules` | `template_clone.v1` 规则列表，字段与限制见第 6 节合同；can.tx 必须精确匹配。旧 `safety` 字段一律拒绝 |
 | `default` | 可选布尔值；`true` 由商店索引声明为首次启动自动安装包，省略为非默认；不是 enable 开关 |

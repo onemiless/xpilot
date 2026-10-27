@@ -8,6 +8,7 @@ from openpilot.system.ui.widgets.scroller import NavScroller
 from openpilot.tesla.plugins import view
 from openpilot.tesla.ui.settings_meta import VEHICLE_SETTINGS, setting_choices, setting_label
 from openpilot.tesla.ui.setting_keyboard import edit_text_setting
+from openpilot.tesla.ui.offroad import step_value
 from openpilot.sunnypilot.hardware.driver_monitoring import driver_monitoring_configured
 from openpilot.sunnypilot.hardware.profile import has_driver_camera
 
@@ -65,6 +66,20 @@ class SettingsList(NavScroller):
       edit_text_setting(setting, _params(), self.show_event)
       return
     page = _page()
+    if setting.range is not None:  # numeric: -/+ around the current value
+      steps = [(BigButton(text), delta) for text, delta in (('+', 1), ('-', -1))]
+      def show():
+        value = setting_label(setting, _params().get(setting.key, return_default=True), ui_state.is_metric)
+        for b, _ in steps:
+          b.set_value(tr(value) if translate else value)
+      for b, delta in steps:
+        b.set_enabled(ui_state.is_offroad)
+        b.set_click_callback(lambda d=delta: (_set_param(setting.key, step_value(setting, _params().get(setting.key, return_default=True), d)),
+                                              show(), self.show_event()))
+        page._scroller.add_widget(b)
+      show()
+      gui_app.push_widget(page)
+      return
     for label, value in setting_choices(setting, ui_state.is_metric):
       label = tr(label) if translate else label
       button = BigButton(label)
