@@ -22,7 +22,7 @@ META = struct.Struct('<4sIQIIQQ30f')
 ENVELOPE = struct.Struct('<QQQII')
 REPLY = struct.Struct('<4sBBHIIQ')
 OFFSET, SIZE = 256, 16384
-DEADLINE_NS = 45_000_000
+DEADLINE_NS = 60_000_000  # Match upstream modeld BIG_REPLY_DEADLINE_MS.
 ENGAGED_FRAMES = 3  # Tolerate two missed replies at 20 Hz, then stop waiting on a missing peer.
 HEAD_SHAPES = {
   'plan': (1, 33, 15), 'plan_stds': (1, 33, 15),

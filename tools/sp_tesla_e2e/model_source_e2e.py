@@ -16,8 +16,8 @@ Round 1: adapter mutation cannot alter fallback; camera regression rewarms; earl
 is frame-only rejection; failed init and SIGKILL leave no mailbox leaks. Candidate lock,
 post-pick arrival and 200ms stall occur after Phone active. Burst frames/data are distinct.
 Bounded wait: no peer/lock never sleeps; cold +35ms engages from a recent on-time old reply;
-+60ms falls back without locking; short gaps preserve warm-up, long gaps rewarm.
-Transient absent/old_frame/ipc_busy polls preserve progress; EOF+45ms bounds waiting
++75ms falls back without locking; short gaps preserve warm-up, long gaps rewarm.
+Transient absent/old_frame/ipc_busy polls preserve progress; EOF+60ms bounds waiting
 and the timed 50ms camera replay must publish every frame before the next EOF.
 FIX2: flagged/unpaired replies clear warm-up; failed META publication never waits;
 recent old replies enable waiting but cannot preserve warm-up across an accepted-frame gap.
@@ -246,7 +246,7 @@ def peer(path, conn):
       frame -= 1
       eof -= 50_000_000
     if scenario == 'late':
-      arrival = eof + 46_000_000
+      arrival = eof + 61_000_000
     if scenario == 'unpaired':
       paired = 0
     if scenario in ('reset', 'zero_pair'):
@@ -413,11 +413,11 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       if realtime:
         time.sleep(max(0, (camera_eof + 20_000_000 - now()) / 1e9))
       if scenario == 'late':
-        clock.now += 30_000_000
+        clock.now += 45_000_000
       if scenario == 'past_deadline':
-        clock.now += 25_000_001
+        clock.now += 40_000_001
       if scenario == 'deadline':
-        clock.now += 25_000_000
+        clock.now += 40_000_000
       self.prev_desire[:] = inputs['desire_pulse']
       heads = decode(raw_output())
       if action_width == 4:
@@ -501,7 +501,7 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       pick_end = now()
       pick_clock_ns = pick_end - before
       if not realtime:
-        assert pick_clock_ns <= max(0, camera_eof + 45_000_000 - before)
+        assert pick_clock_ns <= max(0, camera_eof + 60_000_000 - before)
       if result[1]:
         scenario = scenarios[current - 1]
         delta = .1 + camera_frame * .0001 if scenario == 'burst' else .1
@@ -650,10 +650,10 @@ def main():
     # The cold peer never supplies an early first reply; previous-frame traffic must engage it.
     for case, scenarios in (
       ('cold_phone35', ['phone_35'] * 60),
-      ('cold_phone60', ['phone_60'] * 20),
+      ('cold_phone75', ['phone_75'] * 20),
       ('phone35', ['good'] + ['phone_35'] * 59),
-      ('phone60', ['good'] * 10 + ['phone_60'] * 50),
-      ('phone35_single_late', ['good'] + ['phone_35'] * 9 + ['phone_60'] + ['phone_35'] * 49),
+      ('phone75', ['good'] * 10 + ['phone_75'] * 50),
+      ('phone35_single_late', ['good'] + ['phone_35'] * 9 + ['phone_75'] + ['phone_35'] * 49),
       ('phone35_busy', ['good'] + ['phone_35_busy'] * 59),
       ('no_peer_timed', ['absent'] * 60),
     ):
@@ -669,7 +669,7 @@ def main():
           assert records[1]['fresh'] == 1 and all(r['source'] == 'local' for r in records[:6])
         if case == 'phone35_single_late':
           assert records[10]['source'] == 'local' and records[11]['source'] == 'phone'
-      elif case == 'phone60':
+      elif case == 'phone75':
         assert all(r['source'] == 'local' for r in records[10:])
         assert all(r['sleep_ns'] == 0 for r in records[13:])
       else:
@@ -859,7 +859,7 @@ class Candidate(Plugin):
                              for case in ('frozen', 'crashed', 'stall_200ms', 'candidate_lock')
                              if (selected := [r['host_publish_ns'] for r in rows if r['case'] == case])},
             'bounded_wait': {
-              'engaged_frames': 3, 'deadline_ms': 45, 'camera_period_ms': 50, 'timed_frame_drops': 0,
+              'engaged_frames': 3, 'deadline_ms': 60, 'camera_period_ms': 50, 'timed_frame_drops': 0,
               'deterministic_max_wait_ms': max(r['pick_clock_ns'] for r in rows if not r['host_publish_ns']) / 1e6,
               'cases': {case: {
                 'frames': len(selected),
@@ -873,11 +873,11 @@ class Candidate(Plugin):
                 'max_pick_end_after_eof_ms': max(r['pick_end'] - r['EOF'] for r in selected) / 1e6,
                 'eof_to_publish_ms': dict(zip(('p50', 'p95', 'max'),
                                              np.percentile([(r['publish'] - r['EOF']) / 1e6 for r in selected], [50, 95, 100]), strict=True)),
-              } for case in ('phone35', 'phone60', 'phone35_single_late', 'phone35_busy', 'cold_phone35', 'cold_phone60', 'no_peer_timed')
+              } for case in ('phone35', 'phone75', 'phone35_single_late', 'phone35_busy', 'cold_phone35', 'cold_phone75', 'no_peer_timed')
                 if (selected := [r for r in rows if r['case'] == case])}},
             'limits': ['synthetic inference/VisionIPC; deterministic BOOTTIME except timed phone cases',
                        'cold +35ms peer never supplies an early reply; synthetic protocol-valid traffic proves host liveness only',
-                       'OS sleep scheduling can overshoot EOF+45ms; late replies are never adopted',
+                       'OS sleep scheduling can overshoot EOF+60ms; late replies are never adopted',
                        'no phone QNN, TCP/HEVC or device execution',
                        'real modeld postprocessing, Capnp/msgq and selfdrived.update_events; unrelated car/device inputs are healthy fixtures']}
   (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
