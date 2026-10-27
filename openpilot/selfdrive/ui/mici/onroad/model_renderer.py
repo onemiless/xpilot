@@ -25,7 +25,7 @@ LEAD_BAR_WIDTH = 1.8  # m
 STOCK_PATH_GRADIENT = Gradient(
   start=(0.0, 1.0),
   end=(0.0, 0.0),
-  colors=[rl.Color(13, 248, 122, 204), rl.Color(114, 255, 92, 178), rl.Color(114, 255, 92, 0)],
+  colors=[rl.Color(13, 248, 122, 255), rl.Color(114, 255, 92, 230), rl.Color(114, 255, 92, 90)],
   stops=[0.0, 0.5, 1.0],
 )
 
@@ -257,8 +257,8 @@ class ModelRenderer(Widget, ModelRendererSP):
       path_hue = np.clip(60 + self._acceleration_x[i] * 35, 0, 120)
 
       saturation = min(abs(self._acceleration_x[i] * 1.5), 1)
-      lightness = np.interp(saturation, [0.0, 1.0], [0.95, 0.62])
-      alpha = np.interp(lin_grad_point, [0.75 / 2.0, 0.75], [0.8, 0.0])
+      lightness = np.interp(saturation, [0.0, 1.0], [0.95, 0.70])
+      alpha = np.interp(lin_grad_point, [0.75 / 2.0, 0.75], [1.0, 0.35])
 
       # Use HSL to RGB conversion
       color = self._hsla_to_color(path_hue / 360.0, saturation, lightness, alpha)
@@ -326,13 +326,13 @@ class ModelRenderer(Widget, ModelRendererSP):
     path_pts = self._path.projected_points + np.array([self._rect.x, self._rect.y], dtype=np.float32)
 
     if ui_state.status == UIStatus.DISENGAGED:
-      draw_polygon(self._rect, path_pts, rl.Color(0, 0, 0, 180))
+      draw_polygon(self._rect, path_pts, rl.Color(0, 0, 0, 220))
     elif not self._longitudinal_control:
       draw_polygon(self._rect, path_pts, gradient=STOCK_PATH_GRADIENT)
     elif len(self._path_gradient.colors) > 1:
       draw_polygon(self._rect, path_pts, gradient=self._path_gradient)
     else:
-      draw_polygon(self._rect, path_pts, rl.Color(255, 255, 255, 60))
+      draw_polygon(self._rect, path_pts, rl.Color(255, 255, 255, 90))
 
   def _draw_lead_indicator(self):
     offset = np.array([self._rect.x, self._rect.y], dtype=np.float32)
