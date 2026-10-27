@@ -43,7 +43,7 @@ Run with comma service stopped and native libraries built. No CAN transmission,
 settings actions, store refresh/install, or reboot/reset/uninstall confirmation.
 20. Edit bar buttons are smaller than twice their old height, retain small text, or cover tiles/the Driving view.
 21. Built-in HUD boxes cannot move/hide/persist, or production HUD drawing ignores their layout.
-22. Saved hidden/invalid entries hide steering/model/blindspot safety indications, or alerts enter the editor/are suppressed.
+22. Saved hidden/invalid entries hide steering/model/blindspot safety indications, or alerts are not routed to the host column.
 23. Plugins page omits the declared use next to a plugin.
 24. A HUD body tap saves instead of selecting, selection does not toggle off, controls are missing, or a required box has Hide.
 25. Hide then Show does not save/reload, or a hidden preview lacks the dark overlay.
@@ -745,6 +745,16 @@ msgstr "\u663e\u793a"
     check(bool(side_draws) and all(e.spec.show != 'offroad' for tid, e in host._entries.items() if tid in host._placed),
           '18 onroad side zone/Tile unavailable')
     cases.append({'id': 18, 'side_zone_rects': side_draws, 'outside_tiles': list(host._placed)})
+    alert_rects = []
+    class ActiveAlert:
+      def render(self, rect):
+        alert_rects.append((rect.x, rect.y, rect.width, rect.height))
+        rl.draw_rectangle_rec(rect, rl.RED)
+    host.onroad_panels = (ActiveAlert(), None, False)
+    frame(name='onroad-alert-column')
+    from tools.sp_tesla_e2e.tile_layout_check import overlap
+    check(alert_rects and not overlap(alert_rects[-1], host._view), f"active alert overlaps view: {alert_rects}, {host._view}")
+    host.onroad_panels = None
     state.started = False
     host._edit, host._layout = False, 'park'
     host._layout_params.put(tiles.THEME_PARAM, 'Outline')
@@ -791,9 +801,9 @@ msgstr "\u663e\u793a"
     screen_source = (root / 'openpilot/tesla/ui/screen.py').read_text()
     check('label, 56' in screen_source, '20 edit bar font not enlarged')
     augmented = (root / 'openpilot/selfdrive/ui/mici/onroad/augmented_road_view.py').read_text()
-    check('if gui_app.host is None:  # big screens draw alerts' not in augmented and
-          '    self._alert_renderer.render(self._content_rect)' in augmented, '22 big-screen alerts suppressed')
-    cases.append({'id': 22, 'protected': sorted(getattr(tiles, 'HUD_REQUIRED', ())), 'alerts': 'SP call remains unconditional; no alert editor entry'})
+    check('gui_app.host.onroad_panels = (self._alert_renderer, self._navigation, show_navigation)' in augmented and
+          'alert.render(rl.Rectangle(x, y, w, h))' in screen_source, '22 alerts not routed to host')
+    cases.append({'id': 22, 'protected': sorted(getattr(tiles, 'HUD_REQUIRED', ())), 'alerts': 'host column; no alert editor entry'})
     from openpilot.tesla import plugins
     from openpilot.tesla.ui.pages.plugins import PluginsPage, PluginPage
     page = PluginsPage()

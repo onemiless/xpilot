@@ -65,6 +65,13 @@ def view(position=DRIVE_CELLS[:2]) -> tuple[int, int, int, int]:
 VIEW = view()  # default mici view, 536:240 centered in DRIVE_CELLS
 
 
+def alert_column(view) -> tuple[int, int, int, int]:
+  x, _, w, _ = view
+  right = SCREEN[0] - x - w
+  width = min(SCREEN[0] // 4, right if right >= CELL else x)
+  return (SCREEN[0] - width if right >= CELL else 0, 0, width, SCREEN[1] // 2)
+
+
 def view_position(saved) -> tuple[int, int]:
   """Saved drive-view cell; malformed or out-of-grid input uses the centered default."""
   drive = saved.get("drive") if isinstance(saved, dict) else None
@@ -208,11 +215,11 @@ def _cells(col: int, row: int, size: str) -> set[tuple[int, int]] | None:
   return {(col + i, row + j) for i in range(w) for j in range(h)}
 
 
-def place(items: list[tuple[str, str, tuple[str, ...], tuple[int, int] | None]], started: bool, view_pos=DRIVE_CELLS[:2]) -> dict[str, tuple[int, int, str]]:
+def place(items: list[tuple[str, str, tuple[str, ...], tuple[int, int] | None]], started: bool, view_pos=DRIVE_CELLS[:2], reserved=()) -> dict[str, tuple[int, int, str]]:
   """items: (id, saved size, supported sizes, fixed position or None) in list order. Returns id -> (col, row, size) for
   every tile that fits. Fixed tiles first (a position off the grid, on the drive view or on an earlier tile is ignored),
   then the rest in scan order. Onroad a tile tries its saved size, then each smaller supported size, largest first."""
-  taken = set(blocked(started, view_pos))
+  taken = set(blocked(started, view_pos)) | set(reserved)
   out = {}
 
   def sizes_for(saved, sizes):

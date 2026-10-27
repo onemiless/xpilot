@@ -54,6 +54,7 @@ Failure cases listed before implementation:
 - T30 Black is missing or old Outline does not resolve to Black
 - T31 a selected HUD box lacks resize controls, or a required box has a visibility toggle
 - T32 HUD controls leave the screen, overlap their own box, or overlap each other
+- T34 an active alert column overlaps a dragged drive view or leaves the screen
 """
 import ast
 import itertools
@@ -589,6 +590,10 @@ def main() -> int:
       check(errors)
     except Exception as e:
       errors.append(f"{check.__name__} raised {e!r}")
+  for x in range(0, T.SCREEN[0] - T.VIEW[2] + 1, 10):
+    view = (x, T.VIEW[1], *T.VIEW[2:])
+    column = T.alert_column(view)
+    assert inside(column, (0, 0, *T.SCREEN)) and not overlap(column, view), (column, view)
   print(json.dumps({"view": T.VIEW, "origin": T.ORIGIN, "errors": errors}, indent=1))
   return 1 if errors else 0
 
