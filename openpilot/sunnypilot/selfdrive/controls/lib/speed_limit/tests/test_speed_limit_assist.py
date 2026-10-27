@@ -6,6 +6,7 @@ See the LICENSE.md file in the root directory for more details.
 """
 
 import time
+from types import SimpleNamespace
 
 from openpilot.common.parameterized import parameterized
 
@@ -24,7 +25,7 @@ from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Mode
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import SpeedLimitAssist, \
   PRE_ACTIVE_GUARD_PERIOD, ACTIVE_STATES, CRUISE_BUTTON_CONFIRM_HOLD
 from openpilot.sunnypilot.selfdrive.selfdrived.button_state_tracker import ButtonStateTracker
-from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
+from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP, speed_limit_pre_active_alert, AlertSize
 from openpilot.common.test import OpenpilotTestCase
 
 ButtonEvent = car.CarState.ButtonEvent
@@ -42,6 +43,19 @@ SPEED_LIMITS = {
 }
 
 DEFAULT_CAR = TESLA.TESLA_MODEL_Y
+
+
+def test_pcm_pre_active_alert():
+  """Tesla text must be hidden; other PCM brands must retain their prompt."""
+  cp = SimpleNamespace(brand='tesla', pcmCruise=True, openpilotLongitudinalControl=True)
+  cs = SimpleNamespace(vCruiseCluster=20.)
+  sm = {'carControlSP': SimpleNamespace(longOwner='sp'),
+        'longitudinalPlanSP': SimpleNamespace(speedLimit=SimpleNamespace(resolver=SimpleNamespace(speedLimitFinalLast=20.)))}
+  alert = speed_limit_pre_active_alert(cp, cs, sm, True, 0, None)
+  assert alert.alert_size == AlertSize.none and alert.alert_text_1 == ''
+  cp.brand = 'other'
+  alert = speed_limit_pre_active_alert(cp, cs, sm, True, 0, None)
+  assert alert.alert_size == AlertSize.small and alert.alert_text_1.startswith('Speed Limit Assist: set to ')
 
 
 class TestSpeedLimitAssist(OpenpilotTestCase):
