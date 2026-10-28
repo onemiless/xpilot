@@ -751,7 +751,7 @@ msgstr "\u663e\u793a"
         alert_rects.append((rect.x, rect.y, rect.width, rect.height))
         rl.draw_rectangle_rec(rect, rl.RED)
     host.onroad_panels = (ActiveAlert(), None, False)
-    frame(name='onroad-alert-column')
+    frame(name='onroad-alert-band')
     from tools.sp_tesla_e2e.tile_layout_check import overlap
     check(alert_rects and not overlap(alert_rects[-1], host._view), f"active alert overlaps view: {alert_rects}, {host._view}")
     host.onroad_panels = None
@@ -802,8 +802,8 @@ msgstr "\u663e\u793a"
     check('label, 56' in screen_source, '20 edit bar font not enlarged')
     augmented = (root / 'openpilot/selfdrive/ui/mici/onroad/augmented_road_view.py').read_text()
     check('gui_app.host.onroad_panels = (self._alert_renderer, self._navigation, show_navigation)' in augmented and
-          'alert.render(rl.Rectangle(x, y, w, h))' in screen_source, '22 alerts not routed to host')
-    cases.append({'id': 22, 'protected': sorted(getattr(tiles, 'HUD_REQUIRED', ())), 'alerts': 'host column; no alert editor entry'})
+          'alert.render(rl.Rectangle(x / k, y / k, w / k, h / k))' in screen_source, '22 alerts not routed to host')
+    cases.append({'id': 22, 'protected': sorted(getattr(tiles, 'HUD_REQUIRED', ())), 'alerts': 'host band above/below the view; no alert editor entry'})
     from openpilot.tesla import plugins
     from openpilot.tesla.ui.pages.plugins import PluginsPage, PluginPage
     page = PluginsPage()

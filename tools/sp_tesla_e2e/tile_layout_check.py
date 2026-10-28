@@ -54,7 +54,10 @@ Failure cases listed before implementation:
 - T30 Black is missing or old Outline does not resolve to Black
 - T31 a selected HUD box lacks resize controls, or a required box has a visibility toggle
 - T32 HUD controls leave the screen, overlap their own box, or overlap each other
-- T34 an active alert column overlaps a dragged drive view or leaves the screen
+- T34 for any drive view position (owner 2026-10-28) the alert band overlaps the view, leaves the screen, is not as wide as
+      the view, does not touch the view's top or bottom edge, or is not on the side (above/below) with more room; the
+      navigation column overlaps the view, leaves the screen, is not as tall as the view, does not touch its left or right
+      edge, or is not on the side with more room; onroad tiles still give up cells for either
 """
 import ast
 import itertools
@@ -590,10 +593,22 @@ def main() -> int:
       check(errors)
     except Exception as e:
       errors.append(f"{check.__name__} raised {e!r}")
-  for x in range(0, T.SCREEN[0] - T.VIEW[2] + 1, 10):
-    view = (x, T.VIEW[1], *T.VIEW[2:])
-    column = T.alert_column(view)
-    assert inside(column, (0, 0, *T.SCREEN)) and not overlap(column, view), (column, view)
+  screen = (0, 0, *T.SCREEN)
+  for col in range(T.COLS - T.DRIVE_CELLS[2] + 1):
+    for row in range(T.ROWS - T.DRIVE_CELLS[3] + 1):
+      view = T.view((col, row))
+      x, y, w, h = view
+      band, nav = T.alert_band(view), T.nav_column(view)
+      above, below = y, T.SCREEN[1] - y - h
+      left, right = x, T.SCREEN[0] - x - w
+      if not (inside(band, screen) and not overlap(band, view) and band[0] == x and band[2] == w and band[3] == max(above, below)
+              and (band[1] + band[3] == y if above > below else band[1] == y + h)):
+        errors.append(f"T34 alert band {band} for view {view}")
+      if not (inside(nav, screen) and not overlap(nav, view) and nav[1] == y and nav[3] == h and nav[2] == max(left, right)
+              and (nav[0] + nav[2] == x if left > right else nav[0] == x + w)):
+        errors.append(f"T34 navigation column {nav} for view {view}")
+      if len(T.blocked(True, (col, row))) != T.DRIVE_CELLS[2] * T.DRIVE_CELLS[3]:
+        errors.append(f"T34 onroad cells reserved beyond the view at {(col, row)}")
   print(json.dumps({"view": T.VIEW, "origin": T.ORIGIN, "errors": errors}, indent=1))
   return 1 if errors else 0
 

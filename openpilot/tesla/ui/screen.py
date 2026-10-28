@@ -1,6 +1,6 @@
 """Big-screen host (C3/C3X/C3XL, 2160x1080), UI v4: Windows Phone / Win 8 style tiles (XPILOT.md §9, layout in tiles.py).
 Onroad: drag the mici view; neutral tiles flow around it, then plugin ScreenOverlays. Other touches are ignored.
-Alerts and navigation are drawn in a side column outside the view.
+Alerts are drawn over the tiles in the gap above or below the view, navigation in the gap left or right of it.
 Offroad: the tile screen (tap opens a tile's page, long press enters edit mode), or a full-screen detail page: back
 button, parent name, title, and a native page (tesla/ui/pages) drawn here in screen pixels. The mici texture is not
 drawn (viewport() -> None) except during onboarding and for mici pages pushed above main (Models, training guide, terms,
@@ -169,14 +169,9 @@ class BigScreenHost:
   def _place(self, mode: str) -> dict[str, tuple[int, int, str]]:
     onroad = mode == "drive" and self._mode == "onroad"
     items = [item for item in self._visible(mode) if not onroad or item[0] != "lean_navigation"]
-    reserved = ()
-    if onroad:
-      x, _, w, _ = tiles.alert_column(self._drive_view())
-      reserved = tuple((c, r) for c in range(tiles.COLS) for r in range(tiles.ROWS)
-                       if tiles.cell_rect(c, r)[0] < x + w and tiles.cell_rect(c, r)[0] + tiles.CELL > x)
-    key = (mode, tuple(items), self._view_position, reserved)
+    key = (mode, tuple(items), self._view_position)
     if key != self._placed_key:
-      self._placed_key, self._placed = key, tiles.place(items, mode == "drive", self._view_position, reserved)
+      self._placed_key, self._placed = key, tiles.place(items, mode == "drive", self._view_position)
     return self._placed
 
   def _save(self, pinned=None, hidden=None) -> None:
@@ -307,7 +302,8 @@ class BigScreenHost:
     for tid, p in placed.items():
       self._faced[tid] = self._face(self._entries[tid], p[2], self._now)
     if self._mode == "onroad" and any(item[0] == "lean_navigation" for item in self._visible("drive")):
-      self._faced["lean_navigation"] = self._face(self._entries["lean_navigation"], "small", self._now)
+      _, _, w, h = tiles.nav_column(self._drive_view())
+      self._faced["lean_navigation"] = self._face(self._entries["lean_navigation"], "small", self._now, (w, h))
 
   def to_logical(self, x: float, y: float) -> tuple[float, float]:
     return offroad.to_logical(None if self._mode == "onroad" else self._view, x, y)
@@ -353,8 +349,7 @@ class BigScreenHost:
     if self._mode == "onroad":
       self._draw_tiles(self._place("drive"), self._now)
       self._draw_overlays()
-      with scaled(1):
-        self._draw_onroad_panels()
+      self._draw_onroad_panels()
     elif self._mode == "onboarding":
       events = [e._replace(pos=MousePos(*offroad.to_screen(None, e.pos.x, e.pos.y))) for e in gui_app.mouse_events]
       self._show(self._onboarding if self._main is not None else None)
@@ -364,10 +359,10 @@ class BigScreenHost:
     else:
       self._draw_offroad()
 
-  def _face(self, e: _Entry, size: str, now: float) -> bool:
-    """Bring the tile's cached texture up to date; True if there is one to draw."""
+  def _face(self, e: _Entry, size: str, now: float, px: tuple[int, int] | None = None) -> bool:
+    """Bring the tile's cached texture up to date (at px when given); True if there is one to draw."""
     w, h = tiles.SIZES[size]
-    w, h = w * tiles.PITCH - tiles.GAP, h * tiles.PITCH - tiles.GAP
+    w, h = px or (w * tiles.PITCH - tiles.GAP, h * tiles.PITCH - tiles.GAP)
     if e.texture is None or e.texture.texture.width != w or e.texture.texture.height != h:
       if e.texture is not None:
         rl.unload_render_texture(e.texture)
@@ -417,17 +412,22 @@ class BigScreenHost:
     self._overlays.each(lambda o: (o.update(ui_state.sm), o.draw(self._zones)))
 
   def _draw_onroad_panels(self) -> None:
-    x, y, w, h = tiles.alert_column(self._drive_view())
-    rl.draw_rectangle(int(x), 0, int(w), SCREEN[1], rl.BLACK)
-    if self.onroad_panels is not None:
-      alert, navigation, show_navigation = self.onroad_panels
-      alert.render(rl.Rectangle(x, y, w, h))
-      if show_navigation:
-        navigation.render(rl.Rectangle(x, h, w, SCREEN[1] - h - tiles.CELL))
+    """Navigation in the side gap, then alerts in the gap above/below the view, both over the tiles with their own
+    backgrounds. Each is drawn at the largest mici scale its gap allows, so arrows and text grow with the gap."""
+    from openpilot.selfdrive.ui.mici.onroad.navigation import PANEL_WIDTH
+    view = self._drive_view()
+    alert, navigation, show_navigation = self.onroad_panels or (None, None, False)
+    x, y, w, h = tiles.nav_column(view)
     e = self._entries.get("lean_navigation")
-    if e is not None and any(item[0] == "lean_navigation" for item in self._visible("drive")):
-      if self._faced.get("lean_navigation"):
-        self._blit(e, rl.Rectangle(x, SCREEN[1] - tiles.CELL, w, tiles.CELL))
+    if show_navigation:
+      with scaled(k := w / PANEL_WIDTH):
+        navigation.render(rl.Rectangle(x / k, y / k, w / k, h / k))
+    elif e is not None and self._faced.get("lean_navigation") and len(e.state) == 3:  # a maneuver, not "-" or a status line
+      self._blit(e, rl.Rectangle(x, y, w, h))
+    if alert is not None:
+      x, y, w, h = tiles.alert_band(view)
+      with scaled(k := max(1.0, h / tiles.MICI[1])):
+        alert.render(rl.Rectangle(x / k, y / k, w / k, h / k))
 
   @contextmanager
   def _native(self, events):
