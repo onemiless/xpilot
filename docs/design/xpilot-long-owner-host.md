@@ -130,28 +130,10 @@ the two exact strings call `record_fault`; the hook remains disabled for the
 drive, including controlsd restarts via `XpilotPluginFaults`. No loser is
 promoted after a fault. A failed call returns None, retaining owner.
 
-Core `XpLongOwnerManual` is a persistent BOOL default 0, editable only offroad
-in both Tesla settings pages and sampled when creating the callable. The
-trigger is the rising edge of exactly four active touches on the vehicle bus:
-`UI_status2` 0x3DF bus 1, `UI_activeTouchPoints` byte 3 (the same signal
-CarStateExt already parses). A fresh 8-byte frame and an observed non-four
-sample are required before arming; an initial/continued four-finger hold cannot
-retrigger. Stale (>100 ms), wrong-bus or malformed frames cannot arm or fire.
-Three/five fingers do not propose an owner change. MADS retains exact configured
-count matching; four fingers cannot activate the three-finger MADS option.
-MADS configured to four fingers shares the gesture; choose three/five when using
-manual longitudinal switching. The wiper button keeps only its stock function.
-No proposal unless engaged and the health ABI is available.
-Manual takes precedence over a valid plugin proposal in the same cycle;
-a plugin fault suppresses that cycle's proposal.
-
-Manual proposals are one-cycle pulses, marked separately by the collector.
-The host holds the manual target ahead of subsequent plugin proposals through
-the 1 s desired debounce and pending request. Health commit, host/Panda refusal,
-lock or disengagement clears it. None from a plugin never invents a new manual
-edge. Both proposal sources pass every host veto, cooldown, lock and Panda
-acknowledgement gate. A hook call fault suppresses the manual pulse and locks
-switching until disengage; the faulted policy stays disabled for the drive.
+Manual switching is not a host feature (owner 2026-10-28). The four-finger
+toggle lives in the role:long.owner plugin (`tesla_dynamic_acc` setting
+`XpTeslaDynamicAccTouch`), which returns it as an ordinary proposal; every host
+veto, debounce, cooldown, lock and Panda acknowledgement applies to it.
 
 Core `LongOwnerChip` uses the existing HudOverlay discovery/render path on
 both big screen and mici. UI subscribes carControlSP and draws only a live,

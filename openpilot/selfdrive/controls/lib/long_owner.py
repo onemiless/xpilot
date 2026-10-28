@@ -8,8 +8,6 @@ def desired_owner(ctx, CS):
   desired = ctx.long_owner_policy(ctx.long_owner, CS)
   if ctx.long_owner_policy.faulted:
     raise ValueError('long owner policy fault')
-  if ctx.long_owner_policy.manual_target is not None:
-    ctx.long_owner.manual_target = ctx.long_owner_policy.manual_target
   return desired
 
 
@@ -26,7 +24,6 @@ class LongOwner:
     self.reason = ''
     self.refusals = 0
     self.desired = None
-    self.manual_target = None
     self.confirm_since = 0.
     self.cooldown_until = 0.
     self.request = 255
@@ -40,7 +37,7 @@ class LongOwner:
     self.refusals += 1
     self.locked |= self.refusals >= 2
     self.request = 255
-    self.desired = self.manual_target = None
+    self.desired = None
     self.cooldown_until = now + 2.
 
   def update(self, ctx, CS, CC_SP, now):
@@ -48,19 +45,17 @@ class LongOwner:
     enabled = sm['selfdriveState'].enabled
     self.sm, self.enabled, self.sp_accel = sm, enabled, ctx.LoC.last_output_accel
     if not enabled:
-      self.locked, self.refusals, self.request, self.desired, self.manual_target = False, 0, 255, None, None
+      self.locked, self.refusals, self.request, self.desired = False, 0, 255, None
     pandas = [p for p in sm['pandaStates'] if p.safetyModel == 'tesla']
     self.available = ctx.CP.brand == 'tesla' and len(pandas) == 1 and pandas[0].longOwnerAvailable
     if self.available:
       p = pandas[0]
       self.seen_abi = True
       self.owner = 'sp' if p.longOwner == 1 else 'stock'
-      if self.manual_target == self.owner:
-        self.manual_target = None
       if self.request != 255:
         self.request_seen |= p.longOwnerPending == self.request or p.longOwnerRefusal == 0
         if p.longOwner == self.request:
-          self.request, self.refusals, self.desired, self.manual_target = 255, 0, None, None
+          self.request, self.refusals, self.desired = 255, 0, None
           self.cooldown_until = now + 2.
         elif (sm.logMonoTime['pandaStates'] / 1e9 > self.request_since and p.longOwnerPending == 255 and
               p.longOwnerRefusal and (self.request_seen or p.longOwnerRefusal != self.request_refusal or
@@ -83,11 +78,7 @@ class LongOwner:
         raise ValueError('invalid long owner')
     except Exception:
       self.locked, self.reason, desired = enabled, 'policyFault', None
-    if self.locked or not enabled:
-      self.manual_target = None
     if self.available and enabled and not self.locked:
-      if self.manual_target is not None:
-        desired = self.manual_target
       if desired != self.desired:
         self.desired, self.confirm_since = desired, now
       if (desired is not None and desired != self.owner and self.request == 255 and not self.panda_fault and

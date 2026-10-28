@@ -13,7 +13,8 @@ LO9: planner/LongControl not seeded or takeover exceeds +.6/-1.5 m/s^3 in 1 s.
 LO15: runtime readers use startup capability, or settings mutate on switches.
 LO16: DRAIN fails either direction at any phase 0..40 ms/jitter 0..10 ms;
        I1/I2 fail; abort changes owner or a non-abort permits a counter jump.
-LO17: real manual/hook pulse is lost before debounce, overrides veto/lock/cooldown, repeats after ack/refusal/disengage.
+LO17: a real hook proposal skips the 1 s debounce or the cooldown, survives a refusal, does not lock after two refusals,
+      keeps a lock after disengage, or a raising hook does not lock (manual switching lives in tesla_dynamic_acc, owner 2026-10-28).
 LO18: merged 54-byte health fails A5 or old 49-byte health crashes/unlocks it.
 LO19: a temporary panda fault (interruptRateCan2 on the car) locks switching, or a request starts while it lasts;
       a permanent panda fault does not lock.
@@ -320,7 +321,6 @@ def host_replay():
     c.get_lat_active = lambda sm: True
     c.long_owner = long_owner.LongOwner(CP)
     c.long_owner_policy = lambda *a: None
-    c.long_owner_policy.manual_target = None
     c.long_owner_policy.faulted = False
     c.sm = SM(**sm)
     c.sm['pandaStates'] = [log.PandaState.new_message(safetyModel='tesla', longOwnerAvailable=available, longOwner=owner)]
@@ -556,18 +556,12 @@ def integration_replay():
   oem = NS(monoTime=1, accState=4, accelMin=.1, accelMax=.1)
   sm = SM(carState=cs, longitudinalPlan=NS(), pandaStates=[health], selfdriveState=NS(enabled=True), carStateSP=NS(teslaLongControl=oem),
           radarState=log.RadarState.new_message())
-  batch, rows = [], []
+  rows = []
   class Params:
     def get(self, key, *a, **kw):
       return None
     def get_bool(self, key):
-      return key == 'XpLongOwnerManual'
-  def touch(value, t):
-    batch.append(NS(logMonoTime=int(t*1e9), can=[NS(address=0x3df, src=1, dat=bytes([0,0,0,value,0,0,0,0]))]))
-  def drain(*a):
-    out = batch[:]
-    batch.clear()
-    return out
+      return False
   from openpilot.tesla.plugin import Plugin
   proposal = [None]
   calls = []
@@ -584,62 +578,39 @@ def integration_replay():
       return NS(desired=desired)
   clock = [1.]
   with patch.object(plugins, 'PLUGINS', (Policy,)), patch.object(plugins, 'record_fault'), patch.object(policy_module.messaging, 'sub_sock', return_value=None), \
-       patch.object(policy_module.messaging, 'drain_sock', side_effect=drain), \
+       patch.object(policy_module.messaging, 'drain_sock', return_value=[]), \
        patch.object(policy_module.time, 'monotonic_ns', side_effect=lambda: int(clock[0]*1e9)):
     policy = plugins.long_owner_policy(Params(), CP, None)
     ctx = NS(CP=CP, sm=sm, LoC=NS(last_output_accel=.1), long_owner=LongOwner(CP), long_owner_policy=policy)
-    def tick(t, fingers=None):
+    def tick(t):
       clock[0] = t
-      if fingers is not None:
-        touch(fingers, t)
       sm.logMonoTime['pandaStates'] = oem.monoTime = int(t*1e9)
       out = custom.CarControlSP.new_message()
       ctx.long_owner.update(ctx, cs, out, t)
-      rows.append([t, fingers, str(out.longOwner), out.longOwnerRequest, out.longOwnerRefusal])
+      rows.append([t, proposal[0] if isinstance(proposal[0], str) else None, str(out.longOwner), out.longOwnerRequest, out.longOwnerRefusal])
       return out
-    tick(1, 0)
-    assert tick(1.01, 4).longOwnerRequest == 255
-    assert tick(2.0).longOwnerRequest == 255
-    proposal[0] = 'stock'
-    assert tick(2.02).longOwnerRequest == 1, 'LO17 one-cycle pulse lost'
-    proposal[0] = None
+    proposal[0] = 'sp'
+    tick(1)
+    assert tick(1.5).longOwnerRequest == 255, 'LO17 debounce'
+    assert tick(2.01).longOwnerRequest == 1
     health.longOwner = 1
     assert str(tick(2.1).longOwner) == 'sp'
-    assert ctx.long_owner.manual_target is None
-    tick(2.2, 0)
-    tick(2.21, 4)
-    assert tick(3.22).longOwnerRequest == 255, 'LO17 cooldown'
+    proposal[0] = 'stock'
+    tick(2.2)
+    assert tick(3.3).longOwnerRequest == 255, 'LO17 cooldown'
     assert tick(4.11).longOwnerRequest == 0
     health.longOwnerRefusal = 15
-    assert tick(4.2).longOwnerRequest == 255
-    assert ctx.long_owner.manual_target is None
-    assert tick(7).longOwnerRequest == 255, 'LO17 refusal must clear pulse'
-    tick(7.1, 0)
-    tick(7.11, 4)
+    assert tick(4.2).longOwnerRequest == 255, 'LO17 refusal'
     cs.gasPressed = True
-    assert tick(8.12).longOwnerRefusal == 'gas'
-    assert ctx.long_owner.manual_target is None
+    tick(7)
+    assert tick(8.01).longOwnerRefusal == 'gas'
     cs.gasPressed = False
-    assert tick(12).longOwnerLocked, 'LO17 second refusal lock'
+    assert tick(8.02).longOwnerLocked, 'LO17 second refusal lock'
     sm['selfdriveState'].enabled = False
-    tick(12.1, 0)
-    assert ctx.long_owner.manual_target is None
-    sm['selfdriveState'].enabled = True
-    tick(12.2, 4)
-    sm['selfdriveState'].enabled = False
-    tick(12.3)
-    sm['selfdriveState'].enabled = True
-    assert tick(15).longOwnerRequest == 255, 'LO17 disengage must clear pulse'
-    health.longOwnerAvailable = False
-    tick(15.1, 0)
-    assert tick(15.2, 4).longOwnerRequest == 255
-    health.longOwnerAvailable = True
-    sm['selfdriveState'].enabled = False
-    tick(16, 0)
+    assert not tick(9).longOwnerLocked, 'LO17 disengage clears the lock'
     sm['selfdriveState'].enabled = True
     proposal[0] = RuntimeError('hook failure')
-    assert tick(16.1, 4).longOwnerLocked, 'LO17 hook fault must lock and suppress manual'
-    assert ctx.long_owner.manual_target is None
+    assert tick(9.1).longOwnerLocked, 'LO17 hook fault must lock'
     assert calls.count('build') == 1, 'LO17 policy rebuilt per cycle'
 
   # Byte-exact Python transport, no USB/device access.

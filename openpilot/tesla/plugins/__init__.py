@@ -398,7 +398,7 @@ def _call(objs: list, obj, method: str, where: str, *args):
 
 
 def long_owner_policy(params, CP, CP_SP):
-  """controlsd: a drive-frozen desired(ctx, CS) callable, including manual input and shadow observation."""
+  """controlsd: a drive-frozen desired(ctx, CS) callable, including shadow observation."""
   if CP.brand != "tesla":
     return None
   from openpilot.tesla.long_owner import LongOwnerPolicy
@@ -412,7 +412,7 @@ def long_owner_policy(params, CP, CP_SP):
     except Exception as e:
       policies.remove(obj)
       record_fault(obj.plugin_name, "controlsd.long_owner", e)
-  return LongOwnerPolicy(policies, view(params).get_bool("XpLongOwnerManual"))
+  return LongOwnerPolicy(policies)
 
 
 def long_targets(CP, params) -> list:

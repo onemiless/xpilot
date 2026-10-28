@@ -4,7 +4,6 @@ from openpilot.tesla.plugin import Setting
 from openpilot.system.ui.lib.multilang import tr, tr_noop
 
 VEHICLE_SETTINGS = (
-  Setting('XpLongOwnerManual', tr_noop('Manual Long Owner (wiper first detent)')),
   Setting('TeslaCoopSteering', tr_noop('Cooperative Steering')),
   Setting('TeslaMadsScreenButton', tr_noop('MADS Screen Activation'),
           choices=((tr_noop('Off'), 0), (tr_noop('3-Finger'), 1), (tr_noop('4-Finger'), 2), (tr_noop('5-Finger'), 3))),  # upstream MadsScreenButtonType

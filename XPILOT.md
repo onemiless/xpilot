@@ -461,12 +461,8 @@ controlsd 启动时只调用一次 `plugins.long_owner_policy(params, CP, CP_SP)
 `desired_owner(ctx, CS)` 每周期接线此 callable。返回 None 保持 owner，stock/sp 仅为提议。
 构建/调用错误、坏输出会 fault 并在本行程禁用该策略，不提升 loser。运行时故障锁定至 disengage。
 
-`XpLongOwnerManual` 为核心 BOOL，默认关闭，只在停车设置页修改、下次行程读取。
-手动触发为车辆总线 bus 1 的 `UI_status2`（0x3DF）`UI_activeTouchPoints == 4` 上升沿；
-先观察非四指样本，按住不重触发。3/5 指不触发纵向；MADS 仍严格匹配其配置的指头数，
-配置 3 指时不会被四指触发。雨刷按钮只保留原车功能。手动脉冲优先于插件提议，宿主保持目标
-经过 1 s debounce 和请求确认，提交、拒绝、锁定或 disengage 时清除，绝不直接改 owner 或 CP。
-若另将 MADS 配成 4 指，会共享同一手势；同时使用手动纵向时将 MADS 配为 3 或 5 指。
+手动切换（四指触屏）不在宿主里（用户 2026-10-28）：由持有 `role:long.owner` 的插件实现，现为 `tesla_dynamic_acc` 的开关设置
+`XpTeslaDynamicAccTouch`。宿主只给插件的提议做 1 s debounce、冷却、否决、锁定和 panda 确认，不读触屏、不单独保存手动目标。
 
 Host floor：目标确认 1 s，完成/拒绝后 cooldown 2 s；gas/brake/standstill/stockAeb/accFault、
 |aEgo|≥0.35、lead TTC<3 s、OEM 不活跃/过期及对应 accel 两端差>0.20 均拒绝。

@@ -28,7 +28,7 @@ Failure cases listed before implementation:
 - O15 secret label leaks content/length, empty secret lacks Not set, or new paths contain logging/fault output
 - O16 either settings page omits the text editor or its offroad entry/commit gates (GPU case 28 exercises both)
 - O17 existing BOOL/range/choices row kinds or labels change
-- O18 manual owner setting is absent, not BOOL/default-off, or either UI bypasses the offroad setting gate
+- O18 the core XpLongOwnerManual key or settings row is still present (moved to tesla_dynamic_acc, owner 2026-10-28)
 - O20 a numeric (range) setting has no -/+ stepper on either settings page, a step leaves [min, max] or the step grid,
      or an off-grid/unknown stored value does not snap back into range
 - O19 plugin notifications lose their source, severity clamp or 80-character limit, malformed input leaks through,
@@ -367,15 +367,10 @@ def check_stepper(errors: list) -> None:
 
 
 def check_long_owner(errors):
+  """O18: the manual long-owner toggle moved to tesla_dynamic_acc (owner 2026-10-28); no core key or settings row remains."""
   from openpilot.tesla.ui.settings_meta import VEHICLE_SETTINGS
-  setting = next(s for s in VEHICLE_SETTINGS if s.key == 'XpLongOwnerManual')
-  assert offroad.setting_kind(setting) == 'toggle', 'O18 setting kind'
-  keys = (ROOT / 'openpilot/common/params_keys.h').read_text()
-  assert re.search(r'\{"XpLongOwnerManual", \{PERSISTENT \| BACKUP, BOOL, "0"\}\}', keys), 'O18 BOOL/default'
-  for path in ('settings_page.py', 'pages/tesla.py'):
-    assert 'VEHICLE_SETTINGS' in (PKG / 'tesla/ui' / path).read_text(), 'O18 shared settings'
-  assert 'if ui_state.is_offroad():' in (PKG / 'tesla/ui/settings_page.py').read_text(), 'O18 mici gate'
-  assert 'if ui_state.is_offroad():' in (PKG / 'tesla/ui/pages/base.py').read_text(), 'O18 native gate'
+  assert all(s.key != 'XpLongOwnerManual' for s in VEHICLE_SETTINGS), 'O18 core manual row'
+  assert 'XpLongOwnerManual' not in (ROOT / 'openpilot/common/params_keys.h').read_text(), 'O18 core manual key'
 
 
 def main() -> int:

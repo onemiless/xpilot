@@ -1203,10 +1203,6 @@ msgstr "Longitudinal maneuver mode"
 msgid "MADS Screen Activation"
 msgstr "MADS Screen Activation"
 
-#: openpilot/tesla/ui/settings_meta.py:7
-msgid "Manual Long Owner (wiper first detent)"
-msgstr "Manual Long Owner (wiper first detent)"
-
 #: openpilot/tesla/ui/screen.py:483
 msgid "Model source"
 msgstr "Model source"
