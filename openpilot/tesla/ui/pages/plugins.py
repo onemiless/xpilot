@@ -14,7 +14,7 @@ from openpilot.system.ui.widgets.list_view import ITEM_PADDING, ButtonAction, Li
 from openpilot.system.ui.widgets.scroller_tici import Scroller
 from openpilot.tesla.manifest import CATEGORIES
 from openpilot.tesla.plugins import FAULTS_PARAM, LOAD_ERRORS, is_enabled, resolve
-from openpilot.tesla.ui.offroad import StoreJobs, market_sections, plugin_status, switch_plugin
+from openpilot.tesla.ui.offroad import StoreJobs, editable, market_sections, plugin_status, switch_plugin
 from openpilot.tesla.ui.pages.base import ListPage, SettingRow, params
 
 LEFT_W = 440
@@ -53,13 +53,13 @@ class Switches:
   def make(self, plugin, description: str, on_tap=None) -> InfoRow:
     status = {"": ""}
     action = toggle_item("", initial_state=is_enabled(plugin, ui_state.params), callback=lambda v: self.switch(plugin, v),
-                         enabled=lambda: ui_state.is_offroad() and not self.jobs.busy and plugin.ENABLE_PARAM is not None).action_item
+                         enabled=lambda: editable() and not self.jobs.busy and plugin.ENABLE_PARAM is not None).action_item
     item = InfoRow(lambda: f"{plugin.TITLE}  [{status['']}]" if status[""] else plugin.TITLE, description, action, on_tap)
     self.items.append((plugin, item, status))
     return item
 
   def switch(self, plugin, value: bool) -> None:
-    self.errors = {plugin.NAME: switch_plugin(plugin, value, params(), jobs=self.jobs) if ui_state.is_offroad() else tr("park first")}
+    self.errors = {plugin.NAME: switch_plugin(plugin, value, params(), jobs=self.jobs) if editable() else tr("park first")}
     self.refresh()
 
   def refresh(self) -> None:

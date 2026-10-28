@@ -1,11 +1,11 @@
 """Plugin text/secret editing with the existing Wi-Fi keyboard; values stay out of messages."""
 import pyray as rl
 
-from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.application import gui_app, MousePos
 from openpilot.system.ui.widgets import DialogResult
 from openpilot.system.ui.widgets.inputbox import InputBox
 from openpilot.system.ui.widgets.keyboard import Keyboard
+from openpilot.tesla.ui.offroad import editable
 
 
 class SettingInput(InputBox):
@@ -45,7 +45,7 @@ class SettingKeyboard(Keyboard):
 
 
 def edit_text_setting(setting, params, refresh) -> None:
-  if not ui_state.is_offroad():
+  if not editable():
     return
   keyboard = SettingKeyboard()
   keyboard._input_box = SettingInput(setting, keyboard)
@@ -54,7 +54,7 @@ def edit_text_setting(setting, params, refresh) -> None:
     keyboard.set_text(params.get(setting.key, return_default=True) or "")
 
   def finished(result):
-    if result == DialogResult.CONFIRM and ui_state.is_offroad():
+    if result == DialogResult.CONFIRM and editable():
       error = setting.input_error(keyboard.text)
       if error:
         keyboard.set_title(setting.label, error)

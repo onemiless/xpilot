@@ -12,7 +12,7 @@ from openpilot.system.ui.widgets.label import UnifiedLabel, gui_label
 from openpilot.system.ui.widgets.list_view import ListItem, MultipleButtonAction, ButtonAction, toggle_item
 from openpilot.system.ui.widgets.scroller_tici import Scroller
 from openpilot.tesla.plugins import view
-from openpilot.tesla.ui.offroad import next_choice, setting_kind, step_value
+from openpilot.tesla.ui.offroad import editable, next_choice, setting_kind, step_value
 from openpilot.tesla.ui.settings_meta import setting_choices, setting_label
 from openpilot.tesla.ui.setting_keyboard import edit_text_setting
 
@@ -111,7 +111,7 @@ def params():
 
 
 def set_param(key: str, value) -> None:
-  if ui_state.is_offroad():
+  if editable():
     params().put(key, value, block=True)
 
 
@@ -125,11 +125,11 @@ class SettingRow:
     title = title or setting.label
     title = tr(title) if translate else title
     if self.kind in ("text", "secret"):
-      action = ButtonAction(tr("Edit"), enabled=ui_state.is_offroad)
+      action = ButtonAction(tr("Edit"), enabled=editable)
       action.set_value(lambda: tr(setting_label(setting, self._value())) if translate else setting_label(setting, self._value()))
       self.item = ListItem(title=title, action_item=action, callback=lambda: edit_text_setting(setting, params(), self.refresh))
     elif self.kind == "toggle":
-      self.item = toggle_item(title, initial_state=bool(self._value()), callback=self._set, enabled=ui_state.is_offroad)
+      self.item = toggle_item(title, initial_state=bool(self._value()), callback=self._set, enabled=editable)
     elif self.kind == "stepper":
       def label():
         value = setting_label(setting, self._value(), ui_state.is_metric)
@@ -139,20 +139,20 @@ class SettingRow:
           self._set(step_value(setting, self._value(), 1 if i == 2 else -1))
         self.item.action_item.set_selected_button(1)
       self.item = ListItem(title=title, action_item=MultipleButtonAction(["-", label, "+"], 220, 1, callback=step))
-      self.item.action_item.set_enabled(ui_state.is_offroad)
+      self.item.action_item.set_enabled(editable)
     elif self.kind == "buttons":
       choices = setting_choices(setting, ui_state.is_metric)
       self.choices = [(tr(label), value) for label, value in choices] if translate else choices
       self.item = ListItem(title=title, action_item=MultipleButtonAction([label for label, _ in self.choices], 250,
                                                                          callback=lambda i: self._set(self.choices[i][1])))
-      self.item.action_item.set_enabled(ui_state.is_offroad)
+      self.item.action_item.set_enabled(editable)
     else:
       choices = setting_choices(setting, ui_state.is_metric)
       self.choices = [(tr(label), value) for label, value in choices] if translate else choices
       def display_value():
         value = setting_label(setting, self._value(), ui_state.is_metric)
         return tr(value) if translate else value
-      action = ButtonAction(display_value, enabled=ui_state.is_offroad)
+      action = ButtonAction(display_value, enabled=editable)
       self.item = ListItem(title=title, action_item=action, callback=lambda: self._set(next_choice(self.choices, self._value())))
     self.refresh()
 

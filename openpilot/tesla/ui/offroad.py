@@ -191,6 +191,13 @@ def switch_plugin(plugin, value: bool, params, jobs=None) -> str | None:
     params.put(FAULTS_PARAM, faults, block=True)
 
 
+def editable() -> bool:
+  """Plugin switches and plugin/vehicle settings: offroad, or started but in P and not engaged (owner 2026-10-28).
+  Changes still apply on the next drive. Store, model, software and device actions stay offroad-only."""
+  from openpilot.selfdrive.ui.ui_state import ui_state
+  return ui_state.is_offroad() or (str(ui_state.sm['carState'].gearShifter) == 'park' and not ui_state.engaged)
+
+
 def setting_kind(setting) -> str:
   """text/secret, toggle, stepper (numeric range: -/+), buttons (≤5 choices), or cycle (stepping to the next choice)."""
   if setting.type in ("text", "secret"):

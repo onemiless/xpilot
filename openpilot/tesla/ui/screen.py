@@ -302,8 +302,9 @@ class BigScreenHost:
     for tid, p in placed.items():
       self._faced[tid] = self._face(self._entries[tid], p[2], self._now)
     if self._mode == "onroad" and any(item[0] == "lean_navigation" for item in self._visible("drive")):
-      _, _, w, h = tiles.nav_column(self._drive_view())
-      self._faced["lean_navigation"] = self._face(self._entries["lean_navigation"], "small", self._now, (w, h))
+      # Sized from the settled view: a dragged view is fractional and would reallocate the texture every frame.
+      _, _, w, h = tiles.nav_column(tiles.view(self._view_position))
+      self._faced["lean_navigation"] = self._face(self._entries["lean_navigation"], "small", self._now, (int(w), int(h)))
 
   def to_logical(self, x: float, y: float) -> tuple[float, float]:
     return offroad.to_logical(None if self._mode == "onroad" else self._view, x, y)
@@ -363,12 +364,13 @@ class BigScreenHost:
     """Bring the tile's cached texture up to date (at px when given); True if there is one to draw."""
     w, h = tiles.SIZES[size]
     w, h = px or (w * tiles.PITCH - tiles.GAP, h * tiles.PITCH - tiles.GAP)
-    if e.texture is None or e.texture.texture.width != w or e.texture.texture.height != h:
-      if e.texture is not None:
-        rl.unload_render_texture(e.texture)
-      e.texture = rl.load_render_texture(w, h)
-      e.poll.invalidate()
     try:
+      if e.texture is None or e.texture.texture.width != w or e.texture.texture.height != h:
+        if e.texture is not None:
+          rl.unload_render_texture(e.texture)
+          e.texture = None
+        e.texture = rl.load_render_texture(w, h)
+        e.poll.invalidate()
       if e.poll.due(now):
         e.state = e.tile.state(self._sm if self._sm is not None and e.spec.services else ui_state.sm)
       if e.poll.changed(e.state, size):

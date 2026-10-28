@@ -29,6 +29,8 @@ Failure cases listed before implementation:
 - O16 either settings page omits the text editor or its offroad entry/commit gates (GPU case 28 exercises both)
 - O17 existing BOOL/range/choices row kinds or labels change
 - O18 the core XpLongOwnerManual key or settings row is still present (moved to tesla_dynamic_acc, owner 2026-10-28)
+- O21 plugin switches and plugin/vehicle settings are not editable while started in P and not engaged, or are editable
+     while engaged or out of P (owner 2026-10-28: P with ignition on showed every switch disabled)
 - O20 a numeric (range) setting has no -/+ stepper on either settings page, a step leaves [min, max] or the step grid,
      or an off-grid/unknown stored value does not snap back into range
 - O19 plugin notifications lose their source, severity clamp or 80-character limit, malformed input leaks through,
@@ -366,6 +368,19 @@ def check_stepper(errors: list) -> None:
       errors.append("O20 no -/+ stepper in " + name)
 
 
+def check_parked_edits(errors: list) -> None:
+  from unittest.mock import patch
+  for started, gear, engaged, want in ((False, 'drive', False, True), (True, 'park', False, True), (True, 'park', True, False),
+                                       (True, 'drive', False, False), (True, 'reverse', False, False)):
+    state = types.SimpleNamespace(is_offroad=lambda s=started: not s, engaged=engaged, sm={'carState': types.SimpleNamespace(gearShifter=gear)})
+    with patch('openpilot.selfdrive.ui.ui_state.ui_state', state):
+      if offroad.editable() != want:
+        errors.append(f"O21 editable started={started} gear={gear} engaged={engaged} != {want}")
+  for name in ("tesla/ui/pages/plugins.py", "tesla/ui/plugins_page.py", "tesla/ui/pages/base.py", "tesla/ui/settings_page.py"):
+    if "editable" not in (PKG / name).read_text():
+      errors.append("O21 parked gate missing in " + name)
+
+
 def check_long_owner(errors):
   """O18: the manual long-owner toggle moved to tesla_dynamic_acc (owner 2026-10-28); no core key or settings row remains."""
   from openpilot.tesla.ui.settings_meta import VEHICLE_SETTINGS
@@ -376,7 +391,7 @@ def check_long_owner(errors):
 def main() -> int:
   errors: list[str] = []
   for check in (check_tiles, check_pages, check_plugins, check_store, check_market, check_models, check_view, check_alerts,
-                check_sources, check_text_settings, check_stepper, check_long_owner):
+                check_sources, check_text_settings, check_stepper, check_parked_edits, check_long_owner):
     try:
       check(errors)
     except Exception as e:

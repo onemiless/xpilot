@@ -9,7 +9,7 @@ from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.tesla.manifest import CATEGORIES
 from openpilot.tesla.plugins import FAULTS_PARAM, LOAD_ERRORS, PLUGINS, is_enabled, resolve, view
-from openpilot.tesla.ui.offroad import CATEGORY_LABELS, plugin_status, switch_plugin
+from openpilot.tesla.ui.offroad import CATEGORY_LABELS, editable, plugin_status, switch_plugin
 from openpilot.tesla.ui.settings_page import SettingsList
 from openpilot.tesla.ui.store_page import StorePage
 
@@ -29,7 +29,7 @@ class CategoryPage(SettingsList):
     for plugin in plugins:
       toggle = BigToggle(plugin.TITLE, initial_state=is_enabled(plugin, ui_state.params),
                          toggle_callback=lambda value, p=plugin: self._switch(p, value), description=_details(plugin))
-      toggle.set_enabled(lambda p=plugin: ui_state.is_offroad() and not self.jobs.busy and p.ENABLE_PARAM is not None)
+      toggle.set_enabled(lambda p=plugin: editable() and not self.jobs.busy and p.ENABLE_PARAM is not None)
       self._scroller.add_widget(toggle)
       self.rows.append((plugin, toggle))
       if plugin.SETTINGS:
@@ -40,7 +40,7 @@ class CategoryPage(SettingsList):
     self.show_event()
 
   def _switch(self, plugin, value) -> None:
-    self.errors = {plugin.NAME: switch_plugin(plugin, value, view(ui_state.params), jobs=self.jobs) if ui_state.is_offroad() else tr("park first")}
+    self.errors = {plugin.NAME: switch_plugin(plugin, value, view(ui_state.params), jobs=self.jobs) if editable() else tr("park first")}
     self.show_event()
 
   def show_event(self):

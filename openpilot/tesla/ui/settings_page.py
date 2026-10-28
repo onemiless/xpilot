@@ -8,7 +8,7 @@ from openpilot.system.ui.widgets.scroller import NavScroller
 from openpilot.tesla.plugins import view
 from openpilot.tesla.ui.settings_meta import VEHICLE_SETTINGS, setting_choices, setting_label
 from openpilot.tesla.ui.setting_keyboard import edit_text_setting
-from openpilot.tesla.ui.offroad import step_value
+from openpilot.tesla.ui.offroad import editable, step_value
 from openpilot.sunnypilot.hardware.driver_monitoring import driver_monitoring_configured
 from openpilot.sunnypilot.hardware.profile import has_driver_camera
 
@@ -27,7 +27,7 @@ def _params():
 
 
 def _set_param(key, value) -> None:
-  if ui_state.is_offroad():
+  if editable():
     _params().put(key, value, block=True)
 
 
@@ -49,18 +49,18 @@ class SettingsList(NavScroller):
       if setting.type is None and setting.range is None and setting.choices is None:
         toggle = BigToggle(label, initial_state=bool(_params().get(setting.key, return_default=True)),
                            toggle_callback=lambda value, k=setting.key: (_set_param(k, value), self.show_event()))
-        toggle.set_enabled(ui_state.is_offroad)
+        toggle.set_enabled(editable)
         self.toggles.append((setting.key, toggle))
         self._scroller.add_widget(toggle)
       else:
         button = BigButton(label)
         button.set_click_callback(lambda s=setting, t=translate: self._choose(s, t))
-        button.set_enabled(ui_state.is_offroad)
+        button.set_enabled(editable)
         self.choice_buttons.append((setting, button, translate))
         self._scroller.add_widget(button)
 
   def _choose(self, setting, translate=False) -> None:
-    if not ui_state.is_offroad():
+    if not editable():
       return
     if setting.type in ("text", "secret"):
       edit_text_setting(setting, _params(), self.show_event)
@@ -73,7 +73,7 @@ class SettingsList(NavScroller):
         for b, _ in steps:
           b.set_value(tr(value) if translate else value)
       for b, delta in steps:
-        b.set_enabled(ui_state.is_offroad)
+        b.set_enabled(editable)
         b.set_click_callback(lambda d=delta: (_set_param(setting.key, step_value(setting, _params().get(setting.key, return_default=True), d)),
                                               show(), self.show_event()))
         page._scroller.add_widget(b)
@@ -83,7 +83,7 @@ class SettingsList(NavScroller):
     for label, value in setting_choices(setting, ui_state.is_metric):
       label = tr(label) if translate else label
       button = BigButton(label)
-      button.set_enabled(ui_state.is_offroad)
+      button.set_enabled(editable)
       button.set_click_callback(lambda v=value: (_set_param(setting.key, v), self.show_event(), gui_app.pop_widget()))
       page._scroller.add_widget(button)
     gui_app.push_widget(page)
