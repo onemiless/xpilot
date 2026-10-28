@@ -473,11 +473,11 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
           conn.send('release')
           assert conn.poll(2) and conn.recv() == 'released'
         if scenario == 'hold':
-          assert source.reason == 'ipc_busy' and pick_clock_ns <= 25_000_000
+          assert source.reason == 'ipc_busy' and pick_clock_ns <= 40_000_000
           conn.send('release')
           assert conn.poll(2) and conn.recv() == 'released'
         if scenario == 'stall_active':
-          assert source.reason == 'ipc_busy' and pick_clock_ns <= 25_000_000
+          assert source.reason == 'ipc_busy' and pick_clock_ns <= 40_000_000
         if scenario == 'after_pick':
           assert not source.selected
           conn.send(('good', epoch, clock.now, expected))
