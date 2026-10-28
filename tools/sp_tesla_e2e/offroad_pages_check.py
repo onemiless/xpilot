@@ -369,13 +369,11 @@ def check_stepper(errors: list) -> None:
 
 
 def check_parked_edits(errors: list) -> None:
-  from unittest.mock import patch
   for started, gear, engaged, want in ((False, 'drive', False, True), (True, 'park', False, True), (True, 'park', True, False),
                                        (True, 'drive', False, False), (True, 'reverse', False, False)):
     state = types.SimpleNamespace(is_offroad=lambda s=started: not s, engaged=engaged, sm={'carState': types.SimpleNamespace(gearShifter=gear)})
-    with patch('openpilot.selfdrive.ui.ui_state.ui_state', state):
-      if offroad.editable() != want:
-        errors.append(f"O21 editable started={started} gear={gear} engaged={engaged} != {want}")
+    if offroad.editable(state) != want:
+      errors.append(f"O21 editable started={started} gear={gear} engaged={engaged} != {want}")
   for name in ("tesla/ui/pages/plugins.py", "tesla/ui/plugins_page.py", "tesla/ui/pages/base.py", "tesla/ui/settings_page.py"):
     if "editable" not in (PKG / name).read_text():
       errors.append("O21 parked gate missing in " + name)
