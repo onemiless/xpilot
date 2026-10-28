@@ -118,7 +118,9 @@ class CarControllerParams:
     # EPAS faults above this angle
     360,  # deg
     # limit angle rate to both prevent a fault and for low speed comfort (~12 mph rate down to 0 mph)
-    MAX_ANGLE_RATE=5,  # deg/20ms frame, EPS faults at 12 at a standstill
+    # xpilot (owner 2026-10-28): 8, was 5. The lateral jerk limit is below 8 deg/frame above ~15 km/h (below 5 above
+    # ~19 km/h), so this only speeds up low-speed turns; 600-900 deg/s requests were capped at 250 deg/s.
+    MAX_ANGLE_RATE=8,  # deg/20ms frame, EPS faults at 12 at a standstill
   )
 
   STEER_STEP = 2  # Angle command is sent at 50 Hz
