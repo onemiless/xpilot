@@ -632,7 +632,7 @@ def switch_ui_checks(plugin, p, offroad) -> list[str]:
     env = {"Base": type("Base", (), {"show_event": lambda self: None}),
            "ui_state": types.SimpleNamespace(is_offroad=lambda: True, params=p), "params": lambda: p,
            **{n: getattr(plugins, n) for n in ("view", "is_enabled", "resolve", "FAULTS_PARAM")},
-           "switch_plugin": offroad.switch_plugin, "plugin_status": offroad.plugin_status}
+           "switch_plugin": offroad.switch_plugin, "plugin_status": offroad.plugin_status, "editable": lambda: True}
     exec(compile(ast.fix_missing_locations(tree), path, "exec"), env)
     ui = env[name]()
     ui.items, ui.rows, ui.errors = [(plugin, types.SimpleNamespace(action_item=toggle), status)], [(plugin, toggle)], {}
