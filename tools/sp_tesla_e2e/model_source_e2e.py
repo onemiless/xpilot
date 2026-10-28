@@ -8,6 +8,8 @@ F3 truncated/oversized/fragmented IPC, bad BGM1 magic/version/type/flags/length.
 F4 NaN/inf/zero raw, decoder error, missing/wrong/nonfinite parsed heads: trip lock.
 F5 wrong session/epoch/frame/EOF, future timestamps, duplicate/out-of-order replies.
 F6 late/burst/200ms-stalled sender: one-slot overwrite, deadline, no catch-up.
+F6b a reply that arrived before EOF+60ms is rejected as late because the host reached pick() or finished admission
+    after EOF+60ms (owner 2026-10-28: device logs showed 43.6 ms arrivals rejected as late).
 F7 frozen/crashed child, new epoch without dual IDR, reset/zero-pair, five warmups.
 F8 local load/run failure propagates; phone never conceals a base failure.
 F9 one publisher, four messages selected together, baseline bytes unchanged.
@@ -715,7 +717,7 @@ def main():
     assert records[10]['source'] == 'phone' and records[11]['source'] == 'local'
     assert records[-1]['source'] == 'phone'
     records, _ = execute('deadline', ['good'] * 10 + ['deadline', 'past_deadline'])
-    assert records[-2]['source'] == 'phone' and records[-1]['source'] == 'local'
+    assert records[-2]['source'] == 'phone' and records[-1]['source'] == 'phone'  # F6b: arrival decides, not host time
     records, _ = execute('stale', ['absent'] * 10 + ['stale'] + ['good'] * 10)
     assert records[10]['source'] == 'local' and records[-1]['source'] == 'phone'
     records, _ = execute('stall_200ms', ['good'] * 10 + ['stall_active'] + ['absent'] * 5 + ['good'] * 44, paced=True)

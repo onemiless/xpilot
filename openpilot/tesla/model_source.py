@@ -134,7 +134,9 @@ class ModelSource:
       return self._reject('frame_eof', True)
     if not old_frame and frame <= self.last_frame and epoch == self.epoch:
       return self._reject('replay')
-    if arrival > eof + DEADLINE_NS or (not old_frame and now > eof + DEADLINE_NS):
+    # Late means the phone missed EOF+60ms. A reply that arrived in time stays usable when the host itself runs past the
+    # deadline (local model, decode, admission, an overslept poll): the local output would be just as late.
+    if arrival > eof + DEADLINE_NS:
       return self._reject('old_frame' if old_frame else 'late')
     new_epoch = epoch > self.epoch
     if new_epoch:
@@ -174,8 +176,6 @@ class ModelSource:
         return self._reject('admission', True)
     except Exception:
       return self._reject('adapter_error', True)
-    if nanos_since_boot() > eof + DEADLINE_NS:
-      return self._reject('late')
     self.last_frame = self.last_accepted = frame
     self.fresh += 1
     if self.fresh <= 5:
