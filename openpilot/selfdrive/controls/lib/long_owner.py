@@ -1,6 +1,9 @@
 """Tesla runtime ownership: Panda health commits; host policy only requests."""
 import math
 
+# Set on this car for whole drives (bus-2 interrupt rate, X-20261028-75d): pausing on it disabled every owner switch.
+BENIGN_PANDA_FAULTS = {'interruptRateCan2'}
+
 
 def desired_owner(ctx, CS):
   if ctx.long_owner_policy is None:
@@ -63,9 +66,10 @@ class LongOwner:
           self.refuse(f'panda:{p.longOwnerRefusal}', now)
         elif now - self.request_since > .5:
           self.locked, self.reason, self.request = True, 'ackMismatch', 255
-      # A temporary panda fault (e.g. interruptRateCan2, seen on the car 2026-10-26) only pauses new requests;
-      # stale pandaStates, a permanent fault or an ACC fault lock switching until disengage.
-      self.panda_fault = bool(p.faults) or p.faultStatus != 'none'
+      # Another temporary panda fault only pauses new requests; interruptRateCan2 alone does not (owner 2026-10-28).
+      # Stale pandaStates, a permanent fault or an ACC fault lock switching until disengage.
+      faults = {str(f) for f in p.faults}
+      self.panda_fault = bool(faults - BENIGN_PANDA_FAULTS) or (p.faultStatus != 'none' and not faults)
       if enabled and (not sm.all_checks(['pandaStates']) or p.faultStatus == 'faultPerm' or CS.accFaulted):
         self.locked, self.reason = True, 'fault'
     elif self.seen_abi:

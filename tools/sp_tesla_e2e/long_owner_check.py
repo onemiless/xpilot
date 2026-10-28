@@ -16,8 +16,8 @@ LO16: DRAIN fails either direction at any phase 0..40 ms/jitter 0..10 ms;
 LO17: a real hook proposal skips the 1 s debounce or the cooldown, survives a refusal, does not lock after two refusals,
       keeps a lock after disengage, or a raising hook does not lock (manual switching lives in tesla_dynamic_acc, owner 2026-10-28).
 LO18: merged 54-byte health fails A5 or old 49-byte health crashes/unlocks it.
-LO19: a temporary panda fault (interruptRateCan2 on the car) locks switching, or a request starts while it lasts;
-      a permanent panda fault does not lock.
+LO19: a temporary panda fault locks switching, or a request starts while it lasts; a permanent panda fault does not lock;
+      interruptRateCan2 alone (set for whole drives on the car, X-20261028-75d) blocks a request.
 
 The Panda below is a Python contract model, NOT firmware or physical proof.
 Host replay calls production controlsd/card/controller with deterministic inputs.
@@ -289,6 +289,12 @@ def host_replay():
   tick(x, 42)
   out = tick(x, 43.5)
   assert not out.longOwnerLocked and out.longOwnerRequest == 255, 'LO19 temp fault locked or requested'
+  x = long_owner.LongOwner(CP)
+  health.faults = ['interruptRateCan2']
+  tick(x, 42.1)
+  out = tick(x, 43.6)
+  assert not out.longOwnerLocked and out.longOwnerRequest != 255, 'LO19 interruptRateCan2 alone blocked the request'
+  health.faults = []
   health.faultStatus = 'faultPerm'
   assert tick(x, 44).longOwnerLocked, 'LO19 permanent fault did not lock'
   health.faultStatus = 'none'
