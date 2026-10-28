@@ -140,7 +140,7 @@ def health_replay(messages, rows):
   # Only model channels are replayed; all other services are fixed healthy inputs.
   others = ['controlsState', 'deviceState', 'managerState', 'extrinsicsCalibration', 'longitudinalPlanSP',
             'carControl', 'peripheralState', 'driverAssistance', 'deviceMotion', 'longitudinalPlan',
-            'lateralManeuverPlan', 'alertDebug', 'userBookmark', 'vehicleParameters'] + driver.camera_packets + driver.sensor_packets + ['gpsLocation']
+            'lateralManeuverPlan', 'alertDebug', 'userBookmark', 'vehicleParameters', 'carControlSP'] + driver.camera_packets + driver.sensor_packets + ['gpsLocation']
   for service in others:
     sm.data[service] = getattr(messaging.new_message(service), service)
     sm.seen[service] = False
