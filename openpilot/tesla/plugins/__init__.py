@@ -66,8 +66,7 @@ def _discover() -> tuple[tuple, dict[str, str], dict[str, dict]]:
       continue
     manifests.append(m)
     specs.update(m.params)
-  order = list(mf.CATEGORIES)
-  manifests.sort(key=lambda m: (order.index(m.category), m.priority, m.id))
+  manifests.sort(key=lambda m: (mf.STAGES.index(m.stage), m.priority, m.id))
   installed_ids = {m.id for m in installed}
   classes = []
   for m in manifests:

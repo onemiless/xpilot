@@ -385,10 +385,11 @@ def check_categories(errors: list) -> None:
       errors.append(f"O22 {p.NAME} category {p.CATEGORY} not derived from claims")
   raw = {"id": "x", "name": "x", "version": "1", "api": mf.API_VERSION, "author": "a", "description": "d", "url": "u", "sha256": "0" * 64}
   doc = {"plugins": [raw | {"id": "a", "category": "ui", "claims": ["role:long.owner"]}, raw | {"id": "b", "category": "body_comfort"},
-                     raw | {"id": "c", "category": "nonsense"}]}
+                     raw | {"id": "c", "category": "nonsense"},
+                     raw | {"id": "d", "category": "ui", "claims": [1, None]}]}
   with patch.object(store, "_get", return_value=json.dumps(doc).encode()):
     got = {e.id: e.category for e in store.fetch_index("u")[0]}
-  if got != {"a": "longitudinal", "b": "car_actions", "c": "data"}:
+  if got != {"a": "longitudinal", "b": "car_actions", "c": "data", "d": "ui"}:
     errors.append(f"O22 store index categories {got}")
 
 

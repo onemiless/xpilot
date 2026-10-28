@@ -3,7 +3,7 @@ the checks read manifests without importing plugin code. Format and rules: XPILO
 
 plugin.json:
   id           directory name                     name, description, author, version   shown on the Plugins page
-  api          API_VERSION this plugin targets    category  ignored (derived from claims, category_of)
+  api          API_VERSION this plugin targets    category  pipeline stage, one of STAGES (display group: category_of)
   use          onroad | offroad | both (required; metadata, not hook gating)
   entry        "module:Class" inside the plugin package (e.g. "plugin:Example")
   priority     lower wins an exclusive claim (then id); also orders plugins in a category. Default 100
@@ -32,9 +32,15 @@ PLUGINS_DIR = Path(__file__).resolve().parent / "plugins"  # built-in plugins (i
 INSTALL_DIR = Path(os.environ.get("XPILOT_PLUGINS_DIR", "/data/xpilot_plugins"))  # downloaded plugins (store.py)
 _COMMON = Path(__file__).resolve().parents[1] / "common"
 
-# Store/Plugins-page main category, derived from what a plugin claims (owner 2026-10-28), never from its own
-# "category" field (still accepted for older hosts, ignored here). id -> title, in display order; category_of() takes
-# the first group a claim matches, so a control role wins over CAN, CAN over data, and so on.
+# plugin.json "category" is the pipeline stage: it orders hooks (stage, priority, id), so chained hooks keep running
+# in control-path order. Older hosts validate the same ids. The first 12 sit on the control path.
+STAGES = ("perception_model", "object_fusion", "vehicle_params", "engagement", "driver_monitoring", "lateral_planning",
+          "longitudinal_planning", "lane_change", "navigation", "controller", "actuation", "safety_fallback",
+          "data_source", "alerts", "body_comfort", "ui", "overlays", "tools")
+
+# Store/Plugins-page main category, derived from what a plugin claims (owner 2026-10-28), never from its stage.
+# id -> title, in display order; category_of() takes the first group a claim matches, so a control role wins over
+# CAN, CAN over data, and so on.
 CATEGORIES = {
   "modes": "Driving Modes",
   "models": "Models",
@@ -132,6 +138,7 @@ class Manifest:
   category: str
   use: str
   entry: str
+  stage: str = "tools"
   description: str = ""
   author: str = ""
   priority: int = 100
@@ -174,6 +181,8 @@ def parse(path: Path) -> Manifest:
     raise ValueError(f"id {d.get('id')!r} != directory {path.parent.name!r}")
   if d.get("api") != API_VERSION:
     raise ValueError(f"api {d.get('api')!r}, host supports {API_VERSION}")
+  if d.get("category") not in STAGES:
+    raise ValueError(f"unknown category {d.get('category')!r}")
   if not isinstance(d.get("entry"), str) or not re.fullmatch(r"[a-z_][a-z0-9_]*:[A-Za-z_]\w*", d["entry"]):
     raise ValueError(f"bad entry {d.get('entry')!r}")
   if d.get("use") not in ("onroad", "offroad", "both"):
@@ -198,7 +207,7 @@ def parse(path: Path) -> Manifest:
 
   try:
     return Manifest(id=d["id"], name=str(d.get("name") or d["id"]), version=str(d.get("version", "0")), api=d["api"],
-                    category=category_of(claims), use=d["use"], entry=d["entry"], description=str(d.get("description", "")),
+                    category=category_of(claims), stage=d["category"], use=d["use"], entry=d["entry"], description=str(d.get("description", "")),
                     author=str(d.get("author", "")), priority=int(d.get("priority", 100)), enable_param=d.get("enable_param"),
                     claims=tuple(claims), settings=tuple(_setting(s, d.get("params", {})) for s in d.get("settings", [])), params=dict(d.get("params", {})),
                     platform=plat, rules=rules, requires=d.get("requires", {}))
@@ -207,15 +216,14 @@ def parse(path: Path) -> Manifest:
 
 
 def load_all(root: Path = PLUGINS_DIR) -> tuple[list[Manifest], dict[str, str]]:
-  """Valid manifests in (category, priority, id) order, and {directory: error} for the rejected ones."""
+  """Valid manifests in (stage, priority, id) order, and {directory: error} for the rejected ones."""
   found, errors = [], {}
   for path in sorted(root.glob("*/plugin.json")):
     try:
       found.append(parse(path))
     except ValueError as e:
       errors[path.parent.name] = str(e)
-  order = list(CATEGORIES)
-  found.sort(key=lambda m: (order.index(m.category), m.priority, m.id))
+  found.sort(key=lambda m: (STAGES.index(m.stage), m.priority, m.id))
   return found, errors
 
 

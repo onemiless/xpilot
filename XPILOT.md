@@ -93,7 +93,7 @@ panda/board/xpilot_rules.h   app EP2 loader
 |---|---|
 | `id` | 必须和目录名一致 |
 | `api` | 插件面向的宿主接口版本，必须等于 `manifest.API_VERSION`（现在是 1），否则不加载 |
-| `category` | 旧字段，宿主不再读；主分类由 claims 算出，见 4.2 |
+| `category` | 链路环节，必须是 `manifest.STAGES` 之一（见 4.2）；只决定钩子执行顺序，不决定显示分类 |
 | `use` | 必填：`onroad`、`offroad` 或 `both`；表示使用场景，Plugins 页显示。缺失或无效时带原因跳过。不改变钩子运行条件 |
 | `entry` | 插件包内的 `模块:类名` |
 | `priority` | 数字越小越优先：争同一个独占资源时它赢；同类插件的执行顺序也按它，数字相同按 id |
@@ -109,7 +109,7 @@ panda/board/xpilot_rules.h   app EP2 loader
 
 两套设置页复用 Wi-Fi 键盘，只允许停车编辑，提交时再次检查停车状态。text 预填当前值；secret 每次打开为空，行内有值固定显示 `******`、无值显示 `Not set`，不显示原值或原值长度。输入只接受可打印 ASCII（0x20–0x7e，允许空格和空字符串），超过 max_len 或非法字符会保留原输入并显示短错误；取消不写入，确认空字符串可清空。秘密键盘始终遮罩且不短暂回显最后一个字符。插件沿用 `ParamsView.get/put`，商店参数仍存 `.params` 文件、不新增编译 key；secret 是显示保护，不增加存储加密。设置路径不记录值到日志或故障文本。G2 配对码控件另做。
 
-清单有错（id 不对、use 缺失或无效、api 不匹配、资源格式错、JSON 坏了）或代码导入失败的插件会被跳过，在 Plugins 页顶部显示 "Failed: <id>"，不影响其他插件。
+清单有错（id 不对、类别未知、use 缺失或无效、api 不匹配、资源格式错、JSON 坏了）或代码导入失败的插件会被跳过，在 Plugins 页顶部显示 "Failed: <id>"，不影响其他插件。
 
 磁贴声明须与 `use` 一致：`onroad` 不能有 `show="offroad"`，`offroad` 不能有 `show="onroad"`，`show="always"` 必须配 `both`。`manifest.tile_problems()` 是清单检查、商店安装和插件仓库检查共用的源码校验；安装拒绝不一致的包且保留旧版本。`use` 不授予或门控任何运行钩子。
 
@@ -121,7 +121,7 @@ card 每次启动用 `cloudlog.event("xpilot.drive_snapshot", ...)` 记录本行
 
 ### 4.2 主分类（`manifest.CATEGORIES`，由 claims 自动算出）
 
-插件市场和 Plugins 页按主分类分组（2026-10-28 起）。宿主用 `manifest.category_of(claims)` 算分类，作者在 `plugin.json` 填的 `category` 不再读（为兼容旧宿主仍可保留，任意值都不拒载）。插件同时声明多种资源时，按下表从上往下取第一条匹配：
+插件市场和 Plugins 页按主分类分组（2026-10-28 起）。宿主用 `manifest.category_of(claims)` 算分类，作者在 `plugin.json` 填的 `category` 不参与显示分类。插件同时声明多种资源时，按下表从上往下取第一条匹配：
 
 | 顺序 | 分类 | 判定依据（claims） |
 |---|---|---|
@@ -130,12 +130,14 @@ card 每次启动用 `cloudlog.event("xpilot.drive_snapshot", ...)` 记录本行
 | 3 | `lateral` 横向控制 | `role:lateral.controller`、`lat.correction`、`role:lane_change.policy` |
 | 4 | `longitudinal` 纵向控制 | `role:long.owner`、`role:long.planner`、`plan.filter`、`long.target` |
 | 5 | `car_actions` 车辆动作（CAN） | `can.tx:*` |
-| 6 | `alerts` 提醒 | 只有 `alert`（可再带 `lang:*`）；同时有其他资源时归 `data` |
+| 6 | `alerts` 提醒 | 只有 `alert`（可再带 `lang:*`）时归此类；带其他资源时跳过此行继续往下匹配 |
 | 7 | `language` 语言 | `lang:*` |
 | 8 | `data` 数据与系统 | 以上都不匹配的其他 claim（`process:*`、`msg:*`、`source:*`、`power`、`net.wifi` 等） |
 | 9 | `ui` 磁贴与叠加层 | 没有任何 claim |
 
-商店索引条目带 `claims` 时用同一函数算分类；没有 `claims` 的旧索引按 `manifest.LEGACY_CATEGORIES` 把旧 `category` 映射过来，未知值归 `data`。分类只用于显示，不授予能力，能力以第 4.3、4.4 节的 claims 和钩子为准。检查：`offroad_pages_check.py` O22、`manifest_check.py` M1/M2。
+商店索引条目带 `claims` 时用同一函数算分类；没有 `claims`（或 claims 不是字符串列表）的旧索引按 `manifest.LEGACY_CATEGORIES` 把旧 `category` 近似映射过来，未知值归 `data`；这只影响未安装条目的显示，安装后按 claims 重算。分类只用于显示，不授予能力，能力以第 4.3、4.4 节的 claims 和钩子为准。
+
+**链路环节**（`manifest.STAGES`，`plugin.json` 的 `category` 字段，按控制链路顺序）：`perception_model`、`object_fusion`、`vehicle_params`、`engagement`、`driver_monitoring`、`lateral_planning`、`longitudinal_planning`、`lane_change`、`navigation`、`controller`、`actuation`、`safety_fallback`、`data_source`、`alerts`、`body_comfort`、`ui`、`overlays`、`tools`。插件按（环节、priority、id）排序加载，链式钩子（`lat_correction`、`plan_filter`、`long_target` 等）按这个顺序执行。未知环节拒载，旧宿主同样校验。检查：`offroad_pages_check.py` O22、`manifest_check.py` M1/M2。
 
 有插件要做时，按下面的顺序考虑加钩子（越靠前越可能先用到、风险越低）：
 
