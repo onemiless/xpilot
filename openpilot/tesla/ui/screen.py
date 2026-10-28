@@ -79,7 +79,7 @@ class AddTilesPage(ListPage):
     if not entries:
       self.add(text_item(tr("No tiles to add"), "", tr("Every tile is on the screen.")))
     for e in entries:
-      self.add(button_item(tr(e.spec.title) if e.plugin is None else e.spec.title, tr("ADD"), callback=lambda tid=e.spec.id: pin(tid)))
+      self.add(button_item(tr(e.spec.title), tr("ADD"), callback=lambda tid=e.spec.id: pin(tid)))
 
   def show_event(self):
     super().show_event()
@@ -211,9 +211,9 @@ class BigScreenHost:
       self._pages[tid] = page
     if e.tile.MICI:
       gui_app.push_widget(self._pages[tid])
-      self._stack.append((tr(e.spec.title) if e.plugin is None else e.spec.title, None))  # shown by mici in FALLBACK_VIEW
+      self._stack.append((tr(e.spec.title), None))  # shown by mici in FALLBACK_VIEW
     else:
-      self._open(tr(e.spec.title) if e.plugin is None else e.spec.title, self._pages[tid])
+      self._open(tr(e.spec.title), self._pages[tid])
 
   def _open(self, title, page) -> None:
     """Push a detail page; ListPage.open(title, sub) of the open page lands here too. page None: back one level."""

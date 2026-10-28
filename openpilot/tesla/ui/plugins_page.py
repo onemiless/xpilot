@@ -17,7 +17,7 @@ from openpilot.tesla.ui.store_page import StorePage
 def _details(plugin) -> str:
   m = plugin.MANIFEST
   claims = ', '.join(plugin.CLAIMS) or tr('none')
-  return f'{plugin.DESCRIPTION}\n\n{m.author or tr("unknown")} - v{m.version} - {tr("priority")} {plugin.PRIORITY}\n{tr("claims")}: {claims}'
+  return f'{tr(plugin.DESCRIPTION)}\n\n{m.author or tr("unknown")} - v{m.version} - {tr("priority")} {plugin.PRIORITY}\n{tr("claims")}: {claims}'
 
 
 class CategoryPage(SettingsList):
@@ -27,14 +27,14 @@ class CategoryPage(SettingsList):
     self.rows = []
     self.errors = {}
     for plugin in plugins:
-      toggle = BigToggle(plugin.TITLE, initial_state=is_enabled(plugin, ui_state.params),
+      toggle = BigToggle(tr(plugin.TITLE), initial_state=is_enabled(plugin, ui_state.params),
                          toggle_callback=lambda value, p=plugin: self._switch(p, value), description=_details(plugin))
       toggle.set_enabled(lambda p=plugin: ui_state.is_offroad() and not self.jobs.busy and p.ENABLE_PARAM is not None)
       self._scroller.add_widget(toggle)
       self.rows.append((plugin, toggle))
       if plugin.SETTINGS:
         page = SettingsList(plugin.SETTINGS)
-        button = BigButton(tr('{} Settings').format(plugin.TITLE))
+        button = BigButton(tr('{} Settings').format(tr(plugin.TITLE)))
         button.set_click_callback(lambda pg=page: (pg.show_event(), gui_app.push_widget(pg)))
         self._scroller.add_widget(button)
     self.show_event()

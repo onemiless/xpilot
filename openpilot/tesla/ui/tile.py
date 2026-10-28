@@ -77,7 +77,7 @@ class Tile:
       tex = gui_app.texture(icon, side, side)
       rl.draw_texture_ex(tex, rl.Vector2(rect.x + (rect.width - tex.width) / 2, rect.y + (rect.height - tex.height) / 2 - 16), 0, 1, rl.WHITE)
     size = self.title_size(rect)
-    title = tr(self.SPEC.title) if self.TRANSLATE_TITLE else self.SPEC.title
+    title = tr(self.SPEC.title)
     text(FontWeight.MEDIUM, clip(FontWeight.MEDIUM, title, size, rect.width - 2 * PAD), rect.x + PAD,
          rect.y + rect.height - size - 14, size)
 

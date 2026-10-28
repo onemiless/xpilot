@@ -1,4 +1,5 @@
 """Plugin text/secret editing with the existing Wi-Fi keyboard; values stay out of messages."""
+from openpilot.system.ui.lib.multilang import tr
 import pyray as rl
 
 from openpilot.selfdrive.ui.ui_state import ui_state
@@ -16,7 +17,7 @@ class SettingInput(InputBox):
   def add_char_at_cursor(self, char):
     value = self.text[:self._cursor_position] + char + self.text[self._cursor_position:]
     error = self.setting.input_error(value)
-    self.keyboard.set_title(self.setting.label, error)
+    self.keyboard.set_title(tr(self.setting.label), error)
     if error:
       return False
     return super().add_char_at_cursor(char)
@@ -49,7 +50,7 @@ def edit_text_setting(setting, params, refresh) -> None:
     return
   keyboard = SettingKeyboard()
   keyboard._input_box = SettingInput(setting, keyboard)
-  keyboard.set_title(setting.label)
+  keyboard.set_title(tr(setting.label))
   if setting.type == "text":
     keyboard.set_text(params.get(setting.key, return_default=True) or "")
 
@@ -57,7 +58,7 @@ def edit_text_setting(setting, params, refresh) -> None:
     if result == DialogResult.CONFIRM and ui_state.is_offroad():
       error = setting.input_error(keyboard.text)
       if error:
-        keyboard.set_title(setting.label, error)
+        keyboard.set_title(tr(setting.label), error)
         gui_app.push_widget(keyboard)
         return
       params.put(setting.key, keyboard.text, block=True)

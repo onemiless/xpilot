@@ -31,7 +31,7 @@ class StorePage(NavScroller):
       jobs.dirty = False
       for entry in jobs.entries:
         if entry.id not in self._rows:
-          row = BigButton(entry.name, description=f'{entry.description}\n\n{entry.author} - {entry.category} - {entry.id}' +
+          row = BigButton(tr(entry.name), description=f'{tr(entry.description)}\n\n{entry.author} - {entry.category} - {entry.id}' +
                                                   '\n' + tr('Install & enable restarts while parked.'))
           row.set_click_callback(lambda pid=entry.id: jobs.run(lambda: jobs.act(pid)))
           row.set_enabled(lambda pid=entry.id: jobs.can_act(pid))

@@ -54,7 +54,7 @@ class Switches:
     status = {"": ""}
     action = toggle_item("", initial_state=is_enabled(plugin, ui_state.params), callback=lambda v: self.switch(plugin, v),
                          enabled=lambda: ui_state.is_offroad() and not self.jobs.busy and plugin.ENABLE_PARAM is not None).action_item
-    item = InfoRow(lambda: f"{plugin.TITLE}  [{status['']}]" if status[""] else plugin.TITLE, description, action, on_tap)
+    item = InfoRow(lambda: f"{tr(plugin.TITLE)}  [{status['']}]" if status[""] else tr(plugin.TITLE), description, action, on_tap)
     self.items.append((plugin, item, status))
     return item
 
@@ -77,8 +77,8 @@ class PluginPage(ListPage):
     super().__init__()
     m = plugin.MANIFEST
     self.switches = Switches(jobs)
-    self.add(self.switches.make(plugin, plugin.DESCRIPTION))
-    self.rows = [SettingRow(s) for s in plugin.SETTINGS]
+    self.add(self.switches.make(plugin, tr(plugin.DESCRIPTION)))
+    self.rows = [SettingRow(s, title=tr(s.label)) for s in plugin.SETTINGS]
     self.add(*[r.item for r in self.rows])
     uses = {"onroad": tr("onroad"), "offroad": tr("offroad"), "both": tr("onroad + offroad")}
     self.add(text_item(tr("Source"), tr("store (removable)") if plugin.NAME in jobs.installed else tr("built-in (switch off only)")),
@@ -131,14 +131,14 @@ class PluginsPage(Widget):
       page = ListPage()
       for p in plugins:
         use = {"onroad": tr("onroad"), "offroad": tr("offroad"), "both": tr("onroad + offroad")}[p.MANIFEST.use]
-        summary = f"{use} - v{p.MANIFEST.version} - {p.MANIFEST.author or tr('unknown')} - {p.DESCRIPTION}"
+        summary = f"{use} - v{p.MANIFEST.version} - {p.MANIFEST.author or tr('unknown')} - {tr(p.DESCRIPTION)}"
         if p.SETTINGS:
           summary += "\n" + tr("Tap for settings ({})").format(len(p.SETTINGS))
         page.add(self.switches.make(p, summary, on_tap=lambda p=p: self._open_plugin(p)))
       for e in entries:
         use = {"onroad": tr("onroad"), "offroad": tr("offroad"), "both": tr("onroad + offroad")}.get(e.use, tr("use not declared"))
-        page.add(InfoRow(lambda e=e: f"{e.name} - {jobs.row_value(jobs.current(e.id) or e)}",
-                         f"{use} - v{e.version} - {e.author} - {e.description}\n{tr('Install & enable restarts while parked.')}",
+        page.add(InfoRow(lambda e=e: f"{tr(e.name)} - {jobs.row_value(jobs.current(e.id) or e)}",
+                         f"{use} - v{e.version} - {e.author} - {tr(e.description)}\n{tr('Install & enable restarts while parked.')}",
                          ButtonAction(lambda e=e: jobs.action(jobs.current(e.id) or e), enabled=lambda e=e: jobs.can_act(e.id)),
                          callback=lambda e=e: jobs.run(lambda: jobs.act(e.id))))
       self.sections.append((tr(title), page))
@@ -158,7 +158,7 @@ class PluginsPage(Widget):
   def _open_plugin(self, plugin) -> None:
     if plugin.NAME not in self.pages:
       self.pages[plugin.NAME] = PluginPage(plugin, self.jobs)
-    self.open(plugin.TITLE, self.pages[plugin.NAME])
+    self.open(tr(plugin.TITLE), self.pages[plugin.NAME])
 
   def show_event(self):
     super().show_event()
