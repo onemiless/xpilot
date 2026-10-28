@@ -29,6 +29,8 @@ Failure cases listed before implementation:
 - O16 either settings page omits the text editor or its offroad entry/commit gates (GPU case 28 exercises both)
 - O17 existing BOOL/range/choices row kinds or labels change
 - O18 the core XpLongOwnerManual key or settings row is still present (moved to tesla_dynamic_acc, owner 2026-10-28)
+- O22 a plugin's main category does not follow its claims (control role > CAN > data > alert > tile, language apart),
+     the author's category field still decides it, or a store entry gets a different category than the same plugin loaded
 - O21 plugin switches and plugin/vehicle settings are not editable while started in P and not engaged, or are editable
      while engaged or out of P (owner 2026-10-28: P with ignition on showed every switch disabled)
 - O20 a numeric (range) setting has no -/+ stepper on either settings page, a step leaves [min, max] or the step grid,
@@ -222,7 +224,7 @@ def check_market(errors: list) -> None:
   if any(t != mf.CATEGORIES[p.CATEGORY] for (t, _), p in zip(plugins, [p for _, ps, _ in sections for p in ps], strict=True)):
     errors.append("O12 a plugin in the wrong market category")
   found = {e.id: t for t, _, es in sections for e in es}
-  if found != {"ext_new": mf.CATEGORIES["alerts"], "ext_odd": mf.CATEGORIES["tools"]}:
+  if found != {"ext_new": mf.CATEGORIES["alerts"], "ext_odd": mf.CATEGORIES["data"]}:
     errors.append(f"O12 market store entries: {found}")
 
 
@@ -368,6 +370,28 @@ def check_stepper(errors: list) -> None:
       errors.append("O20 no -/+ stepper in " + name)
 
 
+def check_categories(errors: list) -> None:
+  from unittest.mock import patch
+  cases = ((["role:stock.ap", "role:engagement.state", "can.tx:0x249:1"], "modes"), (["role:perception.model", "long.target"], "models"),
+           (["role:lateral.controller", "event.filter"], "lateral"), (["role:long.owner"], "longitudinal"),
+           (["plan.filter", "process:x", "msg:a.b"], "longitudinal"), (["can.tx:0x3FD:1", "msg:a.b"], "car_actions"),
+           (["msg:bms.state"], "data"), (["process:x", "msg:a.b"], "data"), (["alert"], "alerts"), (["alert", "msg:a.b"], "data"),
+           ([], "ui"), (["lang:zh-CHS"], "language"), (["power"], "data"))
+  for claims, want in cases:
+    if mf.category_of(claims) != want:
+      errors.append(f"O22 category_of({claims}) = {mf.category_of(claims)} != {want}")
+  for p in PLUGINS:
+    if p.CATEGORY != mf.category_of(p.CLAIMS):
+      errors.append(f"O22 {p.NAME} category {p.CATEGORY} not derived from claims")
+  raw = {"id": "x", "name": "x", "version": "1", "api": mf.API_VERSION, "author": "a", "description": "d", "url": "u", "sha256": "0" * 64}
+  doc = {"plugins": [raw | {"id": "a", "category": "ui", "claims": ["role:long.owner"]}, raw | {"id": "b", "category": "body_comfort"},
+                     raw | {"id": "c", "category": "nonsense"}]}
+  with patch.object(store, "_get", return_value=json.dumps(doc).encode()):
+    got = {e.id: e.category for e in store.fetch_index("u")[0]}
+  if got != {"a": "longitudinal", "b": "car_actions", "c": "data"}:
+    errors.append(f"O22 store index categories {got}")
+
+
 def check_parked_edits(errors: list) -> None:
   for started, gear, engaged, want in ((False, 'drive', False, True), (True, 'park', False, True), (True, 'park', True, False),
                                        (True, 'drive', False, False), (True, 'reverse', False, False)):
@@ -389,7 +413,7 @@ def check_long_owner(errors):
 def main() -> int:
   errors: list[str] = []
   for check in (check_tiles, check_pages, check_plugins, check_store, check_market, check_models, check_view, check_alerts,
-                check_sources, check_text_settings, check_stepper, check_parked_edits, check_long_owner):
+                check_sources, check_text_settings, check_stepper, check_parked_edits, check_categories, check_long_owner):
     try:
       check(errors)
     except Exception as e:

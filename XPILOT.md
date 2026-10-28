@@ -93,7 +93,7 @@ panda/board/xpilot_rules.h   app EP2 loader
 |---|---|
 | `id` | 必须和目录名一致 |
 | `api` | 插件面向的宿主接口版本，必须等于 `manifest.API_VERSION`（现在是 1），否则不加载 |
-| `category` | 类别，见下表 |
+| `category` | 旧字段，宿主不再读；主分类由 claims 算出，见 4.2 |
 | `use` | 必填：`onroad`、`offroad` 或 `both`；表示使用场景，Plugins 页显示。缺失或无效时带原因跳过。不改变钩子运行条件 |
 | `entry` | 插件包内的 `模块:类名` |
 | `priority` | 数字越小越优先：争同一个独占资源时它赢；同类插件的执行顺序也按它，数字相同按 id |
@@ -109,7 +109,7 @@ panda/board/xpilot_rules.h   app EP2 loader
 
 两套设置页复用 Wi-Fi 键盘，只允许停车编辑，提交时再次检查停车状态。text 预填当前值；secret 每次打开为空，行内有值固定显示 `******`、无值显示 `Not set`，不显示原值或原值长度。输入只接受可打印 ASCII（0x20–0x7e，允许空格和空字符串），超过 max_len 或非法字符会保留原输入并显示短错误；取消不写入，确认空字符串可清空。秘密键盘始终遮罩且不短暂回显最后一个字符。插件沿用 `ParamsView.get/put`，商店参数仍存 `.params` 文件、不新增编译 key；secret 是显示保护，不增加存储加密。设置路径不记录值到日志或故障文本。G2 配对码控件另做。
 
-清单有错（id 不对、类别未知、use 缺失或无效、api 不匹配、资源格式错、JSON 坏了）或代码导入失败的插件会被跳过，在 Plugins 页顶部显示 "Failed: <id>"，不影响其他插件。
+清单有错（id 不对、use 缺失或无效、api 不匹配、资源格式错、JSON 坏了）或代码导入失败的插件会被跳过，在 Plugins 页顶部显示 "Failed: <id>"，不影响其他插件。
 
 磁贴声明须与 `use` 一致：`onroad` 不能有 `show="offroad"`，`offroad` 不能有 `show="onroad"`，`show="always"` 必须配 `both`。`manifest.tile_problems()` 是清单检查、商店安装和插件仓库检查共用的源码校验；安装拒绝不一致的包且保留旧版本。`use` 不授予或门控任何运行钩子。
 
@@ -119,36 +119,27 @@ panda/board/xpilot_rules.h   app EP2 loader
 
 card 每次启动用 `cloudlog.event("xpilot.drive_snapshot", ...)` 记录本行程的 system commit、active winners 的 id/version/sha256，以及存在时 `XpilotPandaRules` 的 `crc32`。插件 sha256 在发现时固定，按相对路径排序，对每个普通文件依次哈希 `路径 UTF-8 + NUL + 8 字节大端长度 + 内容`，排除 `__pycache__` 和 `.pyc`；它是内容摘要，不是商店压缩包摘要。快照不会证明 Panda 已加载或设备已部署。
 
-### 4.2 类别（`manifest.CATEGORIES`，按控制链路顺序）
+### 4.2 主分类（`manifest.CATEGORIES`，由 claims 自动算出）
 
-能力状态：**仅分类**表示目前只用于分组；**可补充**表示已有钩子可添加行为；**可替换**表示已有 role 可整体替换对应 SP 环节。类别本身不授予能力，具体以第 4.3、4.4 节的 claims 和钩子为准。
+插件市场和 Plugins 页按主分类分组（2026-10-28 起）。宿主用 `manifest.category_of(claims)` 算分类，作者在 `plugin.json` 填的 `category` 不再读（为兼容旧宿主仍可保留，任意值都不拒载）。插件同时声明多种资源时，按下表从上往下取第一条匹配：
 
-| 类别 | 用途 | 当前能力 |
+| 顺序 | 分类 | 判定依据（claims） |
 |---|---|---|
-| `perception_model` | 感知模型 | 可替换：`role:perception.model` |
-| `object_fusion` | 前车和目标融合 | 仅分类 |
-| `vehicle_params` | 标定和车辆参数 | 仅分类 |
-| `engagement` | 接管状态机 | 可替换：`role:engagement.state` |
-| `driver_monitoring` | 驾驶员监控 | 仅分类 |
-| `lateral_planning` | 横向规划 | 可补充：`lat_correction` |
-| `longitudinal_planning` | 纵向规划 | 可补充：`long_target`、`plan_filter`；规划替换限 `role:long.planner` |
-| `lane_change` | 变道 | 可补充：`lane_change_policy`，限免推方向盘判断 |
-| `navigation` | 导航驾驶 | 可补充：`source:map` + `processes()` 发布地图和导航数据 |
-| `controller` | 控制器 | 可补充：`lat_correction`；横向控制器替换限 `role:lateral.controller` |
-| `actuation` | 执行和车端报文 | 可补充：`control_sends`，受 panda safety 限制 |
-| `safety_fallback` | 安全兜底和 Autopilot 交接 | 可替换：`role:safety.fallback`（Autopilot 交接还没做） |
-| `data_source` | 数据源和外接算力 | 可补充：`observe_can`、`radar_interface`、`processes` + `pluginMsg` |
-| `alerts` | 报警 | 可补充：`alert_source` |
-| `body_comfort` | 车身和舒适 | 可补充：`observe_can`、`control_sends` |
-| `ui` | 磁贴 | 可补充：`Tile` |
-| `overlays` | 行驶叠加层 | 可补充：`HudOverlay`、`ScreenOverlay` |
-| `tools` | 工具和诊断 | 可补充：`processes()` |
+| 1 | `modes` 驾驶模式 | `role:engagement.state`、`role:stock.ap`、`role:safety.fallback` |
+| 2 | `models` 模型 | `role:perception.model` |
+| 3 | `lateral` 横向控制 | `role:lateral.controller`、`lat.correction`、`role:lane_change.policy` |
+| 4 | `longitudinal` 纵向控制 | `role:long.owner`、`role:long.planner`、`plan.filter`、`long.target` |
+| 5 | `car_actions` 车辆动作（CAN） | `can.tx:*` |
+| 6 | `alerts` 提醒 | 只有 `alert`（可再带 `lang:*`）；同时有其他资源时归 `data` |
+| 7 | `language` 语言 | `lang:*` |
+| 8 | `data` 数据与系统 | 以上都不匹配的其他 claim（`process:*`、`msg:*`、`source:*`、`power`、`net.wifi` 等） |
+| 9 | `ui` 磁贴与叠加层 | 没有任何 claim |
 
-仅分类的类别仍可使用通用钩子（`processes`、`alert_source` 等），但不能替换 SP 的对应环节。真有插件需要时再加专用钩子，不预先加。
+商店索引条目带 `claims` 时用同一函数算分类；没有 `claims` 的旧索引按 `manifest.LEGACY_CATEGORIES` 把旧 `category` 映射过来，未知值归 `data`。分类只用于显示，不授予能力，能力以第 4.3、4.4 节的 claims 和钩子为准。检查：`offroad_pages_check.py` O22、`manifest_check.py` M1/M2。
 
 有插件要做时，按下面的顺序考虑加钩子（越靠前越可能先用到、风险越低）：
 
-| 顺序 | 类别 | 可能的钩子 | 理由 |
+| 顺序 | 环节 | 可能的钩子 | 理由 |
 |---|---|---|---|
 | 1 | `navigation` | 不需要新钩子：`source:map` + `processes()` 发布 `liveMapDataSP` / `navInstruction`（第 8 节） | 现有接口已够用，先写插件 |
 | 2 | `vehicle_params` | 只读的参数修正（例如转向比、质量），在 card 发布 CarParams 前调用 | 影响小、可在本机验证 |
@@ -293,7 +284,7 @@ class MyTile(Tile):
 
 ### 5.2 API 一览
 
-**清单和元数据**（`openpilot/tesla/manifest.py`）：`plugin.json` 字段见 4.1；`CATEGORIES`（类别和显示名）；`API_VERSION`（现在 1）；claims 格式见 4.3。宿主从清单填好 `Plugin` 的类属性：`NAME`、`TITLE`、`DESCRIPTION`、`CATEGORY`、`PRIORITY`、`ENABLE_PARAM`、`CLAIMS`、`SETTINGS`、`MANIFEST`（含 `version`、`author`），插件只读。插件自己可以设 `SERVICES`（钩子要额外订阅的服务）。
+**清单和元数据**（`openpilot/tesla/manifest.py`）：`plugin.json` 字段见 4.1；`CATEGORIES`（主分类和显示名）、`category_of()`（由 claims 算主分类）；`API_VERSION`（现在 1）；claims 格式见 4.3。宿主从清单填好 `Plugin` 的类属性：`NAME`、`TITLE`、`DESCRIPTION`、`CATEGORY`、`PRIORITY`、`ENABLE_PARAM`、`CLAIMS`、`SETTINGS`、`MANIFEST`（含 `version`、`author`），插件只读。插件自己可以设 `SERVICES`（钩子要额外订阅的服务）。
 
 **Python 钩子**（`openpilot/tesla/plugin.py` 的 `Plugin`；可选 `event_filter` 由声明 claim 的类直接实现，其余有空的默认实现，详细规则见 4.4）：
 

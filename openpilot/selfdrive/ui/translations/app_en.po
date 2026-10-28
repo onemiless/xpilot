@@ -1826,3 +1826,39 @@ msgstr "{} queued"
 #: openpilot/tesla/ui/plugins_page.py:83
 msgid "{}/{} on"
 msgstr "{}/{} on"
+
+#: openpilot/tesla/ui/screen.py:537
+msgid "+"
+msgstr "+"
+
+#: openpilot/tesla/ui/screen.py:537
+msgid "-"
+msgstr "-"
+
+#: openpilot/tesla/ui/offroad.py:58
+msgid "Car Actions (CAN)"
+msgstr "Car Actions (CAN)"
+
+#: openpilot/tesla/ui/offroad.py:59
+msgid "Data & System"
+msgstr "Data & System"
+
+#: openpilot/tesla/ui/offroad.py:54
+msgid "Driving Modes"
+msgstr "Driving Modes"
+
+#: openpilot/tesla/ui/offroad.py:62
+msgid "Languages"
+msgstr "Languages"
+
+#: openpilot/tesla/ui/offroad.py:56
+msgid "Lateral Control"
+msgstr "Lateral Control"
+
+#: openpilot/tesla/ui/offroad.py:57
+msgid "Longitudinal Control"
+msgstr "Longitudinal Control"
+
+#: openpilot/tesla/ui/offroad.py:61
+msgid "Tiles & Overlays"
+msgstr "Tiles & Overlays"

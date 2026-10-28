@@ -27,7 +27,7 @@ class Plugin:
   NAME = ""
   TITLE = ""
   DESCRIPTION = ""
-  CATEGORY = "tools"
+  CATEGORY = "ui"
   PRIORITY = 100
   ENABLE_PARAM: str | None = None
   CLAIMS: tuple[str, ...] = ()

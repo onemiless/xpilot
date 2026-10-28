@@ -78,6 +78,10 @@ def fetch_index(url: str = INDEX_URL) -> tuple[list[IndexEntry], str | None]:
     try:
       e = IndexEntry(**{f: raw[f] for f in ("id", "name", "version", "api", "category", "author", "description", "url", "sha256")},
                      platform=raw.get("platform"), use=raw.get("use"), default=raw.get("default") is True)
+      # Same main category as a loaded plugin: from claims when the index carries them, else the old field mapped.
+      claims = raw.get("claims")
+      category = mf.category_of(claims) if isinstance(claims, list) else mf.LEGACY_CATEGORIES.get(e.category, "data")
+      e = IndexEntry(**{**e.__dict__, "category": category})
     except (KeyError, TypeError):
       continue
     ok = e.api == mf.API_VERSION and e.id not in builtin and mf.platform_ok(e.platform)

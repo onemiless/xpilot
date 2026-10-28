@@ -51,24 +51,15 @@ MODEL_PARAM = "CarPlatformBundle"  # card.py fingerprints as bundle["platform"] 
 _plugin_msgs = None
 
 CATEGORY_LABELS = {
-  "perception_model": tr_noop("Perception Models"),
-  "object_fusion": tr_noop("Lead & Object Fusion"),
-  "vehicle_params": tr_noop("Calibration & Vehicle Params"),
-  "engagement": tr_noop("Engagement"),
-  "driver_monitoring": tr_noop("Driver Monitoring"),
-  "lateral_planning": tr_noop("Lateral Planning"),
-  "longitudinal_planning": tr_noop("Longitudinal Planning"),
-  "lane_change": tr_noop("Lane Change"),
-  "navigation": tr_noop("Navigate on xpilot"),
-  "controller": tr_noop("Controllers"),
-  "actuation": tr_noop("Actuation & Car Messages"),
-  "safety_fallback": tr_noop("Safety Fallback & Autopilot Handoff"),
-  "data_source": tr_noop("Data Sources & External Compute"),
+  "modes": tr_noop("Driving Modes"),
+  "models": tr_noop("Models"),
+  "lateral": tr_noop("Lateral Control"),
+  "longitudinal": tr_noop("Longitudinal Control"),
+  "car_actions": tr_noop("Car Actions (CAN)"),
+  "data": tr_noop("Data & System"),
   "alerts": tr_noop("Alerts"),
-  "body_comfort": tr_noop("Body & Comfort"),
-  "ui": tr_noop("Tiles"),
-  "overlays": tr_noop("Driving Overlays"),
-  "tools": tr_noop("Tools & Diagnostics"),
+  "ui": tr_noop("Tiles & Overlays"),
+  "language": tr_noop("Languages"),
 }
 
 
@@ -129,14 +120,14 @@ def plugin_sections():
 
 def market_sections(entries) -> list[tuple[str, list, list]]:
   """Plugin market: (category title, plugins, store entries) per manifest category with any, in CATEGORIES order.
-  Store entries are index entries not loaded this boot (new, or installed and waiting for a restart); an unknown
-  category goes to tools."""
+  Store entries are index entries not loaded this boot (new, or installed and waiting for a restart); store.fetch_index
+  already gave them their claims-derived category (unknown goes to data)."""
   loaded = {p.NAME for p in PLUGINS}
   extra = [e for e in entries if e.id not in loaded]
   sections = []
   for c in CATEGORIES:
     plugins = [p for p in PLUGINS if p.CATEGORY == c]
-    found = [e for e in extra if (e.category if e.category in CATEGORIES else "tools") == c]
+    found = [e for e in extra if (e.category if e.category in CATEGORIES else "data") == c]
     if plugins or found:
       sections.append((CATEGORY_LABELS[c], plugins, found))
   return sections
