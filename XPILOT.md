@@ -415,6 +415,8 @@ Tesla 自有地址按地址独占，与 bus/length 无关（包括 0x488、0x2B9
 
 商店插件的地址、模板、时效、频率和预算由各自 `plugin.json` 的规则声明；系统不维护按插件命名的清单。
 
+**传感器输入 `sensor_input`**（规则可选键，只能为 `true`，记录第 43 字节=1）：给未接管时也要发的传感器帧用，例如 ARS408 的车速 0x300 和横摆 0x301。RX 帧只证明设备在场：RX 长度可以和 TX 不同，RX 谓词和 copy 掩码必须全 0；TX 内容全部由字段范围和常量位约束。发送不要求 `controls_allowed`，但模板时效、字段范围、常量、校验和/counter、最小间隔和会话预算照常生效，不是预算豁免；全局门和模式独占地址不变。其他节点在同一总线发出该 TX 地址时，固件锁住这条规则直到下一次设置模式。宿主编码器拒绝 `opendbc/dbc/tesla_*.dbc` 里出现的 TX 地址；DBC 只列出已知地址，商店审核仍要检查地址。ARS408 是大端，引擎按 Intel 位序取字段，多字节数值按字节拆成多个字段（范围略放宽）。合同见 `docs/design/xpilot-panda-rules.md` 的 sensor_input 小节。
+
 - navassist：0x3E9，idle 模板、TTL 1.5 秒、模板 counter+1、通用 TESLA_SUM8、间隔 100 ms、首帧起 60 秒窗口最多 200 帧。(request,reason) 只能 (1,8)/(2,8)/(3,4)。cancel=(3,4) 只释放转向灯，允许未接管时发送；用户 2026-10-25 决定 cancel 不占用且不受会话预算限制。它仍受模板、校验和、counter、间隔、relay 和 noOutput 限制。
 
 app 固件专用 CAPS/STATUS/BEGIN/COMMIT/CLEAR 及 EP2 64 字节记录见合同。主机必须先验证 CAPS 是 app，绝不向 bootstub EP2 写规则。BEGIN 立即撤销旧表，CRC/格式/上传失败后空表；只允许非 car mode 提交。启动和每次切入非 car mode 清表，每次设置模式重置模板和预算，切入 car mode 中止未完成上传。表为空或失败不改变基础 Tesla 接管条件。
@@ -431,7 +433,7 @@ app 固件专用 CAPS/STATUS/BEGIN/COMMIT/CLEAR 及 EP2 64 字节记录见合同
 
 1 Hz `safety_tick` 将过期模板置为无效，达到最小间隔后清除 TX 标记，idle/window 到期后清零会话计数；时间戳保留用于 tick 之间的边界检查。模板只能由匹配的车端 RX 刷新，宿主不能刷新。RX/TX 的标准帧或扩展帧类型必须与地址范围一致。
 
-检查：`test_xpilot_rules.py`（失败矩阵 R1–R17、真实 C 引擎和 app loader、确定性重放）、`test_xpilot_rule_data.py`、全部 opendbc safety、cppcheck MISRA、可用时 mutation、F4/H7/body 构建与 RAM/flash 对照。运行 `XPILOT_RULES_ARTIFACT=<路径> PYTHONPATH=opendbc_repo python -m unittest opendbc.safety.tests.test_xpilot_rules` 保存可重复的流摘要。主机检查、固件构建、设备 active commit 和刷写分别报告；本任务无设备访问。
+检查：`test_xpilot_rules.py`（失败矩阵 R1–R17、真实 C 引擎和 app loader、确定性重放）、`test_xpilot_rule_data.py`、`test_xpilot_sensor_input.py`（S1–S9）、全部 opendbc safety、cppcheck MISRA、可用时 mutation、F4/H7/body 构建与 RAM/flash 对照。运行 `XPILOT_RULES_ARTIFACT=<路径> PYTHONPATH=opendbc_repo python -m unittest opendbc.safety.tests.test_xpilot_rules` 保存可重复的流摘要。主机检查、固件构建、设备 active commit 和刷写分别报告；本任务无设备访问。
 
 Tesla 接管例外（用户 2026-10-25 决定）：`safety.h` 的最低频率检查遵守 `ignore_frequency_check`，时效、校验和、计数器和质量检查不变；G4（用户 2026-10-26 决定）移除 SP 扩展的全局 `invalidLkasSetting=False`，CarState 保留真实原车 Autosteer 设置。仅开启 `tesla_mixed_control` 时由其 `event.filter` 删除该事件，关闭或未安装插件即恢复 SP 行为。插件 1.1.0 声明 `requires.hooks=["event_filter"]`；旧宿主拒绝未知 claim，必须同一次 offroad 会话先更新系统再安装插件。此任务不实现 AP owner/交接（G3），不改上游 `carstate.py` 或 panda 安全逻辑。
 
