@@ -404,14 +404,8 @@ class Device(DeviceSP):
     self._set_awake(ui_state.ignition or not interaction_timeout or PC)
 
   def _set_awake(self, on: bool, _ui_state=None):
-    # screensaver holds _awake True, so waking is not a state change
-    if on and self._blocked_by_screensaver:
-      self.dismiss_screensaver(_ui_state or ui_state)
-
     if on != self._awake:
       super()._set_awake(on, _ui_state or ui_state)
-      if self._blocked_by_screensaver:
-        return
       self._awake = on
       cloudlog.debug(f"setting display power {int(on)}")
       HARDWARE.set_display_power(on)
