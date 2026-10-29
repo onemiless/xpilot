@@ -62,6 +62,8 @@ Failure cases listed before implementation:
       cells the view left are free
 - T36 navigation (owner 2026-10-29) is not beside the view by default or for a malformed saved flag, or a saved
       "moved into the grid" is not read
+- T37 the tile beside the drive view is not the lowest (order, id) tile with DOCK == "view", a tile without DOCK is
+      picked, or the host UI names a store plugin's tile id instead of reading Tile.DOCK
 """
 import ast
 import itertools
@@ -262,6 +264,16 @@ def check_nav(errors):
       errors.append(f"T36 navigation not beside the view for {saved}")
   if T.nav_snapped({"drive": {"nav_snap": False}}):
     errors.append("T36 navigation moved into the grid not read")
+  tile = lambda tid, order, **kw: type(tid, (), {"SPEC": T.TileSpec(tid, tid, show="always", order=order), **kw})
+  for tiles, want in (([], None), ([tile("a", 1)], None), ([tile("a", 1), tile("b", 9, DOCK="view")], "b"),
+                      ([tile("c", 9, DOCK="view"), tile("b", 9, DOCK="view"), tile("a", 1, DOCK="")], "b"),
+                      ([tile("z", 2, DOCK="view"), tile("b", 9, DOCK="view")], "z")):
+    if (got := T.dock(tiles)) != want:
+      errors.append(f"T37 dock tile {got}, want {want}")
+  ui = Path(T.__file__).parent
+  for name in ("screen.py", "tiles.py"):
+    if "lean_navigation" in (ui / name).read_text():
+      errors.append(f"T37 {name} names the lean_navigation store tile")
 
 
 def check_spec(errors):

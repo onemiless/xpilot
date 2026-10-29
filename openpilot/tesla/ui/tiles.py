@@ -79,9 +79,15 @@ def nav_column(view) -> tuple[int, int, int, int]:
   return (x + w, y, right, h) if right >= x else (0, y, x, h)
 
 
+def dock(tiles) -> str | None:
+  """Id of the tile drawn beside the drive view: the lowest (order, id) with DOCK == "view", or None."""
+  docks = sorted((t.SPEC.order, t.SPEC.id) for t in tiles if getattr(t, "DOCK", "") == "view")
+  return docks[0][1] if docks else None
+
+
 def nav_snapped(saved) -> bool:
   """Onroad navigation sits beside the drive view (nav_column) unless the user dragged it into the grid, where it is the
-  lean_navigation tile of the drive layout (owner 2026-10-29: snaps to the view, moves on its own)."""
+  Tile.DOCK tile of the drive layout (owner 2026-10-29: snaps to the view, moves on its own)."""
   drive = saved.get("drive") if isinstance(saved, dict) else None
   return not (isinstance(drive, dict) and drive.get("nav_snap") is False)
 

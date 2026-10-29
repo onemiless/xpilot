@@ -97,6 +97,7 @@ class BigScreenHost:
         cloudlog.error(f"tile id {tile.SPEC.id} used twice, keeping the first")
         continue
       self._entries[tile.SPEC.id] = _Entry(name, tile)
+    self._dock = tiles.dock(e.tile for e in self._entries.values())  # the one tile drawn beside the drive view
     self._overlays = Overlays(ScreenOverlay, self._params)
     self._hud_overlays = Overlays(HudOverlay, self._params)
     self._enabled = EnabledPlugins(self._params)
@@ -169,7 +170,7 @@ class BigScreenHost:
 
   def _place(self, mode: str) -> dict[str, tuple[int, int, str]]:
     beside = mode == "drive" and self._nav_snap  # navigation is drawn beside the view, not as a tile
-    items = [item for item in self._visible(mode) if not beside or item[0] != "lean_navigation"]
+    items = [item for item in self._visible(mode) if not beside or item[0] != self._dock]
     key = (mode, tuple(items), self._view_position)
     if key != self._placed_key:
       self._placed_key, self._placed = key, tiles.place(items, mode == "drive", self._view_position)
@@ -190,7 +191,7 @@ class BigScreenHost:
       cloudlog.exception("tile layout not saved")
 
   def _pin(self, tid: str) -> None:
-    if tid == "lean_navigation" and self._layout == "drive":
+    if tid == self._dock and self._layout == "drive":
       self._nav_snap = False  # added from the list: a tile in the grid
     self._save(*tiles.pin(*self._layouts[self._layout], tid, self._entries[tid].spec.sizes))
     self._back()
@@ -305,10 +306,10 @@ class BigScreenHost:
       self._sm.update(0)
     for tid, p in placed.items():
       self._faced[tid] = self._face(self._entries[tid], p[2], self._now)
-    if self._mode == "onroad" and self._nav_beside(placed) and any(item[0] == "lean_navigation" for item in self._visible("drive")):
+    if self._mode == "onroad" and self._nav_beside(placed) and any(item[0] == self._dock for item in self._visible("drive")):
       # Sized from the settled view: a dragged view is fractional and would reallocate the texture every frame.
       _, _, w, h = tiles.nav_column(tiles.view(self._view_position))
-      self._faced["lean_navigation"] = self._face(self._entries["lean_navigation"], "small", self._now, (int(w), int(h)))
+      self._faced[self._dock] = self._face(self._entries[self._dock], "small", self._now, (int(w), int(h)))
 
   def to_logical(self, x: float, y: float) -> tuple[float, float]:
     return offroad.to_logical(None if self._mode == "onroad" else self._view, x, y)
@@ -324,27 +325,35 @@ class BigScreenHost:
 
   def _nav_beside(self, placed) -> bool:
     """Navigation beside the view: snapped, or a grid tile with no room left in the grid."""
-    return self._nav_snap or "lean_navigation" not in placed
+    return self._nav_snap or self._dock not in placed
+
+  def _docked(self, e: _Entry) -> bool:
+    try:
+      return bool(e.tile.docked(e.state))
+    except Exception:
+      e.failures += 1  # counted like a face failure: MAX_FAILURES stops the tile
+      cloudlog.exception(f"tile {e.spec.id} docked failed")
+      return False
 
   def _nav_rect(self, placed) -> tuple | None:
     """Where navigation can be grabbed: its drive tile, or onroad its column beside the view while drawn. Edit mode adds
     it to the grid from the "+" list instead: the column there would cover the tiles under it."""
     if not self._nav_beside(placed):
-      return tiles.tile_rect(placed["lean_navigation"])
+      return tiles.tile_rect(placed[self._dock])
     return tiles.nav_column(tiles.view(self._view_position)) if self._mode == "onroad" and self._nav_shown else None
 
   def _nav_drop(self, x, y, placed) -> None:
-    """Dropped on the view: beside it again; on a cell: the lean_navigation tile, fixed there."""
+    """Dropped on the view: beside it again; on a cell: the dock tile, fixed there."""
     vx, vy, vw, vh = tiles.view(self._view_position)
     if vx <= x < vx + vw and vy <= y < vy + vh:
       self._nav_snap = True
     elif (cell := tiles.cell_at(x, y)) is not None:
       pinned, hidden = self._layouts["drive"]
-      if all(i != "lean_navigation" for i, _, _ in pinned):
+      if all(i != self._dock for i, _, _ in pinned):
         return  # hidden
-      unfixed = [(i, s, None if i == "lean_navigation" else f) for i, s, f in pinned]
-      moved = tiles.move(unfixed, placed, "lean_navigation", cell, True, self._view_position)
-      if dict((i, f) for i, _, f in moved)["lean_navigation"] is None:
+      unfixed = [(i, s, None if i == self._dock else f) for i, s, f in pinned]
+      moved = tiles.move(unfixed, placed, self._dock, cell, True, self._view_position)
+      if dict((i, f) for i, _, f in moved)[self._dock] is None:
         return  # the tile would cover the view
       self._layouts["drive"], self._nav_snap = (moved, hidden), False
     else:
@@ -460,14 +469,14 @@ class BigScreenHost:
     view = self._drive_view()
     alert, navigation, show_navigation = self.onroad_panels or (None, None, False)
     placed = self._place("drive")
-    e = self._entries.get("lean_navigation")
+    e = self._entries.get(self._dock)
     self._nav_shown = False
     if self._nav_beside(placed):
       x, y, w, h = tiles.nav_column(view)
-      self._nav_shown = show_navigation or (e is not None and bool(self._faced.get("lean_navigation")) and len(e.state) == 3)
+      self._nav_shown = show_navigation or (e is not None and bool(self._faced.get(self._dock)) and self._docked(e))
     else:
-      x, y, w, h = tiles.tile_rect(placed["lean_navigation"])  # the tile face draws the lean state itself
-    if self._nav_shown or (show_navigation and "lean_navigation" in placed):
+      x, y, w, h = tiles.tile_rect(placed[self._dock])  # the tile face draws its own state
+    if self._nav_shown or (show_navigation and self._dock in placed):
       if show_navigation:
         with scaled(k := w / PANEL_WIDTH):
           navigation.render(rl.Rectangle(x / k, y / k, w / k, h / k))
