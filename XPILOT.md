@@ -103,7 +103,7 @@ panda/board/xpilot_rules.h   app EP2 loader
 | `params` | 参数声明，格式见 `gen_params.py`；改完运行 `python3 openpilot/tesla/plugins/gen_params.py` |
 | `rules` | `template_clone.v1` 规则列表，字段与限制见第 6 节合同；can.tx 必须精确匹配。旧 `safety` 字段一律拒绝 |
 | `default` | 可选布尔值；`true` 由商店索引声明为首次启动自动安装包，省略为非默认；不是 enable 开关 |
-| `requires` | 可选能力需求：`{"hooks": ["setup"], "msg": ["lanes.hint"], "rule_abi": 1, "native": {"machine": "aarch64", "python": "cpython-312"}}`；每项可省略 |
+| `requires` | 可选能力需求：`{"hooks": ["setup"], "msg": ["lanes.hint"], "rule_abi": 1, "native": {"machine": "aarch64", "python": "cpython-312"}, "plugins": ["tesla_dynamic_acc"]}`；每项可省略。`plugins` 列出必须先开启的插件 id：任一未开启时打开开关被拒绝，并提示 "turn on first: <插件名>"；只在开关时检查，不连带开启、不影响加载 |
 
 文本设置写成 `{"key": "MyServer", "label": "Server", "type": "text", "max_len": 64}`；秘密设置用 `"type": "secret"`，对应 `params` 必须声明 `"type": "STRING"`。`max_len` 默认 64，只接受 1–256 的整数；不能同时带 range/choices，未知 type 和不合法的 max_len 会拒载。未声明 type 的开关、range、choices 保持原语义。
 

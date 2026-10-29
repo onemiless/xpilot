@@ -162,13 +162,17 @@ def switch_changes(name, value, items, enabled) -> tuple[dict[str, bool], str | 
 
 def switch_plugin(plugin, value: bool, params, jobs=None) -> str | None:
   """Switch a plugin; switching on switches off every plugin sharing an exclusive claim. Clears its fault mark.
-  None on success, else the required-role refusal. params = plugins.view(...); callers check offroad."""
+  Switching on refuses while a plugin named in requires.plugins is off. None on success, else the refusal. params = plugins.view(...); callers check offroad."""
   if jobs is not None and jobs.busy:
     return tr("store busy")
   if value:
     ok, reason = mf.compatible(plugin.MANIFEST, mf.HOST_CAPS)
     if not ok:
       return reason
+    needs = plugin.MANIFEST.requires.get("plugins", []) if plugin.MANIFEST else []
+    missing = [n for n in needs if not any(p.NAME == n and is_enabled(p, params) for p in PLUGINS)]
+    if missing:
+      return tr("turn on first: {}").format(", ".join(next((p.TITLE for p in PLUGINS if p.NAME == n), "") or n for n in missing))
   if plugin.ENABLE_PARAM is None:
     return
   changes, error = switch_changes(plugin.NAME, value, [(p.NAME, p.PRIORITY, p.CLAIMS, p.ENABLE_PARAM) for p in PLUGINS],

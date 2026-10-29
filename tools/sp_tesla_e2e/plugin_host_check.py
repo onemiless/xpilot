@@ -63,6 +63,7 @@ Run from the repo root with the openpilot python env. Native-only modules (Param
 - P50b MADS screen button fires on a finger count other than the configured one (the four-finger long-owner toggle moved to
       tesla_dynamic_acc, owner 2026-10-28)
 - P51 shadow logs non-SP/old ABI/stale/wrong bus/malformed CAN or exceeds 25 Hz; OEM endpoints/counter or SP accel are lost
+- P52 a plugin whose requires.plugins dependency is off switches on, or the refusal hides the dependency's title
 """
 import ast
 import json
@@ -292,6 +293,7 @@ def main() -> int:
   errors += registration_checks(plugins_mod)
   errors += service_checks(plugins_mod)
   errors += required_role_checks(plugins_mod, real)
+  errors += requires_plugins_checks(plugins_mod, real)
   errors += capability_checks(plugins_mod, real)
   errors += rule_checks(plugins_mod)
   errors += long_owner_checks(plugins_mod)
@@ -613,6 +615,31 @@ def required_role_checks(plugins, real) -> list[str]:
   with patch.object(offroad, "PLUGINS", (combined, incoming)):
     if offroad.switch_plugin(incoming, True, p) != f"required role {roles[1]}" or p.writes:
       errors.append(f"P41 conflict switch drops another required role: {p.writes}")
+  return errors
+
+
+def requires_plugins_checks(plugins, real) -> list[str]:
+  import dataclasses
+  from openpilot.tesla import manifest as mf
+  from openpilot.tesla.ui import offroad
+
+  class Params(FakeParams):
+    put_bool = put = lambda self, key, value, block=False: self.values.__setitem__(key, value)
+
+  m = dataclasses.replace(real[0].MANIFEST, requires={"plugins": ["base"]})
+  if not mf.compatible(m, mf.HOST_CAPS)[0] or mf.compatible(dataclasses.replace(m, requires={"plugins": ["Bad-Id"]}), mf.HOST_CAPS)[0]:
+    return ["P52 compatible() mishandles requires.plugins"]
+  base = type("Base", (Plugin,), {"NAME": "base", "TITLE": "Base ACC", "ENABLE_PARAM": "BaseOn"})
+  dep = type("Dep", (Plugin,), {"NAME": "dep", "ENABLE_PARAM": "DepOn", "MANIFEST": m})
+  errors = []
+  with patch.object(plugins, "PLUGINS", (base, dep)), patch.object(offroad, "PLUGINS", (base, dep)):
+    p = Params()
+    error = offroad.switch_plugin(dep, True, p)
+    if error != "turn on first: Base ACC" or p.values:
+      errors.append(f"P52 dependency off: error={error!r}, writes={p.values}")
+    p = Params({"BaseOn": True})
+    if offroad.switch_plugin(dep, True, p) or not p.get_bool("DepOn"):
+      errors.append("P52 dependency on: switch refused")
   return errors
 
 

@@ -1723,6 +1723,10 @@ msgstr "removed {}: restart to apply"
 msgid "required role {}"
 msgstr "required role {}"
 
+#: openpilot/tesla/ui/offroad.py:174
+msgid "turn on first: {}"
+msgstr "turn on first: {}"
+
 #: openpilot/tesla/ui/pages/plugins.py:84
 msgid "store (removable)"
 msgstr "store (removable)"

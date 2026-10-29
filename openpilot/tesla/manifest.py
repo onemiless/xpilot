@@ -289,14 +289,14 @@ def compatible(manifest, caps) -> tuple[bool, str]:
   if manifest.platform is not None and not all(manifest.platform.get(k) == v for k, v in caps["native"].items()):
     return False, f"built for {manifest.platform}, this device is {caps['native']}"
   requires = manifest.requires
-  if not isinstance(requires, dict) or set(requires) - {"hooks", "msg", "host_api", "rule_abi", "native"}:
-    return False, "bad requires: expected hooks/msg/host_api/rule_abi/native object"
-  for key in ("hooks", "msg", "host_api"):
+  if not isinstance(requires, dict) or set(requires) - {"hooks", "msg", "host_api", "rule_abi", "native", "plugins"}:
+    return False, "bad requires: expected hooks/msg/host_api/rule_abi/native/plugins object"
+  for key in ("hooks", "msg", "host_api", "plugins"):
     names = requires.get(key, [])
     if not isinstance(names, list) or not all(isinstance(n, str) and re.fullmatch(r"[a-z_][a-z0-9_.]*", n) for n in names):
       return False, f"bad requires.{key}: expected names"
     for name in names:
-      if name not in caps[key] and not (key == "msg" and "*" in caps[key]):
+      if key != "plugins" and name not in caps[key] and not (key == "msg" and "*" in caps[key]):
         return False, f"requires {key} {name!r}"
   if "rule_abi" in requires:
     abi = requires["rule_abi"]
