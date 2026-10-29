@@ -79,6 +79,13 @@ def nav_column(view) -> tuple[int, int, int, int]:
   return (x + w, y, right, h) if right >= x else (0, y, x, h)
 
 
+def nav_snapped(saved) -> bool:
+  """Onroad navigation sits beside the drive view (nav_column) unless the user dragged it into the grid, where it is the
+  lean_navigation tile of the drive layout (owner 2026-10-29: snaps to the view, moves on its own)."""
+  drive = saved.get("drive") if isinstance(saved, dict) else None
+  return not (isinstance(drive, dict) and drive.get("nav_snap") is False)
+
+
 def view_position(saved) -> tuple[int, int]:
   """Saved drive-view cell; malformed or out-of-grid input uses the centered default."""
   drive = saved.get("drive") if isinstance(saved, dict) else None
@@ -368,6 +375,26 @@ def move(pinned, placed: dict[str, tuple[int, int, str]], tid: str, cell: tuple[
     else:
       out.append((i, s, f))
   return out
+
+
+def move_view(pinned, placed: dict[str, tuple[int, int, str]], old: tuple[int, int], new: tuple[int, int]):
+  """Drive view dropped from cell old to new: every placed tile is fixed where it is; one the view now covers moves the
+  view's width / height the other way, into the cells the view left (vertical first), else it is no longer fixed and
+  flows into a free cell (owner 2026-10-29: moving the view must not cover tiles). List order stays."""
+  view = blocked(True, new)
+  stay = {tid: p for tid, p in placed.items() if not _cells(*p) & view}
+  taken = view.union(*(_cells(*p) for p in stay.values()))
+  pos = {tid: p[:2] for tid, p in stay.items()}
+
+  def step(axis):
+    return 0 if new[axis] == old[axis] else DRIVE_CELLS[2 + axis] * (1 if new[axis] < old[axis] else -1)
+  for tid, (col, row, size) in placed.items():
+    for dc, dr in dict.fromkeys(d for d in ((0, step(1)), (step(0), 0), (step(0), step(1))) if d != (0, 0)):
+      cells = _cells(col + dc, row + dr, size)
+      if tid not in pos and cells is not None and not cells & taken:
+        taken |= cells
+        pos[tid] = (col + dc, row + dr)
+  return [(i, s, pos.get(i)) if i in placed else (i, s, f) for i, s, f in pinned]
 
 
 def addable(pinned, hidden, placed) -> list[str]:

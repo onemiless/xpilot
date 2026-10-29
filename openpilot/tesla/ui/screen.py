@@ -109,6 +109,7 @@ class BigScreenHost:
     self._view_position = tiles.view_position(saved)
     self._hud, self._hud_drag, self._hud_selected = tiles.hud_layout(saved), None, None
     self._view_drag = False
+    self._nav_snap, self._nav_drag, self._nav_shown = tiles.nav_snapped(saved), False, False
     self.onroad_panels = None
     self._screen_override, self._last_gear, self._last_engaged = None, None, False
     specs = [e.spec for e in self._entries.values()]
@@ -167,8 +168,8 @@ class BigScreenHost:
     return out
 
   def _place(self, mode: str) -> dict[str, tuple[int, int, str]]:
-    onroad = mode == "drive" and self._mode == "onroad"
-    items = [item for item in self._visible(mode) if not onroad or item[0] != "lean_navigation"]
+    beside = mode == "drive" and self._nav_snap  # navigation is drawn beside the view, not as a tile
+    items = [item for item in self._visible(mode) if not beside or item[0] != "lean_navigation"]
     key = (mode, tuple(items), self._view_position)
     if key != self._placed_key:
       self._placed_key, self._placed = key, tiles.place(items, mode == "drive", self._view_position)
@@ -181,6 +182,7 @@ class BigScreenHost:
     try:
       saved = {mode: tiles.saved(*layout) for mode, layout in self._layouts.items()}
       saved["drive"]["view"] = list(self._view_position)
+      saved["drive"]["nav_snap"] = self._nav_snap
       saved["drive"]["hud"] = self._hud
       self._layout_params.put(LAYOUT_PARAM, saved)
       tiles.layout_version += 1
@@ -188,6 +190,8 @@ class BigScreenHost:
       cloudlog.exception("tile layout not saved")
 
   def _pin(self, tid: str) -> None:
+    if tid == "lean_navigation" and self._layout == "drive":
+      self._nav_snap = False  # added from the list: a tile in the grid
     self._save(*tiles.pin(*self._layouts[self._layout], tid, self._entries[tid].spec.sizes))
     self._back()
 
@@ -269,7 +273,7 @@ class BigScreenHost:
     started = self._onroad()
     if onroad != started:
       self._gesture = tiles.Gesture()
-      self._view_drag = False
+      self._view_drag = self._nav_drag = False
     if started:
       self._mode = "onroad"
       self._hud_drag, self._hud_selected, self._bar_drag = None, None, False
@@ -301,7 +305,7 @@ class BigScreenHost:
       self._sm.update(0)
     for tid, p in placed.items():
       self._faced[tid] = self._face(self._entries[tid], p[2], self._now)
-    if self._mode == "onroad" and any(item[0] == "lean_navigation" for item in self._visible("drive")):
+    if self._mode == "onroad" and self._nav_snap and any(item[0] == "lean_navigation" for item in self._visible("drive")):
       # Sized from the settled view: a dragged view is fractional and would reallocate the texture every frame.
       _, _, w, h = tiles.nav_column(tiles.view(self._view_position))
       self._faced["lean_navigation"] = self._face(self._entries["lean_navigation"], "small", self._now, (int(w), int(h)))
@@ -317,6 +321,36 @@ class BigScreenHost:
       x += min(max(dx, -col * tiles.PITCH), (tiles.COLS - tiles.DRIVE_CELLS[2] - col) * tiles.PITCH)
       y += min(max(dy, -row * tiles.PITCH), (tiles.ROWS - tiles.DRIVE_CELLS[3] - row) * tiles.PITCH)
     return x, y, w, h
+
+  def _nav_rect(self, placed) -> tuple | None:
+    """Where navigation can be grabbed: its drive tile, or onroad its column beside the view while drawn. Edit mode adds
+    it to the grid from the "+" list instead: the column there would cover the tiles under it."""
+    if not self._nav_snap:
+      return tiles.tile_rect(placed["lean_navigation"]) if "lean_navigation" in placed else None
+    return tiles.nav_column(tiles.view(self._view_position)) if self._mode == "onroad" and self._nav_shown else None
+
+  def _nav_drop(self, x, y, placed) -> None:
+    """Dropped on the view: beside it again; on a cell: the lean_navigation tile, fixed there."""
+    vx, vy, vw, vh = tiles.view(self._view_position)
+    if vx <= x < vx + vw and vy <= y < vy + vh:
+      self._nav_snap = True
+    elif (cell := tiles.cell_at(x, y)) is not None:
+      pinned, hidden = self._layouts["drive"]
+      unfixed = [(i, s, None if i == "lean_navigation" else f) for i, s, f in pinned]
+      moved = tiles.move(unfixed, placed, "lean_navigation", cell, True, self._view_position)
+      if dict((i, f) for i, _, f in moved)["lean_navigation"] is None:
+        return  # the tile would cover the view
+      self._layouts["drive"], self._nav_snap = (moved, hidden), False
+    else:
+      return
+    self._save()
+
+  def _draw_nav_drag(self, placed) -> None:
+    rect = self._nav_rect(placed)
+    if self._nav_drag and rect is not None and self._gesture.start is not None:
+      x, y, w, h = rect
+      dx, dy = self._gesture.pos[0] - self._gesture.start[0], self._gesture.pos[1] - self._gesture.start[1]
+      rl.draw_rectangle_lines_ex(rl.Rectangle(x + dx, y + dy, w, h), 4, rl.WHITE)
 
   def _hud_defaults(self) -> dict:
     """Enabled HUD boxes in logical mici pixels."""
@@ -419,13 +453,21 @@ class BigScreenHost:
     from openpilot.selfdrive.ui.mici.onroad.navigation import PANEL_WIDTH
     view = self._drive_view()
     alert, navigation, show_navigation = self.onroad_panels or (None, None, False)
-    x, y, w, h = tiles.nav_column(view)
+    placed = self._place("drive")
     e = self._entries.get("lean_navigation")
-    if show_navigation:
-      with scaled(k := w / PANEL_WIDTH):
-        navigation.render(rl.Rectangle(x / k, y / k, w / k, h / k))
-    elif e is not None and self._faced.get("lean_navigation") and len(e.state) == 3:  # a maneuver, not "-" or a status line
-      self._blit(e, rl.Rectangle(x, y, w, h))
+    self._nav_shown = False
+    if self._nav_snap:
+      x, y, w, h = tiles.nav_column(view)
+      self._nav_shown = show_navigation or (e is not None and bool(self._faced.get("lean_navigation")) and len(e.state) == 3)
+    elif "lean_navigation" in placed:
+      x, y, w, h = tiles.tile_rect(placed["lean_navigation"])  # the tile face draws the lean state itself
+    if self._nav_shown or (show_navigation and "lean_navigation" in placed):
+      if show_navigation:
+        with scaled(k := w / PANEL_WIDTH):
+          navigation.render(rl.Rectangle(x / k, y / k, w / k, h / k))
+      else:  # a maneuver, not "-" or a status line
+        self._blit(e, rl.Rectangle(x, y, w, h))
+    self._draw_nav_drag(placed)
     if alert is not None:
       x, y, w, h = tiles.alert_band(view)
       with scaled(k := max(1.0, h / tiles.MICI[1])):
@@ -500,6 +542,7 @@ class BigScreenHost:
     if not self._edit:
       return
     if drive:
+      self._draw_nav_drag(placed)
       boxes = self._hud_boxes()
       defaults = self._hud_defaults()
       getattr(rl, "_orig_begin_scissor_mode", rl.begin_scissor_mode)(int(vx), int(vy), int(vw), int(vh))
@@ -651,6 +694,14 @@ class BigScreenHost:
           self._hud_selected = None if name == self._hud_selected else name
         return
     if self._mode == "onroad" or (self._edit and self._layout == "drive"):
+      nav = self._nav_rect(placed)
+      if event == "drag" and nav is not None and nav[0] <= sx < nav[0] + nav[2] and nav[1] <= sy < nav[1] + nav[3]:
+        self._nav_drag, self._selected, self._hud_selected = True, None, None
+        return
+      if event == "drop" and self._nav_drag:
+        self._nav_drag = False
+        self._nav_drop(x, y, placed)
+        return
       vx, vy, vw, vh = tiles.view(self._view_position)
       if vx <= sx < vx + vw and vy <= sy < vy + vh:
         if event == "tap":
@@ -658,10 +709,12 @@ class BigScreenHost:
         if event == "drag":
           self._view_drag = True
         elif event == "drop":
-          col, row = self._view_position
+          old = col, row = self._view_position
           self._view_position = (min(max(col + round((x - sx) / tiles.PITCH), 0), tiles.COLS - tiles.DRIVE_CELLS[2]),
                                  min(max(row + round((y - sy) / tiles.PITCH), 0), tiles.ROWS - tiles.DRIVE_CELLS[3]))
           self._view_drag = False
+          pinned, hidden = self._layouts["drive"]  # onroad self._layout is "park"
+          self._layouts["drive"] = tiles.move_view(pinned, placed, old, self._view_position), hidden
           self._save()
         return
       if self._mode == "onroad":

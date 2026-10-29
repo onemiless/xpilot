@@ -58,6 +58,10 @@ Failure cases listed before implementation:
       the view, does not touch the view's top or bottom edge, or is not on the side (above/below) with more room; the
       navigation column overlaps the view, leaves the screen, is not as tall as the view, does not touch its left or right
       edge, or is not on the side with more room; onroad tiles still give up cells for either
+- T35 moving the drive view (owner 2026-10-29) covers a tile, moves a tile it does not cover, or drops a tile while the
+      cells the view left are free
+- T36 navigation (owner 2026-10-29) is not beside the view by default or for a malformed saved flag, or a saved
+      "moved into the grid" is not read
 """
 import ast
 import itertools
@@ -234,6 +238,30 @@ def check_view_covered(errors):
   placed = T.place(items, True, (0, 0))
   if placed.get("fixed") != (7, 0, "small") or len(placed) != 14:
     errors.append(f"T21 covered fixed tile did not flow: {placed}")
+
+
+def check_view_move(errors):
+  for old, new in itertools.permutations(itertools.product(range(3), range(2)), 2):
+    free = [(c, r) for c in range(T.COLS) for r in range(T.ROWS) if (c, r) not in T.blocked(True, old)]
+    items = [(f"t{c}{r}", "small", ("small",), (c, r)) for c, r in free]
+    placed = T.place(items, True, old)
+    pinned = T.move_view([i[:2] + i[3:] for i in items], placed, old, new)
+    after = T.place([(i, s, ("small",), f) for i, s, f in pinned], True, new)
+    moved = {i for i in placed if cells(*placed[i]) & T.blocked(True, new)}
+    if len(after) != 14 or any(after[i] != placed[i] for i in placed if i not in moved):
+      errors.append(f"T35 view {old}->{new}: {placed} -> {after}")
+  placed = {"a": (3, 0, "small"), "b": (0, 0, "small")}
+  got = T.move_view([("a", "small", None), ("b", "small", None), ("c", "small", None)], placed, (1, 1), (1, 0))
+  if got != [("a", "small", (3, 3)), ("b", "small", (0, 0)), ("c", "small", None)]:
+    errors.append(f"T35 view up does not move the covered tile down: {got}")
+
+
+def check_nav(errors):
+  for saved in (None, {}, {"drive": {}}, {"drive": {"nav_snap": 0}}, {"drive": {"nav_snap": True}}, {"drive": []}):
+    if not T.nav_snapped(saved):
+      errors.append(f"T36 navigation not beside the view for {saved}")
+  if T.nav_snapped({"drive": {"nav_snap": False}}):
+    errors.append("T36 navigation moved into the grid not read")
 
 
 def check_spec(errors):
@@ -587,7 +615,7 @@ def check_hud_controls(errors):
 def main() -> int:
   errors: list[str] = []
   for check in (check_grid, check_view, check_place, check_show, check_spec, check_layout, check_edit, check_hits, check_bar, check_gesture,
-                check_poll, check_fit, check_text, check_view_saved, check_view_moved, check_view_covered,
+                check_poll, check_fit, check_text, check_view_saved, check_view_moved, check_view_covered, check_view_move, check_nav,
                 check_hud, check_explicit_show, check_view_exclusion, check_themes, check_builtin_hud, check_hud_controls):
     try:
       check(errors)
