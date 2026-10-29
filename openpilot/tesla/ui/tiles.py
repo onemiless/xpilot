@@ -394,7 +394,7 @@ def move_view(pinned, placed: dict[str, tuple[int, int, str]], old: tuple[int, i
       if tid not in pos and cells is not None and not cells & taken:
         taken |= cells
         pos[tid] = (col + dc, row + dr)
-  return [(i, s, pos.get(i)) if i in placed else (i, s, f) for i, s, f in pinned]
+  return [(i, placed[i][2], pos.get(i)) if i in placed else (i, s, f) for i, s, f in pinned]  # the size it is shown at
 
 
 def addable(pinned, hidden, placed) -> list[str]:

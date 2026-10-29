@@ -305,7 +305,7 @@ class BigScreenHost:
       self._sm.update(0)
     for tid, p in placed.items():
       self._faced[tid] = self._face(self._entries[tid], p[2], self._now)
-    if self._mode == "onroad" and self._nav_snap and any(item[0] == "lean_navigation" for item in self._visible("drive")):
+    if self._mode == "onroad" and self._nav_beside(placed) and any(item[0] == "lean_navigation" for item in self._visible("drive")):
       # Sized from the settled view: a dragged view is fractional and would reallocate the texture every frame.
       _, _, w, h = tiles.nav_column(tiles.view(self._view_position))
       self._faced["lean_navigation"] = self._face(self._entries["lean_navigation"], "small", self._now, (int(w), int(h)))
@@ -322,11 +322,15 @@ class BigScreenHost:
       y += min(max(dy, -row * tiles.PITCH), (tiles.ROWS - tiles.DRIVE_CELLS[3] - row) * tiles.PITCH)
     return x, y, w, h
 
+  def _nav_beside(self, placed) -> bool:
+    """Navigation beside the view: snapped, or a grid tile with no room left in the grid."""
+    return self._nav_snap or "lean_navigation" not in placed
+
   def _nav_rect(self, placed) -> tuple | None:
     """Where navigation can be grabbed: its drive tile, or onroad its column beside the view while drawn. Edit mode adds
     it to the grid from the "+" list instead: the column there would cover the tiles under it."""
-    if not self._nav_snap:
-      return tiles.tile_rect(placed["lean_navigation"]) if "lean_navigation" in placed else None
+    if not self._nav_beside(placed):
+      return tiles.tile_rect(placed["lean_navigation"])
     return tiles.nav_column(tiles.view(self._view_position)) if self._mode == "onroad" and self._nav_shown else None
 
   def _nav_drop(self, x, y, placed) -> None:
@@ -336,6 +340,8 @@ class BigScreenHost:
       self._nav_snap = True
     elif (cell := tiles.cell_at(x, y)) is not None:
       pinned, hidden = self._layouts["drive"]
+      if all(i != "lean_navigation" for i, _, _ in pinned):
+        return  # hidden
       unfixed = [(i, s, None if i == "lean_navigation" else f) for i, s, f in pinned]
       moved = tiles.move(unfixed, placed, "lean_navigation", cell, True, self._view_position)
       if dict((i, f) for i, _, f in moved)["lean_navigation"] is None:
@@ -456,10 +462,10 @@ class BigScreenHost:
     placed = self._place("drive")
     e = self._entries.get("lean_navigation")
     self._nav_shown = False
-    if self._nav_snap:
+    if self._nav_beside(placed):
       x, y, w, h = tiles.nav_column(view)
       self._nav_shown = show_navigation or (e is not None and bool(self._faced.get("lean_navigation")) and len(e.state) == 3)
-    elif "lean_navigation" in placed:
+    else:
       x, y, w, h = tiles.tile_rect(placed["lean_navigation"])  # the tile face draws the lean state itself
     if self._nav_shown or (show_navigation and "lean_navigation" in placed):
       if show_navigation:
