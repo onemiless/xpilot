@@ -43,6 +43,9 @@ jobs:
     - name: Generated files are current
       run: |
         python3 openpilot/tesla/plugins/gen_params.py --check
+    - name: Simplified Chinese outline font
+      run: |
+        python3 tools/sp_tesla_e2e/chinese_font_check.py
     - name: Auto-merge classifier
       run: python3 tools/ci/pr_risk.py --check
     - name: XPILOT.md section 11 host checks
