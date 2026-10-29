@@ -67,10 +67,13 @@ class DesireHelper:
                          ((carstate.steeringTorque > 0 and self.lane_change_direction == LaneChangeDirection.left) or
                           (carstate.steeringTorque < 0 and self.lane_change_direction == LaneChangeDirection.right))
 
-        blindspot_detected = (((carstate.leftBlindspot or left_edge_detected) and self.lane_change_direction == LaneChangeDirection.left) or
-                              ((carstate.rightBlindspot or right_edge_detected) and self.lane_change_direction == LaneChangeDirection.right))
+        blindspot_detected = ((carstate.leftBlindspot and self.lane_change_direction == LaneChangeDirection.left) or
+                              (carstate.rightBlindspot and self.lane_change_direction == LaneChangeDirection.right))
 
-        self.alc.update_lane_change(blindspot_detected, carstate.brakePressed)
+        edge_detected = ((left_edge_detected and self.lane_change_direction == LaneChangeDirection.left) or
+                         (right_edge_detected and self.lane_change_direction == LaneChangeDirection.right))
+
+        self.alc.update_lane_change(blindspot_detected, edge_detected, carstate.brakePressed, torque_applied)
         self.alc.auto_lane_change_allowed = plugins.lane_change_allowed(self.lane_change_policy, carstate, self.lane_change_direction,
                                                                         self.alc.auto_lane_change_allowed)
 
@@ -78,7 +81,7 @@ class DesireHelper:
           self.lane_change_state = LaneChangeState.off
           self.lane_change_direction = LaneChangeDirection.none
           self.lane_change_timer = 0.0
-        elif (torque_applied or self.alc.auto_lane_change_allowed) and not blindspot_detected:
+        elif (torque_applied or self.alc.auto_lane_change_allowed) and not self.alc.lane_change_blocked:
           self.lane_change_state = LaneChangeState.laneChangeStarting
           self.lane_change_timer = 0.0
 

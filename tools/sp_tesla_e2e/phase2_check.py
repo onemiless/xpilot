@@ -8,7 +8,8 @@ Failure cases listed before implementation:
 - A4 several alerts of one severity: not the first in plugin order, or text not length-limited
 - A5 an unknown severity is shown
 - A6 an event name has no alert definition (selfdrived would raise on create_alerts)
-- L1 a policy that always allows starts a lane change into a blind spot or road edge
+- L1 a policy that always allows starts a lane change into a blind spot or road edge; a driver nudge must override
+  a road edge but never a blind spot (SP #2049)
 - L2 a policy starts a lane change without the blinker, or below the lane change speed
 - L3 a lane change policy without the role:lane_change.policy claim is used
 - L4 a policy that raises breaks DesireHelper instead of falling back to SP's own decision
@@ -126,9 +127,9 @@ def main() -> int:
   from openpilot.cereal import log
   LCS = log.LaneChangeState
 
-  def cs(left=False, right=False, v=30.0, bsl=False):
+  def cs(left=False, right=False, v=30.0, bsl=False, nudge=False):
     return types.SimpleNamespace(vEgo=v, leftBlinker=left, rightBlinker=right, leftBlindspot=bsl, rightBlindspot=False,
-                                 steeringPressed=False, steeringTorque=0.0, brakePressed=False)
+                                 steeringPressed=nudge, steeringTorque=1.0 if nudge else 0.0, brakePressed=False)
 
   def run(policy, frames, edge=False):
     dh = DesireHelper()
@@ -144,6 +145,10 @@ def main() -> int:
     errors.append("L1 lane change started into a blind spot")
   if run(always, [cs(), cs(left=True), cs(left=True)], edge=True).lane_change_state == LCS.laneChangeStarting:
     errors.append("L1 lane change started into a road edge")
+  if run(None, [cs(), cs(left=True, nudge=True), cs(left=True, nudge=True)], edge=True).lane_change_state != LCS.laneChangeStarting:
+    errors.append("L1 driver nudge did not override a road edge (SP #2049)")
+  if run(None, [cs(), cs(left=True, bsl=True, nudge=True), cs(left=True, bsl=True, nudge=True)]).lane_change_state == LCS.laneChangeStarting:
+    errors.append("L1 driver nudge started a lane change into a blind spot")
   if run(always, [cs(), cs(), cs()]).lane_change_state != LCS.off:
     errors.append("L2 lane change without blinker")
   slow = LANE_CHANGE_SPEED_MIN - 1
