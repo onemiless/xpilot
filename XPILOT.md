@@ -64,7 +64,7 @@ openpilot/tesla/
   plugins/sp_engagement/ sp_safety_fallback/   默认接管和安全兜底
   store.py                  插件商店：下载、校验、安装；首次启动自动安装索引标记的默认插件（8c）
   ui/screen.py ui/tile.py ui/tiles.py ui/slots/   大屏磁贴宿主、磁贴基类、布局模型（无 pyray）、内置磁贴（slots/settings.py 设置页磁贴）
-  ui/plugin_ui.py           UI 侧插件加载：找到 Tile、HudOverlay 和 ScreenOverlay，插件关闭时隐藏
+  ui/plugin_ui.py           UI 侧插件加载：找到 Tile、HudOverlay、ScreenOverlay 和 RoadOverlay，插件关闭时隐藏
   ui/plugins_page.py ui/store_page.py   mici 设置里的"Plugins"页和商店页（小屏用）
   ui/offroad.py ui/pages/   大屏停车时的详情页（见第 9 节）
   ui/settings_page.py ui/settings_meta.py        Tesla 设置页（上游 Tesla 选项、DM、地图）
@@ -321,6 +321,7 @@ class MyTile(Tile):
 | `ui.tiles.TileSpec` | `id, title, sizes, services, show, hz, order`（见第 9 节） | 磁贴声明 |
 | `ui.plugin_ui.ScreenOverlay` | `update(sm)`、`draw(zones)` | 大屏行驶时的整屏叠加层 |
 | `ui.plugin_ui.HudOverlay` | Widget：`update()`、`render(rect)`；读 `ui_state.sm` | mici 行驶画面叠加层 |
+| `ui.plugin_ui.RoadOverlay` | `update(sm)`、`draw(road)`；`road.lane_points()`、`road.polygon(points, half_width)`、`road.rect` | mici 路面上的叠加层（画在轨迹线之后，未接管时不画） |
 
 **消息**（插件可以读或发布）：`carStateSP` 里插件自己的字段（例 `teslaBattery`）、`liveMapDataSP` 和 `navInstruction`（地图和导航，第 8 节）、`pluginMsg`（插件通信，8d），以及 SP 的所有服务（`carState`、`radarState`、`longitudinalPlan`、`deviceState` 等）。
 

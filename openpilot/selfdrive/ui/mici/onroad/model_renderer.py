@@ -15,6 +15,7 @@ from openpilot.system.ui.lib.shader_polygon import draw_polygon, Gradient
 from openpilot.system.ui.widgets import Widget
 
 from openpilot.selfdrive.ui.sunnypilot.mici.onroad.model_renderer import LANE_LINE_COLORS_SP, ModelRendererSP
+from openpilot.tesla.ui.plugin_ui import Overlays, RoadOverlay  # xpilot plugin road overlays
 
 CLIP_MARGIN = 500
 MIN_DRAW_DISTANCE = 10.0
@@ -66,6 +67,8 @@ class ModelRenderer(Widget, ModelRendererSP):
     self._lane_lines = [ModelPoints() for _ in range(4)]
     self._road_edges = [ModelPoints() for _ in range(2)]
     self._acceleration_x = np.empty((0,), dtype=np.float32)
+    self._lane_max_idx = 0
+    self._road_overlays = Overlays(RoadOverlay, ui_state.params)  # xpilot
 
     self._torque_filter = FirstOrderFilter(0, 0.1, 1 / gui_app.target_fps)
 
@@ -141,6 +144,7 @@ class ModelRenderer(Widget, ModelRendererSP):
     if ui_state.status != UIStatus.DISENGAGED:
       self._draw_lane_lines()
       self._draw_path()
+      self._road_overlays.each(lambda o: (o.update(sm), o.draw(self)))  # xpilot
 
     if render_lead_indicator:
       self._update_leads(sm)
@@ -205,7 +209,7 @@ class ModelRenderer(Widget, ModelRendererSP):
   def _update_model(self, lead, path_x_array):
     """Update model visualization data based on model message"""
     max_distance = np.clip(path_x_array[-1], MIN_DRAW_DISTANCE, MAX_DRAW_DISTANCE)
-    max_idx = self._get_path_length_idx(self._lane_lines[0].raw_points[:, 0], max_distance)
+    max_idx = self._lane_max_idx = self._get_path_length_idx(self._lane_lines[0].raw_points[:, 0], max_distance)
 
     # Update lane lines using raw points
     line_width_factor = 0.12
@@ -346,6 +350,14 @@ class ModelRenderer(Widget, ModelRendererSP):
       return 0
     indices = np.where(pos_x_array <= path_height)[0]
     return indices[-1] if indices.size > 0 else 0
+
+  # xpilot RoadOverlay API (openpilot/tesla/ui/plugin_ui.py)
+  def lane_points(self) -> list[np.ndarray]:
+    return [line.raw_points for line in self._lane_lines]
+
+  def polygon(self, points: np.ndarray, half_width: float) -> np.ndarray:
+    poly = self._map_line_to_polygon(points.astype(np.float32), half_width, 0.0, self._lane_max_idx)
+    return poly + np.array([self._rect.x, self._rect.y], dtype=np.float32) if poly.size else poly
 
   def _map_line_to_polygon(self, line: np.ndarray, y_off: float, z_off: float, max_idx: int, allow_invert: bool = True) -> np.ndarray:
     """Convert 3D line to 2D polygon for rendering."""
