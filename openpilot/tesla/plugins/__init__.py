@@ -57,15 +57,8 @@ def _discover() -> tuple[tuple, dict[str, str], dict[str, dict]]:
   builtin, errors = mf.load_all()
   installed, installed_errors = mf.load_all(mf.INSTALL_DIR)
   errors.update(installed_errors)
-  taken_ids, taken_keys = {m.id for m in builtin}, mf.compiled_param_keys()
-  manifests, specs = list(builtin), {}
-  for m in installed:
-    clash = m.id in taken_ids or (set(m.params) & (taken_keys | set(specs)))
-    if clash:
-      errors[m.id] = f"installed plugin clashes with an existing id or param: {clash}"
-      continue
-    manifests.append(m)
-    specs.update(m.params)
+  manifests, conflicts, specs = mf.merge_manifests(builtin, installed)
+  errors.update(conflicts)
   manifests.sort(key=lambda m: (mf.STAGES.index(m.stage), m.priority, m.id))
   installed_ids = {m.id for m in installed}
   classes = []

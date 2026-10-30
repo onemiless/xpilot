@@ -252,6 +252,20 @@ def can_tx(claims) -> set[tuple[int, int]]:
   return {(int(a, 16), int(b)) for c in claims if c.startswith("can.tx:") for a, b in [c[7:].split(":")]}
 
 
+def merge_manifests(builtin, installed):
+  """Apply the same installed-plugin conflict rules without importing plugin code."""
+  taken_ids, taken_keys = {m.id for m in builtin}, compiled_param_keys()
+  manifests, errors, specs = list(builtin), {}, {}
+  for m in installed:
+    clash = m.id in taken_ids or (set(m.params) & (taken_keys | set(specs)))
+    if clash:
+      errors[m.id] = f"installed plugin clashes with an existing id or param: {clash}"
+      continue
+    manifests.append(m)
+    specs.update(m.params)
+  return manifests, errors, specs
+
+
 def compiled_param_keys() -> set[str]:
   """Keys the compiled Params knows: core params_keys.h plus built-in plugins (plugin_params.inc)."""
   text = "".join((_COMMON / f).read_text() for f in ("params_keys.h", "plugin_params.inc") if (_COMMON / f).exists())
@@ -272,7 +286,7 @@ RULE_ABI = 1
 HOST_CAPS = {
   "hooks": ("__init__", "setup", "observe_can", "publish_state", "control_sends", "service_params", "processes",
             "role_processes", "alert_source", "lane_change_policy", "lat_correction", "lat_controller", "long_owner", "long_planner",
-            "long_target", "plan_filter", "event_filter", "engagement", "safety_fallback", "radar_interface"),
+            "long_target", "plan_filter", "event_filter", "engagement", "safety_fallback", "radar_interface", "network_vpn"),
   "msg": ("*",),  # plugin_msgd authenticates/limits publishers; every declared kind, no payload schema.
   "host_api": ("parked", "reboot", "shutdown", "wifi_connect", "wifi_forget", "hotspot", "play_sound", "data_dir"),
   "rule_abi": RULE_ABI,

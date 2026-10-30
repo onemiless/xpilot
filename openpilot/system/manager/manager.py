@@ -21,6 +21,7 @@ from openpilot.common.hardware.hw import Paths
 
 from openpilot.sunnypilot.system.params_migration import run_migration
 from openpilot.tesla.store import recover
+from openpilot.tesla.network_transition import onroad_transition
 
 try:
   recover()
@@ -156,6 +157,8 @@ def manager_thread() -> None:
     # update offroad state for services that don't subscribe to deviceState
     if started != started_prev:
       params.put_bool("IsOffroad", not started, block=True)
+      if started and not onroad_transition():
+        cloudlog.error("VPN onroad cleanup did not complete within the deadline")
 
     started_prev = started
     ignition_prev = ignition

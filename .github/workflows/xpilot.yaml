@@ -19,14 +19,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      PYTHONPATH: ${{ github.workspace }}/msgq_repo
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/msgq_repo
     steps:
     - uses: actions/checkout@v4
     - run: git submodule update --init --depth 1 msgq_repo
     - uses: actions/setup-python@v5
       with:
         python-version: '3.12'
-    - run: pip install pyzmq numpy pycapnp pytest zstandard setproctitle cython scons setuptools requests
+    - run: pip install pyzmq numpy pycapnp pytest zstandard setproctitle cython scons setuptools requests pyyaml cffi
     - name: Build msgq
       working-directory: msgq_repo
       run: scons -j4 msgq/ipc_pyx.so
@@ -49,7 +49,10 @@ jobs:
       run: |
         set -e
         for check in static_imports tile_layout_check plugin_host_check manifest_check safety_manifest_check \
-                     phase2_check phase3_check phase4_check store_check offroad_pages_check agnos_update_check; do
+                     phase2_check phase3_check phase4_check store_check offroad_pages_check agnos_update_check network_contract_check network_owner_check \
+                     network_approved_open_check network_hash_cancel_check network_provision_cancel_check network_gateway_timeout_check \
+                     network_transition_hook_check network_pending_fence_check network_journal_failure_check network_release_onroad_check \
+                     network_start_failure_cleanup_check network_startcore_parking_check network_startcore_check network_gateway_deps_check network_manifest_merge_check; do
           echo "::group::$check"
           python3 tools/sp_tesla_e2e/$check.py > /tmp/xpilot-ci/$check.json
           echo "::endgroup::"
