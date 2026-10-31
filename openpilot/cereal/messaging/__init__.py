@@ -233,6 +233,10 @@ class SubMaster:
     return SERVICE_LIST[s].frequency > 0.99 and (s not in self.ignore_average_freq) and (s not in self.ignore_alive)
 
   def update(self, timeout: int = 100) -> None:
+    if timeout == 0:
+      # Native poll(0) still yields via nanosleep when no message is ready.
+      self.update_msgs(time.monotonic(), [recv_one_or_none(sock) for sock in self.sock.values()])
+      return
     msgs = []
     for sock in self.poller.poll(timeout):
       msgs.append(recv_one_or_none(sock))
