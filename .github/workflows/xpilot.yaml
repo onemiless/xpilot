@@ -45,6 +45,8 @@ jobs:
         python3 openpilot/tesla/plugins/gen_params.py --check
     - name: Auto-merge classifier
       run: python3 tools/ci/pr_risk.py --check
+    - name: Explicit build options regression
+      run: python3 tools/sp_tesla_e2e/build_options_check.py
     - name: XPILOT.md section 11 host checks
       run: |
         set -e
