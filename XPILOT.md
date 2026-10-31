@@ -650,3 +650,7 @@ The exact X-48 54-byte owner-health hash enables A5; legacy 49-byte firmware sta
 The exclusive long_owner hook, claims and HOST_CAPS ship with controlsd policy/manual integration.
 Runtime floors, paired CC_SP, CAN cadence, reader audit and proof limits are in the
 [host contract](docs/design/xpilot-long-owner-host.md). No device or flash proof is claimed.
+
+### Navigation UDP ingress
+
+`Plugin.navigation_ingress()` is available to the active `source:navigation` owner and must be declared in `requires.hooks`. It listens on IPv4 UDP port 4213, accepts only RFC1918 peers and datagrams up to 8192 bytes, with per-peer and total rate limits. `receive()` returns a datagram and source address or None; loss of ownership closes the socket. `ack()` accepts only the fixed v3 acknowledgement and sends it once to the latest admitted peer. Linux IP_PKTINFO restricts incoming packets to wlan0; hotspot configurations using other interfaces are not admitted; missing or changed interface information fails closed. Ownership is rechecked at most one second apart. The listener does not authenticate the phone: interface and private-network filtering are not authentication. Use a trusted LAN; the plugin must enforce pairing, replay and freshness checks, and clear invalid navigation on expiry. Stop or uninstall terminates the managed process and releases the socket. The interface does not grant arbitrary network, routing, DNS, file or actuator access.

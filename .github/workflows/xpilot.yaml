@@ -54,6 +54,8 @@ jobs:
           python3 tools/sp_tesla_e2e/$check.py > /tmp/xpilot-ci/$check.json
           echo "::endgroup::"
         done
+    - name: UDP navigation ingress contract
+      run: python3 tools/sp_tesla_e2e/navigation_ingress_check.py
     - name: Plugin message broker end to end (Linux credentials)
       run: python3 tools/sp_tesla_e2e/plugin_msg_e2e.py
     - name: Store activation transaction end to end
