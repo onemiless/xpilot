@@ -314,7 +314,6 @@ void camerad_thread() {
             if (cam->camera.handle_camera_event(event_data)) {
               cam->sendState();
               pending_exposure.push_back(cam.get());
-              if (cam->camera.cc.stream_type == VISION_STREAM_CABIN) flush_exposure();
             }
             break;
           }
