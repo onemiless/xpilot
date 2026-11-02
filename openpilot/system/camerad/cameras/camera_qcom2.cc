@@ -1,6 +1,3 @@
-#include "system/camerad/cameras/camera_common.h"
-#include "system/camerad/cameras/spectra.h"
-
 #include <poll.h>
 #include <sys/ioctl.h>
 
@@ -9,12 +6,16 @@
 #include <cerrno>
 #include <cmath>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "common/params.h"
 #include "common/swaglog.h"
-
+#include "media/cam_sync.h"
+#include "system/camerad/cameras/cabin_ready.h"
+#include "system/camerad/cameras/camera_common.h"
+#include "system/camerad/cameras/spectra.h"
 
 ExitHandler do_exit;
 
@@ -276,18 +277,60 @@ void camerad_thread() {
     pending_exposure.clear();
   };
 
+  auto cabin = std::find_if(cams.begin(), cams.end(),
+                            [](const auto &c) { return c->camera.cc.stream_type == VISION_STREAM_CABIN; });
+  std::optional<CabinReady> ready;
+  if ((*cabin)->camera.enabled) ready.emplace((*cabin)->camera.ife_buf_depth);
+  auto deliver = [&](CameraState *cam, const cam_req_mgr_message *event, bool failed = false) {
+    if (cam->camera.cc.stream_type == VISION_STREAM_CABIN ||
+        std::find(pending_exposure.begin(), pending_exposure.end(), cam) != pending_exposure.end()) {
+      flush_exposure();
+    }
+    auto generation = cam->camera.last_requeue_ts;
+    if (cam->camera.handle_camera_event(event, failed)) {
+      cam->sendState();
+      pending_exposure.push_back(cam);
+    }
+    if (cam->camera.cc.stream_type == VISION_STREAM_CABIN && generation != cam->camera.last_requeue_ts) ready->clear();
+  };
+
   // Deliver queued camera frames before synchronous exposure I2C blocks the event loop.
   // poll events
   LOG("-- Dequeueing Video events");
   while (!do_exit) {
-    struct pollfd fds[1] = {{.fd = m.video0_fd, .events = POLLPRI}};
-    int ret = poll(fds, std::size(fds), pending_exposure.empty() ? 1000 : 0);
+    if (ready && !ready->empty()) {
+      while (auto action = ready->pop(nanos_since_boot())) {
+        deliver(cabin->get(), &action->event, action->sync_failed);
+      }
+    }
+    struct pollfd fds[2] = {{.fd = m.video0_fd, .events = POLLPRI}, {.fd = ready ? static_cast<int>(m.cam_sync_fd) : -1, .events = POLLPRI}};
+    int timeout = pending_exposure.empty() ? (ready ? ready->timeout_ms(nanos_since_boot()) : 1000) : 0;
+    int ret = poll(fds, std::size(fds), timeout);
     if (ret < 0) {
       if (errno == EINTR || errno == EAGAIN) continue;
       LOGE("poll failed (%d - %d)", ret, errno);
       break;
     }
 
+    if (fds[1].revents & POLLPRI) {
+      v4l2_event completion{};
+      if (HANDLE_EINTR(ioctl(m.cam_sync_fd, VIDIOC_DQEVENT, &completion)) != 0) {
+        LOGE("sync event dequeue failed, errno=%d", errno);
+        break;
+      }
+      if (ready && completion.type == CAM_SYNC_V4L_EVENT && completion.id == CAM_SYNC_V4L_EVENT_ID_CB_TRIG) {
+        auto *header = CAM_SYNC_GET_HEADER_PTR(completion);
+        auto *data = CAM_SYNC_GET_PAYLOAD_PTR(completion, uint64_t);
+        auto &cam = (*cabin)->camera;
+        if (data[0] == cam.last_requeue_ts && data[1]) {
+          int idx = data[1] % cam.ife_buf_depth;
+          bool bps = header->sync_obj == cam.sync_objs_bps[idx];
+          if (data[1] == cam.sync_request_ids[idx] && (bps || header->sync_obj == cam.sync_objs_ife[idx])) {
+            ready->notify(data[1], bps, header->status == CAM_SYNC_STATE_SIGNALED_SUCCESS, nanos_since_boot());
+          }
+        }
+      }
+    }
     if (!(fds[0].revents & POLLPRI)) {
       flush_exposure();
       continue;
@@ -306,14 +349,14 @@ void camerad_thread() {
 
         for (auto &cam : cams) {
           if (event_data->session_hdl == cam->camera.session_handle) {
-            // Consume AE before this camera advances its frame metadata or reuses its buffer.
-            if (cam->camera.cc.stream_type == VISION_STREAM_CABIN ||
-                std::find(pending_exposure.begin(), pending_exposure.end(), cam.get()) != pending_exposure.end()) {
-              flush_exposure();
-            }
-            if (cam->camera.handle_camera_event(event_data)) {
-              cam->sendState();
-              pending_exposure.push_back(cam.get());
+            if (cam->camera.cc.stream_type == VISION_STREAM_CABIN) {
+              if (event_data->u.frame_msg.timestamp < cam->camera.last_requeue_ts) {
+                deliver(cam.get(), event_data);
+              } else if (!ready->push(*event_data, nanos_since_boot())) {
+                deliver(cam.get(), event_data, true);
+              }
+            } else {
+              deliver(cam.get(), event_data);
             }
             break;
           }

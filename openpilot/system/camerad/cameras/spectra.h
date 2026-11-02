@@ -137,7 +137,7 @@ public:
   ~SpectraCamera();
 
   void camera_open(VisionIpcServer *v);
-  bool handle_camera_event(const cam_req_mgr_message *event_data);
+  bool handle_camera_event(const cam_req_mgr_message *event_data, bool sync_failed = false);
   void camera_close();
   void camera_map_bufs();
   void config_bps(int idx, int request_id);
@@ -203,6 +203,7 @@ public:
 
   int buf_handle_yuv[MAX_IFE_BUFS] = {};
   int buf_handle_raw[MAX_IFE_BUFS] = {};
+  uint64_t sync_request_ids[MAX_IFE_BUFS] = {};
   int sync_objs_ife[MAX_IFE_BUFS] = {};
   int sync_objs_bps[MAX_IFE_BUFS] = {};
   uint64_t last_valid_request_id = 0;

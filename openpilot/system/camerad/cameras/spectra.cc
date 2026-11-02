@@ -225,6 +225,12 @@ void SpectraMaster::init() {
   sub.id = V4L_EVENT_CAM_REQ_MGR_SOF_BOOT_TS;
   ret = HANDLE_EINTR(ioctl(video0_fd, VIDIOC_SUBSCRIBE_EVENT, &sub));
   LOGD("req mgr subscribe: %d", ret);
+  if (CABIN_CAMERA_CONFIG.enabled) {
+    sub.type = CAM_SYNC_V4L_EVENT;
+    sub.id = CAM_SYNC_V4L_EVENT_ID_CB_TRIG;
+    ret = HANDLE_EINTR(ioctl(cam_sync_fd, VIDIOC_SUBSCRIBE_EVENT, &sub));
+    assert(ret == 0);
+  }
 
   mem_mgr.init(video0_fd);
 }
@@ -965,6 +971,18 @@ void SpectraCamera::enqueue_frame(uint64_t request_id) {
     }
   }
 
+  sync_request_ids[i] = request_id;
+  if (cc.stream_type == VISION_STREAM_CABIN) {
+    for (int obj : {sync_objs_ife[i], sync_objs_bps[i]}) {
+      cam_sync_userpayload_info info{};
+      info.sync_obj = obj;
+      info.payload[0] = last_requeue_ts;
+      info.payload[1] = request_id;
+      int rc = do_sync_control(m->cam_sync_fd, CAM_SYNC_REGISTER_PAYLOAD, &info, sizeof(info));
+      assert(rc == 0);
+    }
+  }
+
   // schedule request with camera request manager
   struct cam_req_mgr_sched_request req_mgr_sched_request = {0};
   req_mgr_sched_request.session_hdl = session_handle;
@@ -1392,7 +1410,7 @@ void SpectraCamera::camera_close() {
   LOGD("destroyed session %d: %d", cc.camera_num, ret);
 }
 
-bool SpectraCamera::handle_camera_event(const cam_req_mgr_message *event_data) {
+bool SpectraCamera::handle_camera_event(const cam_req_mgr_message *event_data, bool sync_failed) {
   /*
     Handles camera SOF event. Returns true if the frame is valid for publishing.
   */
@@ -1425,7 +1443,7 @@ bool SpectraCamera::handle_camera_event(const cam_req_mgr_message *event_data) {
   last_valid_request_id = request_id;
 
   // Wait until frame's fully read out and processed
-  if (!waitForFrameReady(request_id)) {
+  if (sync_failed || !waitForFrameReady(request_id)) {
     // Reset queue on sync failure to prevent frame tearing
     LOGE("camera %d sync failure %ld %ld ", cc.camera_num, request_id, ife_frame_id);
     clearAndRequeue(request_id + 1);
