@@ -238,7 +238,7 @@ void CameraState::sendState() {
     framed.setImage(get_raw_frame_image(&camera.buf));
   }
 
-  set_camera_exposure(calculate_exposure_value(&camera.buf, ae_xywh, 2, camera.cc.stream_type != VISION_STREAM_CABIN ? 2 : 4));
+
 
   // Send the message
   pm->send(camera.cc.publish_name, msg);
@@ -267,18 +267,31 @@ void camerad_thread() {
   LOG("-- Starting devices");
   for (auto &cam : cams) cam->camera.sensors_start();
 
+  std::vector<CameraState *> pending_exposure;
+  auto flush_exposure = [&]() {
+    for (auto *cam : pending_exposure) {
+      cam->set_camera_exposure(calculate_exposure_value(&cam->camera.buf, cam->ae_xywh, 2,
+                              cam->camera.cc.stream_type != VISION_STREAM_CABIN ? 2 : 4));
+    }
+    pending_exposure.clear();
+  };
+
+  // Deliver queued camera frames before synchronous exposure I2C blocks the event loop.
   // poll events
   LOG("-- Dequeueing Video events");
   while (!do_exit) {
     struct pollfd fds[1] = {{.fd = m.video0_fd, .events = POLLPRI}};
-    int ret = poll(fds, std::size(fds), 1000);
+    int ret = poll(fds, std::size(fds), pending_exposure.empty() ? 1000 : 0);
     if (ret < 0) {
       if (errno == EINTR || errno == EAGAIN) continue;
       LOGE("poll failed (%d - %d)", ret, errno);
       break;
     }
 
-    if (!(fds[0].revents & POLLPRI)) continue;
+    if (!(fds[0].revents & POLLPRI)) {
+      flush_exposure();
+      continue;
+    }
 
     struct v4l2_event ev = {0};
     ret = HANDLE_EINTR(ioctl(fds[0].fd, VIDIOC_DQEVENT, &ev));
@@ -293,8 +306,15 @@ void camerad_thread() {
 
         for (auto &cam : cams) {
           if (event_data->session_hdl == cam->camera.session_handle) {
+            // Consume AE before this camera advances its frame metadata or reuses its buffer.
+            if (cam->camera.cc.stream_type == VISION_STREAM_CABIN ||
+                std::find(pending_exposure.begin(), pending_exposure.end(), cam.get()) != pending_exposure.end()) {
+              flush_exposure();
+            }
             if (cam->camera.handle_camera_event(event_data)) {
               cam->sendState();
+              pending_exposure.push_back(cam.get());
+              if (cam->camera.cc.stream_type == VISION_STREAM_CABIN) flush_exposure();
             }
             break;
           }
