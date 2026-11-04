@@ -57,6 +57,16 @@ class TestSubMaster(OpenpilotTestCase):
       assert sm.frame == i
       assert all(sm.updated.values())
 
+  def test_duplicate_services(self):
+    # selfdrived/controlsd append plugins.services() to their own list; a repeat must not crash valid()
+    sock = "modelDataV2SP"
+    pub_sock = messaging.pub_sock(sock)
+    sm = messaging.SubMaster([sock, sock])
+    pub_sock.send(messaging.new_message(sock).to_bytes())
+    sm.update(1000)
+    assert sm.updated[sock]
+    assert sm.freq_tracker[sock].avg_dt.count == 0
+
   def test_update_timeout(self):
     sock = random_sock()
     sm = messaging.SubMaster([sock,])

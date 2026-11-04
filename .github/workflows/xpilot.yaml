@@ -43,15 +43,22 @@ jobs:
     - name: Generated files are current
       run: |
         python3 openpilot/tesla/plugins/gen_params.py --check
+    - name: Simplified Chinese outline font
+      run: |
+        python3 tools/sp_tesla_e2e/chinese_font_check.py
     - name: Auto-merge classifier
       run: python3 tools/ci/pr_risk.py --check
+    - name: Default role status regression
+      run: python3 tools/sp_tesla_e2e/default_role_status_check.py
+    - name: Explicit build options regression
+      run: python3 tools/sp_tesla_e2e/build_options_check.py
     - name: Host subscription health regression
       run: python3 tools/sp_tesla_e2e/subscription_check.py
     - name: XPILOT.md section 11 host checks
       run: |
         set -e
         for check in static_imports tile_layout_check plugin_host_check manifest_check safety_manifest_check \
-                     phase2_check phase3_check phase4_check store_check offroad_pages_check agnos_update_check; do
+                     phase2_check phase3_check phase4_check store_check offroad_pages_check agnos_update_check ui_translation_check; do
           echo "::group::$check"
           python3 tools/sp_tesla_e2e/$check.py > /tmp/xpilot-ci/$check.json
           echo "::endgroup::"

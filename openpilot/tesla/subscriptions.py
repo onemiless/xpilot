@@ -10,7 +10,7 @@ def submaster(base_services: list[str], **kwargs):
   from openpilot.cereal import messaging
   from openpilot.tesla import plugins
 
-  services = list(dict.fromkeys(base_services))
+  services = list(base_services)
   extra = [s for s in plugins.services() if s not in services]
   for key in ('ignore_alive', 'ignore_avg_freq', 'ignore_valid'):
     kwargs[key] = list(dict.fromkeys([*(kwargs.get(key) or []), *extra]))

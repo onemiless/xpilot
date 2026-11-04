@@ -11,23 +11,23 @@ bool longitudinal_accel_checks(int desired_accel, const LongitudinalLimits limit
   return !(accel_valid || accel_inactive);
 }
 
-bool longitudinal_speed_checks(int desired_speed, const LongitudinalLimits limits) {
+static inline bool longitudinal_speed_checks(int desired_speed, const LongitudinalLimits limits) {
   return !get_longitudinal_allowed() && (desired_speed != limits.inactive_speed);
 }
 
-bool longitudinal_gas_checks(int desired_gas, const LongitudinalLimits limits) {
+static inline bool longitudinal_gas_checks(int desired_gas, const LongitudinalLimits limits) {
   bool gas_valid = get_longitudinal_allowed() && !safety_max_limit_check(desired_gas, limits.max_gas, limits.min_gas);
   bool gas_inactive = desired_gas == limits.inactive_gas;
   return !(gas_valid || gas_inactive);
 }
 
-bool longitudinal_brake_checks(int desired_brake, const LongitudinalLimits limits) {
+static inline bool longitudinal_brake_checks(int desired_brake, const LongitudinalLimits limits) {
   bool violation = false;
   violation |= !get_longitudinal_allowed() && (desired_brake != 0);
   violation |= desired_brake > limits.max_brake;
   return violation;
 }
 
-bool longitudinal_interceptor_checks(const CANPacket_t *msg) {
+static inline bool longitudinal_interceptor_checks(const CANPacket_t *msg) {
   return !get_longitudinal_allowed() && (msg->data[0] || msg->data[1]);
 }

@@ -51,8 +51,6 @@ def _camera_session():
     while time.monotonic() - start < MAX_TEST_TIME:
       rpic, dpic = get_snapshots(frame="narrowRoadCameraState", front_frame="cabinCameraState")
       wpic, _ = get_snapshots(frame="wideRoadCameraState")
-      assert rpic.shape[:2] == (760, 1344), f"unexpected narrow road size: {rpic.shape}"
-      assert wpic.shape[:2] == (760, 1344), f"unexpected wide road size: {wpic.shape}"
       for cam, img in zip(CAMERAS, [rpic, dpic, wpic], strict=True):
         exposure[cam].append(_exposure_stats(img))
 

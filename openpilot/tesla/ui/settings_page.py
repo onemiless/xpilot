@@ -45,7 +45,7 @@ class SettingsList(NavScroller):
 
   def add_settings(self, settings, translate=False) -> None:
     for setting in settings:
-      label = tr(setting.label) if translate else setting.label
+      label = tr(setting.label)
       if setting.type is None and setting.range is None and setting.choices is None:
         toggle = BigToggle(label, initial_state=bool(_params().get(setting.key, return_default=True)),
                            toggle_callback=lambda value, k=setting.key: (_set_param(k, value), self.show_event()))
