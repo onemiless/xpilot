@@ -23,6 +23,7 @@ typedef struct {
   uint16_t count;
   bool template_valid;
   bool tx_valid;
+  bool collided;  // sensor_input: another node sent this TX address on the bus
 } XpilotRuleState;
 static XpilotRuleState xpilot_rule_states[XPILOT_RULES_MAX];
 
@@ -123,14 +124,16 @@ static uint8_t xpilot_validate_rule(const uint8_t *r) {
   const uint32_t interval = xpilot_read_le(&r[20], 4U);
   const uint32_t idle = xpilot_read_le(&r[28], 4U);
   const uint32_t span = xpilot_read_le(&r[32], 4U);
+  const bool sensor = r[43] == 1U;
   if ((r[2] != 1U) || (fields > 8U) || (tuples > 8U)) {
     error = 6U;
   } else if ((addr > 0x1FFFFFFFU) || (xpilot_read_le(&r[8], 4U) > 0x1FFFFFFFU) ||
-             (r[12] != 1U) || (r[13] != 1U) || (length == 0U) || (length > 8U) || (r[15] != length) ||
+             (r[12] != 1U) || (r[13] != 1U) || (length == 0U) || (length > 8U) ||
+             ((r[15] != length) && !sensor) || (r[15] == 0U) || (r[15] > 8U) ||
              (ttl == 0U) || (ttl > 0x7FFFFFFFU) || (interval == 0U) || (interval > 0x7FFFFFFFU) ||
              (idle > 0x7FFFFFFFU) || (span > 0x7FFFFFFFU) || (xpilot_read_le(&r[26], 2U) == 0U) ||
              ((r[24] != 1U) && (r[24] != 2U)) || ((r[24] == 1U) && (idle == 0U)) ||
-             ((r[24] == 2U) && ((idle != 0U) || (span == 0U))) || (r[43] != 0U)) {
+             ((r[24] == 2U) && ((idle != 0U) || (span == 0U))) || (r[43] > 1U)) {
     error = 7U;
   } else if (xpilot_mode_owned(addr)) {
     error = 9U;
@@ -139,7 +142,8 @@ static uint8_t xpilot_validate_rule(const uint8_t *r) {
     for (uint8_t i = 0U; i < 8U; i++) {
       if (((r[52U + i] & r[44U + i]) != r[52U + i]) ||
           ((r[76U + i] & r[68U + i]) != r[76U + i]) ||
-          ((i >= length) && ((r[44U + i] | r[52U + i] | r[60U + i] | r[68U + i] | r[76U + i]) != 0U))) {
+          ((i >= length) && ((r[44U + i] | r[52U + i] | r[60U + i] | r[68U + i] | r[76U + i]) != 0U)) ||
+          (sensor && ((r[44U + i] | r[52U + i] | r[60U + i]) != 0U))) {
         error = 7U;
       }
       if ((r[60U + i] & r[68U + i]) != 0U) {
@@ -304,6 +308,11 @@ static void xpilot_rules_rx(const CANPacket_t *msg) {
       if (i < xpilot_rule_count) {
         const uint8_t *r = &xpilot_rule_table[xpilot_rule_offsets[i]];
         const uint32_t addr = xpilot_read_le(&r[8], 4U);
+        const uint32_t tx_addr = xpilot_read_le(&r[4], 4U);
+        if ((r[43] == 1U) && (msg->addr == tx_addr) && ((msg->extended != 0U) == (tx_addr > 0x7FFU)) &&
+            (msg->bus == r[12])) {
+          xpilot_rule_states[i].collided = true;
+        }
         if ((msg->addr == addr) && ((msg->extended != 0U) == (addr > 0x7FFU)) &&
             (msg->bus == r[13]) && (GET_LEN(msg) == r[15])) {
           bool valid = xpilot_checksum(msg->data, r[15], msg->addr, r[41], r[42]);
@@ -372,7 +381,8 @@ static bool xpilot_rule_tx(const CANPacket_t *msg, const uint8_t *r, XpilotRuleS
   }
   const bool span_ok = (r[24] == 2U) || (xpilot_read_le(&r[32], 4U) == 0U) ||
                        (safety_get_ts_elapsed(now, s->session_ts) < xpilot_read_le(&r[32], 4U));
-  allowed = allowed && (controls_allowed || exempt) &&
+  const bool sensor = r[43] == 1U;
+  allowed = allowed && !s->collided && (controls_allowed || exempt || sensor) &&
             (exempt || new_session || ((s->count < xpilot_read_le(&r[26], 2U)) && span_ok));
   if (allowed) {
     if (!exempt) {

@@ -1,9 +1,20 @@
 """Panda rules ABI v1 encoder. Contract: docs/design/xpilot-panda-rules.md."""
+import functools
+import re
 import struct
 import zlib
+from pathlib import Path
 
 MAGIC = 0x31525058
 OWNED = (0x118, 0x145, 0x155, 0x257, 0x27D, 0x286, 0x2B9, 0x311, 0x370, 0x3DF, 0x488)
+
+
+@functools.cache
+def car_addresses():
+  """Addresses in the Tesla DBCs. A sensor_input rule may not send these while disengaged."""
+  dbc = Path(__file__).resolve().parents[2] / 'opendbc_repo/opendbc/dbc'
+  return frozenset(int(m) & 0x1FFFFFFF for f in dbc.glob('tesla_*.dbc')
+                   for m in re.findall(r'^BO_ (\d+) ', f.read_text(), re.M))
 
 
 def field(offset, width, lo, hi, exempt=()):
@@ -12,11 +23,11 @@ def field(offset, width, lo, hi, exempt=()):
 
 def rule(addr, length, copy, const=(0,) * 8, value=(0,) * 8, fields=(), tuples=(),
          predicate=(bytes(8), bytes(8)), ttl=1_500_000, interval=250_000,
-         session=1, count=50, idle=3_000_000, span=0, counter=(0, 0, 0), checksum=(0, 0)):
+         session=1, count=50, idle=3_000_000, span=0, counter=(0, 0, 0), checksum=(0, 0), rx_length=None, sensor=False):
   r = bytearray(84)
   struct.pack_into('<HBBII4BII2BHII', r, 0, 84 + 44 * len(fields) + 36 * len(tuples), 1,
-                   len(fields), addr, addr, 1, 1, length, length, ttl, interval, session, len(tuples), count, idle, span)
-  r[36:43] = bytes((*counter, *checksum, *checksum))
+                   len(fields), addr, addr, 1, 1, length, length if rx_length is None else rx_length, ttl, interval, session, len(tuples), count, idle, span)
+  r[36:44] = bytes((*counter, *checksum, *checksum, int(sensor)))
   r[44:60] = b''.join(predicate)
   r[60:84] = bytes((*copy, *const, *value))
   for f in fields:
@@ -54,17 +65,22 @@ def encode_rule(r):
   if not isinstance(r, dict) or r.get('type') != 'template_clone.v1':
     raise ValueError('rule type must be template_clone.v1 (ABI 1)')
   span_key = 'window_us' if r.get('session') == 2 else 'max_span_us'
-  _keys(r, 'type tx_address rx_address tx_bus rx_bus tx_length rx_length template_ttl_us min_interval_us ' +
+  sensor = 'sensor_input' in r
+  if sensor and r['sensor_input'] is not True:
+    raise ValueError('sensor_input must be true when present')
+  _keys(r, ('sensor_input ' if sensor else '') + 'type tx_address rx_address tx_bus rx_bus tx_length rx_length template_ttl_us min_interval_us ' +
            'session max_count idle_reset_us counter tx_checksum rx_checksum predicate_mask predicate_value ' +
            'copy_mask constant_mask constant_value fields legal_tuples ' + span_key)
   addr = _int(r['tx_address'], 0, 0x1fffffff, 'tx_address')
   rx = _int(r['rx_address'], 0, 0x1fffffff, 'rx_address')
   if addr in OWNED:
     raise ValueError(f'mode-owned TX address {addr:#x}')
+  if sensor and addr in car_addresses():
+    raise ValueError(f'sensor_input TX address {addr:#x} is a Tesla car address')
   for name in ('tx_bus', 'rx_bus'):
     _int(r[name], 1, 1, name)
   length = _int(r['tx_length'], 1, 8, 'tx_length')
-  _int(r['rx_length'], length, length, 'rx_length')
+  rx_length = _int(r['rx_length'], 1 if sensor else length, 8 if sensor else length, 'rx_length')
   ttl = _int(r['template_ttl_us'], 1, 0x7fffffff, 'template_ttl_us')
   interval = _int(r['min_interval_us'], 1, 0x7fffffff, 'min_interval_us')
   session = _int(r['session'], 1, 2, 'session')
@@ -80,6 +96,8 @@ def encode_rule(r):
       _int(b, 0, 255 if i < length else 0, name)
     masks.append(bytes(m))
   pm, pv, copy, const, value = masks
+  if sensor and any(pm + pv + copy):
+    raise ValueError('sensor_input rules use the RX frame only for presence: predicate and copy masks must be 0')
   if any((v & m) != v for m, v in zip(pm + const, pv + value, strict=True)):
     raise ValueError('masked value has bits outside mask')
   coverage = int.from_bytes(copy, 'little')
@@ -137,7 +155,7 @@ def encode_rule(r):
       _int(v, ranges[i][0] if mask & (1 << i) else 0, ranges[i][1] if mask & (1 << i) else 0, 'tuple value')
     encoded_tuples.append((mask, vals))
   out = bytearray(rule(addr, length, copy, const, value, encoded_fields, encoded_tuples, (pm, pv),
-                       ttl, interval, session, count, idle, span, (kind, offset, width), checksums[0]))
+                       ttl, interval, session, count, idle, span, (kind, offset, width), checksums[0], rx_length, sensor))
   struct.pack_into('<I', out, 8, rx)
   out[41:43] = bytes(checksums[1])
   return bytes(out)

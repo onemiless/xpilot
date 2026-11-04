@@ -1,4 +1,4 @@
-"""UI side of plugins: finds Tile, HudOverlay and ScreenOverlay classes in openpilot/tesla/ui/slots/ and in each plugin's ui.py,
+"""UI side of plugins: finds Tile, HudOverlay, ScreenOverlay and RoadOverlay classes in openpilot/tesla/ui/slots/ and in each plugin's ui.py,
 and hides a plugin's widgets while the plugin is switched off (Plugins page). A module that fails to import is
 logged and skipped, so a broken plugin UI never takes the UI down."""
 import importlib
@@ -53,6 +53,18 @@ class ScreenOverlay:
     """zones: "left", "right", "top", "bottom" (strips around the view) and "view" (the mici view) as rl.Rectangle."""
 
 
+class RoadOverlay:
+  """Drawn on the road by the mici model renderer, after the path, while not disengaged. Subclass in a plugin's ui.py;
+  must construct with no arguments. road: lane_points() gives the 4 lane lines as Nx3 car-space arrays (x forward, y left);
+  polygon(points, half_width) maps such a line to a screen-px polygon for draw_polygon(road.rect, ...), empty when off screen."""
+
+  def update(self, sm) -> None:
+    """Every frame before draw(); sm is ui_state.sm."""
+
+  def draw(self, road) -> None:
+    pass
+
+
 def _classes(module_name: str, base) -> list:
   try:
     mod = importlib.import_module(module_name)
@@ -64,7 +76,7 @@ def _classes(module_name: str, base) -> list:
     cloudlog.exception(f"ui module {module_name} failed to load")
     return []
   return [cls for _, cls in inspect.getmembers(mod, inspect.isclass)
-          if issubclass(cls, base) and cls is not base and cls.__module__ == mod.__name__ and (base in (HudOverlay, ScreenOverlay) or hasattr(cls, "SPEC"))]
+          if issubclass(cls, base) and cls is not base and cls.__module__ == mod.__name__ and (base in (HudOverlay, ScreenOverlay, RoadOverlay) or hasattr(cls, "SPEC"))]
 
 
 def load(base) -> list[tuple[str | None, object]]:

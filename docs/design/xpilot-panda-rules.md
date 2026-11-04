@@ -35,7 +35,7 @@ header with total length 16/count 0; CLEAR instead reports committed CRC 0.
 | 4 | u32 | TX address (29-bit CAN) |
 | 8 | u32 | RX address (29-bit CAN) |
 | 12,13 | u8 each | TX bus, RX bus: both must be 1 |
-| 14,15 | u8 each | TX length, RX length: equal, 1..8 |
+| 14,15 | u8 each | TX length, RX length: 1..8; equal unless byte 43 = 1 |
 | 16 | u32 | template_ttl_us, 1..0x7fffffff, fresh when age <= TTL |
 | 20 | u32 | min_interval_us, 1..0x7fffffff, allowed when elapsed >= interval |
 | 24 | u8 | session: 1 IDLE, 2 WINDOW |
@@ -47,12 +47,30 @@ header with total length 16/count 0; CLEAR instead reports committed CRC 0.
 | 37,38 | u8 each | counter bit_offset, width; zero for none; width 1..32 |
 | 39,40 | u8 each | TX checksum kind, checksum byte |
 | 41,42 | u8 each | RX checksum kind, checksum byte |
-| 43 | u8 | reserved = 0 |
+| 43 | u8 | flags: 0 normal, 1 sensor_input (see below); other values rejected |
 | 44 | u8[8] | RX predicate mask |
 | 52 | u8[8] | RX predicate value (bits outside mask must be zero) |
 | 60 | u8[8] | copy_mask (TX bits equal corresponding RX template bits) |
 | 68 | u8[8] | constant_mask |
 | 76 | u8[8] | constant_value (bits outside mask must be zero) |
+
+### sensor_input (byte 43 = 1)
+
+For frames a device needs while the driver has not engaged, e.g. ARS408 speed
+(0x300) and yaw (0x301). The whole TX payload is host-computed and checked only by
+fields/constants; the RX frame proves the device is present and nothing more.
+
+- RX length may differ from TX length. RX predicate mask/value and copy mask must
+  be all zero (record bytes 44..67 of those masks), otherwise RULE (7).
+- TX passes without controls_allowed. Template freshness (TTL), field ranges,
+  constants, checksum/counter, min interval and the session budget still apply;
+  the flag is not a budget exemption. Global gates (Tesla mode, vehicle bus,
+  bus 1, relay, SILENT/NO_OUTPUT) and mode-owned addresses are unchanged.
+- Collision latch: an RX frame on the rule's TX bus with the rule's TX address
+  (another node sends it) blocks that rule until the next mode set.
+- Host encoder additionally refuses TX addresses present in any
+  `opendbc/dbc/tesla_*.dbc`. Those DBCs list only known addresses, so store review
+  of the address stays required; the firmware collision latch covers the rest.
 
 Checksum kind: 0 none (byte must be 0), 1 TESLA_SUM8. SUM8 adds all payload bytes
 except checksum_byte and all four address bytes, modulo 256. RX uses RX address,
@@ -181,7 +199,9 @@ numeric values are JSON integers (booleans are refused). `type` is
 No `safety` field is accepted, including null or an old `safety.profile`.
 
 - `tx_address`, `rx_address`: numeric 29-bit addresses; `tx_bus`, `rx_bus`: 1.
-- `tx_length`, `rx_length`: equal, 1..8.
+- `tx_length`, `rx_length`: equal, 1..8; with `sensor_input` RX may be any 1..8.
+- `sensor_input`: optional, only the value `true`; sets byte 43 = 1 (see above).
+  Old hosts reject the unknown key, which drops only that plugin.
 - `template_ttl_us`, `min_interval_us`, `session`, `max_count`, `idle_reset_us`:
   exactly the table semantics above. Session is numeric 1 IDLE or 2 WINDOW.
 - IDLE requires `max_span_us`; WINDOW requires `window_us` instead. Both map to

@@ -139,7 +139,8 @@ def host_check(output):
       rl.draw_rectangle(int(r.x), int(r.y), int(r.width), 12, rl.GREEN)
 
   hud_draws, side_draws = [], []
-  plugin_ui.load = lambda base: [('example', Hud())] if base is plugin_ui.HudOverlay else [('example', Side())]
+  plugin_ui.load = lambda base: ([('example', Hud())] if base is plugin_ui.HudOverlay else
+                                [('example', Side())] if base is plugin_ui.ScreenOverlay else [])
   plugin_ui.EnabledPlugins.get = lambda self: {'example'}
   screen.messaging.SubMaster = lambda services: types.SimpleNamespace(update=lambda timeout: None)
   park = type('ParkTile', (Tile,), {'SPEC': tiles.TileSpec('park', 'Park only', show='offroad')})()

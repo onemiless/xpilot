@@ -13,7 +13,7 @@
 
 #include "opendbc/safety/xpilot_rules.h"
 
-uint32_t GET_BYTES_LE(const CANPacket_t *msg, int start, int len) {
+static inline uint32_t GET_BYTES_LE(const CANPacket_t *msg, int start, int len) {
   uint32_t ret = 0U;
   for (int i = 0; i < len; i++) {
     const uint32_t shift = i * 8;
@@ -23,7 +23,7 @@ uint32_t GET_BYTES_LE(const CANPacket_t *msg, int start, int len) {
 }
 
 // Read up to eight bytes in little-endian order, without alignment assumptions.
-uint64_t GET_BYTES_64_LE(const CANPacket_t *msg, int start, int len) {
+static inline uint64_t GET_BYTES_64_LE(const CANPacket_t *msg, int start, int len) {
   uint64_t ret = 0U;
   for (int i = 0; i < len; i++) {
     const uint32_t shift = i * 8;
@@ -308,7 +308,7 @@ int safety_rx_fwd_hook(const CANPacket_t *msg, bool *valid, bool tx_available) {
 
 // Given a CRC-8 poly, generate a static lookup table to use with a fast CRC-8
 // algorithm. Called at init time for safety modes using CRC-8.
-void gen_crc_lookup_table_8(uint8_t poly, uint8_t crc_lut[]) {
+static inline void gen_crc_lookup_table_8(uint8_t poly, uint8_t crc_lut[]) {
   for (uint16_t i = 0U; i <= 0xFFU; i++) {
     uint8_t crc = (uint8_t)i;
     for (int j = 0; j < 8; j++) {
@@ -322,7 +322,7 @@ void gen_crc_lookup_table_8(uint8_t poly, uint8_t crc_lut[]) {
   }
 }
 
-void gen_crc_lookup_table_16(uint16_t poly, uint16_t crc_lut[]) {
+static inline void gen_crc_lookup_table_16(uint16_t poly, uint16_t crc_lut[]) {
   for (uint16_t i = 0; i < 256U; i++) {
     uint16_t crc = i << 8U;
     for (uint16_t j = 0; j < 8U; j++) {
@@ -496,7 +496,7 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
 }
 
 // convert a trimmed integer to signed 32 bit int
-int to_signed(int d, int bits) {
+static inline int to_signed(int d, int bits) {
   int d_signed = d;
   int max_value = (1 << SAFETY_MAX((bits - 1), 0));
   if (d >= max_value) {

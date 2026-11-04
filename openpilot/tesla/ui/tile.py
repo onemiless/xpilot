@@ -56,6 +56,11 @@ class Tile:
   MICI: ClassVar[bool] = False
   COLOR: ClassVar[tuple[int, int, int]] = ACCENT  # the chosen tiles.THEMES color, set on Tile by the host
   TRANSLATE_TITLE: ClassVar[bool] = False
+  DOCK: ClassVar[str] = ""  # "view": onroad drawn beside the drive view until dragged into the drive grid; lowest order wins
+
+  def docked(self, state) -> bool:
+    """DOCK tiles only: whether this state is worth drawing beside the view (a mici route panel is drawn regardless)."""
+    return True
 
   def state(self, sm):
     """What the face shows, as a comparable value; polled at most SPEC.hz times per second. sm has ui_state services plus
@@ -77,7 +82,7 @@ class Tile:
       tex = gui_app.texture(icon, side, side)
       rl.draw_texture_ex(tex, rl.Vector2(rect.x + (rect.width - tex.width) / 2, rect.y + (rect.height - tex.height) / 2 - 16), 0, 1, rl.WHITE)
     size = self.title_size(rect)
-    title = tr(self.SPEC.title) if self.TRANSLATE_TITLE else self.SPEC.title
+    title = tr(self.SPEC.title)
     text(FontWeight.MEDIUM, clip(FontWeight.MEDIUM, title, size, rect.width - 2 * PAD), rect.x + PAD,
          rect.y + rect.height - size - 14, size)
 

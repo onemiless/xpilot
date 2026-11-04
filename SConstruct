@@ -29,6 +29,8 @@ AddOption('--minimal',
           dest='extras',
           default=(not COMMA_HARDWARE and not release),
           help='the minimum build to run openpilot. no tests, tools, etc.')
+AddOption('--extras', action='store_true', dest='extras',
+          help='build optional tests and tools, including on comma hardware')
 
 submodule_python_paths = [
   Dir("#").abspath,
