@@ -70,6 +70,14 @@ class Plugin:
     still come from processes(). Raising or returning a foreign object records a fault and rejects this selection."""
     return []
 
+  @classmethod
+  def navigation_ingress(cls):
+    """Fixed UDP LAN receiver for the active navigation owner."""
+    if 'source:navigation' not in cls.CLAIMS:
+      raise PermissionError('navigation_ingress requires source:navigation')
+    from openpilot.tesla.navigation import NavigationIngress
+    return NavigationIngress(cls.NAME)
+
   # ---- selfdrived (claim "alert") ----
   @classmethod
   def alert_source(cls, CP, params):
