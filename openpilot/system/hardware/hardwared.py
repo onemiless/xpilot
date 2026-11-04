@@ -74,6 +74,10 @@ class Chestnut:
       self.flashed = False
       return
 
+    # Never auto-flash: shared USB/ROM IDs do not prove the board runs official chestnut firmware (UT3G).
+    if any(is_chestnut_usb_id(d["vendorId"], d["productId"], include_bootloader=True) for d in usb_state):
+      return
+
     if not offroad or self.flashed or self.attempts >= self.MAX_ATTEMPTS:
       return
     if self.thread is not None and self.thread.is_alive():

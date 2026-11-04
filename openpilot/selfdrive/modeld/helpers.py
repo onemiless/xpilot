@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 
 from openpilot.common.hardware import AGNOS
-from openpilot.common.hardware.usb import CHESTNUT_USB_PRODUCT, USB_DEVICES_PATH, is_chestnut_usb_id
+from openpilot.common.hardware.usb import USB_DEVICES_PATH, is_chestnut_runtime_device
 
 MODELS_DIR = Path(__file__).resolve().parent / 'models'
 
@@ -22,9 +22,9 @@ def load_oob(path, chestnut=False):
 def chestnut_present() -> bool:
   for d in USB_DEVICES_PATH.glob("*"):
     try:
-      usb_id = (int((d / "idVendor").read_text(), 16), int((d / "idProduct").read_text(), 16))
-      product = (d / "product").read_text().strip()
-      if is_chestnut_usb_id(*usb_id) and product == CHESTNUT_USB_PRODUCT:
+      device = {"vendorId": int((d / "idVendor").read_text(), 16), "productId": int((d / "idProduct").read_text(), 16),
+                "product": (d / "product").read_text().strip()}
+      if is_chestnut_runtime_device(device):
         return True
     except Exception:
       pass

@@ -12,7 +12,6 @@
 #include "media/cam_isp_ife.h"
 #include "media/cam_sync.h"
 
-#include "common/hardware/hw.h"
 #include "common/util.h"
 #include "common/swaglog.h"
 #include "system/camerad/cameras/ife.h"
@@ -283,16 +282,6 @@ void SpectraCamera::camera_open(VisionIpcServer *v) {
 
   buf.out_img_width = sensor->frame_width / sensor->out_scale;
   buf.out_img_height = (sensor->hdr_offset > 0 ? (sensor->frame_height - sensor->hdr_offset) / 2 : sensor->frame_height) / sensor->out_scale;
-
-  ife_road_resize = Hardware::get_device_type() != cereal::InitData::DeviceType::MICI &&
-                    cc.output_type == ISP_IFE_PROCESSED && cc.camera_num < 2 &&
-                    sensor->frame_width == 1928 && sensor->frame_height == 1208;
-  if (ife_road_resize) {
-    buf.out_img_width = 1344;
-    buf.out_img_height = 760;
-    LOGW("IFE road resize camera %d: 1928x1208 -> 1344x760", cc.camera_num);
-  }
-  buf.ife_road_resize = ife_road_resize;
 
   // size is driven by all the HW that handles frames,
   // the video encoder has certain alignment requirements in this case
@@ -796,7 +785,7 @@ void SpectraCamera::config_ife(int idx, int request_id, bool init) {
     bool is_raw = cc.output_type != ISP_IFE_PROCESSED;
     if (!is_raw) {
       if (init) {
-        buf_desc[0].length = build_initial_config((unsigned char*)ife_cmd.ptr + buf_desc[0].offset, cc, sensor.get(), patches, buf.out_img_width, buf.out_img_height, ife_road_resize);
+        buf_desc[0].length = build_initial_config((unsigned char*)ife_cmd.ptr + buf_desc[0].offset, cc, sensor.get(), patches, buf.out_img_width, buf.out_img_height);
       } else {
         buf_desc[0].length = build_update((unsigned char*)ife_cmd.ptr + buf_desc[0].offset, cc, sensor.get(), patches);
       }

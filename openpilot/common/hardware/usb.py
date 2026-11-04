@@ -5,9 +5,15 @@ CHESTNUT_FW_VERSION = "8516b768"
 CHESTNUT_USB_IDS = ((0xADD1, 0x0001), (0x3801, 0x0001))
 CHESTNUT_ROM_USB_IDS = ((0x174C, 0x2464), (0x174C, 0x2463))
 CHESTNUT_USB_PRODUCT = f"custom {CHESTNUT_FW_VERSION}-CLEAN"
+# UT3G A3.1 R4 firmware; SP8516 R1-R3 report CHESTNUT_USB_PRODUCT
+UT3G_USB_PRODUCTS = ("custom ed4e39b7-CLEAN",)
 USB_DEVICES_PATH = Path("/sys/bus/usb/devices")
 TYPEC_CC_ORIENTATION_PATH = Path("/sys/class/power_supply/usb/typec_cc_orientation")
 PRIMARY_USB_CONTROLLER = "a600000.ssusb"
+
+
+def is_chestnut_runtime_device(device: dict) -> bool:
+  return (device["vendorId"], device["productId"]) in CHESTNUT_USB_IDS and device["product"] in (CHESTNUT_USB_PRODUCT, *UT3G_USB_PRODUCTS)
 
 
 def is_chestnut_usb_id(vendor_id: int, product_id: int, include_bootloader: bool = False) -> bool:

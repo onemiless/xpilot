@@ -1,6 +1,6 @@
 import time
 
-from openpilot.common.hardware.usb import CHESTNUT_USB_PRODUCT, is_chestnut_usb_id
+from openpilot.common.hardware.usb import is_chestnut_runtime_device, is_chestnut_usb_id
 from openpilot.common.version import get_build_metadata, CHESTNUT_BRANCHES
 from openpilot.selfdrive.modeld.helpers import MODELS_DIR, chestnut_compiled
 
@@ -32,8 +32,8 @@ class ChestnutStatus:
   def update(self, offroad: bool, branch: str, usb_state: list[dict], firmware_failed: bool,
              model_loading: bool, model_active: bool | None, state, set_alert) -> None:
     detected = [d for d in usb_state if is_chestnut_usb_id(d["vendorId"], d["productId"], include_bootloader=True)]
-    devices = [d for d in detected if is_chestnut_usb_id(d["vendorId"], d["productId"])]
-    firmware_ok = len(devices) == 1 and devices[0]["product"] == CHESTNUT_USB_PRODUCT
+    devices = [d for d in detected if is_chestnut_runtime_device(d)]
+    firmware_ok = len(devices) == 1
 
     if self.offroad and not offroad:
       self.pcie_failed = False
