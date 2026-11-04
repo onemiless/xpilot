@@ -52,6 +52,8 @@ jobs:
       run: python3 tools/sp_tesla_e2e/default_role_status_check.py
     - name: Explicit build options regression
       run: python3 tools/sp_tesla_e2e/build_options_check.py
+    - name: Host subscription health regression
+      run: python3 tools/sp_tesla_e2e/subscription_check.py
     - name: XPILOT.md section 11 host checks
       run: |
         set -e

@@ -27,6 +27,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.tesla import manifest as mf, panda_rules
 from openpilot.tesla.plugin import Plugin
 from openpilot.tesla.plugin_params import ParamsView
+from openpilot.tesla.subscriptions import submaster as submaster
 
 FAULTS_PARAM = "XpilotPluginFaults"
 REQUIRED_ROLES = ("role:perception.model", "role:engagement.state", "role:safety.fallback")
