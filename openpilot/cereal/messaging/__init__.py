@@ -182,6 +182,9 @@ class SubMaster:
   def __init__(self, services: list[str], poll: str | None = None,
                ignore_alive: list[str] | None = None, ignore_avg_freq: list[str] | None = None,
                ignore_valid: list[str] | None = None, addr: str = "127.0.0.1", frequency: float | None = None):
+    # duplicates (e.g. base list + plugins.services()) open two sockets for one service, so each message
+    # is recorded twice with dt=0 and FrequencyTracker.valid divides by zero
+    services = list(dict.fromkeys(services))
     self.frame = -1
     self.services = services
     self.seen = dict.fromkeys(services, False)
