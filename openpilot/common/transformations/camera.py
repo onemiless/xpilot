@@ -70,29 +70,6 @@ DEVICE_CAMERAS: dict[tuple[str, str], DeviceCameraConfig] = {
 prods = itertools.product(('tici', 'tizi', 'mici'), (('ar0231', _ar_ox_config), ('ox03c10', _ar_ox_config), ('os04c10', _os_config)))
 DEVICE_CAMERAS.update({(d, c[0]): c[1] for d, c in prods})
 
-@dataclass(frozen=True)
-class _IfeRoadCameraConfig(CameraConfig):
-  vertical_focal_length: float
-
-  @property
-  def intrinsics(self):
-    matrix = super().intrinsics
-    matrix[1, 1] = self.vertical_focal_length
-    return matrix
-
-
-def _ife_road_camera(camera):
-  # MNDS phase-init is zero: retain source optical centre under independent X/Y scaling.
-  return _IfeRoadCameraConfig(1344, 760, camera.focal_length * 1344 / camera.width,
-                            camera.focal_length * 760 / camera.height)
-
-
-for (device, sensor), original in DEVICE_CAMERAS.items():
-  if device in ('tici', 'tizi') and original.narrow_road.size == (1928, 1208):
-    DEVICE_CAMERAS[(device, sensor)] = DeviceCameraConfig(
-      _ife_road_camera(original.narrow_road), original.cabin, _ife_road_camera(original.wide_road))
-
-
 # device/mesh : x->forward, y-> right, z->down
 # view : x->right, y->down, z->forward
 device_frame_from_view_frame = np.array([

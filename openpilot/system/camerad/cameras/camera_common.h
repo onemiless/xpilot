@@ -33,7 +33,6 @@ public:
   VisionBuf *cur_camera_buf;
   std::unique_ptr<VisionBuf[]> camera_bufs_raw;
   uint32_t out_img_width, out_img_height;
-  bool ife_road_resize = false;
 
   CameraBuf() = default;
   ~CameraBuf();

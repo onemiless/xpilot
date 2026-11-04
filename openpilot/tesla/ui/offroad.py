@@ -102,11 +102,24 @@ def offroad_alerts(params) -> list[tuple[int, str]]:
   return sorted(alerts, key=lambda a: -a[0])
 
 
+def default_role_standby(plugin, conflicts) -> bool:
+  claims = getattr(plugin, "CLAIMS", ())
+  return (plugin.NAME in conflicts and getattr(plugin, "ENABLE_PARAM", "") is None
+          and bool(claims) and all(c.startswith("role:") for c in claims))
+
+
+def plugin_conflict_count(conflicts) -> int:
+  standby = {p.NAME for p in PLUGINS if default_role_standby(p, conflicts)}
+  return len(conflicts.keys() - standby)
+
+
 def plugin_status(plugin, faults, conflicts) -> str:
   """"fault" = dropped this boot (FAULTS_PARAM), "conflict" = switched on but lost an exclusive claim."""
   if plugin.NAME in faults:
     return tr("fault")
   if plugin.NAME in conflicts:
+    if default_role_standby(plugin, conflicts):
+      return tr("inactive")
     return tr("conflict")
   if (mf.INSTALL_DIR / plugin.NAME).is_dir():
     return store.plugin_state(plugin.NAME, plugin.MANIFEST.version)
