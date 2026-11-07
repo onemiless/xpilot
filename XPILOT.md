@@ -630,6 +630,7 @@ python3 tools/sp_tesla_e2e/panda_rules_check.py --output /tmp/panda-rules # C++ 
 python3 tools/sp_tesla_e2e/store_check.py                             # 插件商店：下载、校验、安装、代码结构、参数（本机 HTTP 服务）
 python3 tools/sp_tesla_e2e/store_activation_e2e.py --output /tmp/xpilot-s2 # HTTP安装/激活/停车重启请求/新manager发现注册、失败回滚；保存包/参数快照/result.json/SHA256SUMS
 python3 tools/sp_tesla_e2e/offroad_pages_check.py                     # 大屏停车页面：页面模块、参数名、插件行、商店行、视口、触摸映射
+python3 tools/sp_tesla_e2e/tesla_sleep_shutdown_check.py              # 停车后特斯拉休眠关机：总开关默认关、行驶中不关、CAN静默或点火关闭超时
 python3 tools/sp_tesla_e2e/store_e2e.py --repo ~/xpilot-plugins       # 插件仓库端到端：索引 → 安装 → 发现 → 钩子生效
 python3 tools/dev_sp_release/upstream_watch.py                        # 列出值得 cherry-pick 的上游提交
 ```
