@@ -27,6 +27,8 @@ def apply_fork_processes(procs: list, only_onroad) -> list:
   _gate(by_name["soundd"], lambda params: has_audio_output())
   for name in ("mapd", "mapd_manager", "map_osm"):
     _gate(by_name[name], lambda params: not plugins.holds(params, "source:map"))
+  # mapd_manager is the sole liveMapDataSP publisher, including onroad.
+  _gate(by_name["map_osm"], lambda params: False)
   role_procs = {n: by_name[n] for names in plugins.ROLE_PROCESSES.values() for n in names}
   procs = [p for p in procs if p.name not in role_procs] + [
     PythonProcess("alert_output", "openpilot.sunnypilot.system.alert_output",
