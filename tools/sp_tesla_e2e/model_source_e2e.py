@@ -464,7 +464,8 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
                      'reject_reason': source.reason if source else '', 'pick_ns': pick_ns,
                      'pick_clock_ns': pick_clock_ns, 'pick_end': pick_end,
                      'sleep_ns': sleep_ns, 'fresh': source.fresh if source else 0,
-                     'last_seen': source.last_seen if source else 0, 'last_accepted': source.last_accepted if source else 0,
+                     'w': source.w if source else 0., 'alive': source.alive if source else False,
+                     'leg_delta': float(source.remote_last['raw_pred'][887]) if source and source.remote_last else 0.,
                      'fresh_before_pick': fresh_before_pick,
                      'host_publish_ns': time.monotonic_ns() if paced else 0})
         scenario = scenarios[current - 1]
@@ -504,7 +505,7 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       pick_clock_ns = pick_end - before
       if not realtime:
         assert pick_clock_ns <= max(0, camera_eof + 60_000_000 - before)
-      if result[1]:
+      if result[1] and source.w >= 1:
         scenario = scenarios[current - 1]
         delta = .1 + camera_frame * .0001 if scenario == 'burst' else .1
         expected_heads = decode(raw_output(delta))
@@ -556,13 +557,17 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       # The 60 ms deadline (#47) is longer than the 50 ms camera period: a wait may publish after the next EOF, bounded by
       # the deadline plus scheduling; frameDropPerc == 0 above is the no-drop check.
       assert row['publish'] < row['EOF'] + DEADLINE_NS + 5_000_000, (name, row)
-    delta = (.1 + row['frameId'] * .0001 if scenarios[i] == 'burst' else .1) if row['source'] == 'phone' else 0
+    # Cross-fade: every head is local*(1-w) + leg*w, where leg is the accepted phone output (the last one on fallback).
+    w = row['w']
+    assert row['source'] != 'phone' or w > 0
+    delta = w * row['leg_delta']
     assert abs(m.modelV2.position.y[0] - delta) < 1e-6
     assert abs(m.modelV2.leadsV3[0].x[0] - 30 - delta) < 1e-5
     assert abs(p.cameraOdometry.trans[0] - delta) < 1e-6
-    expected_curvature = (.01 + delta) / 400 if action_width or row['source'] == 'phone' else 0
-    assert abs(m.modelV2.action.desiredCurvature - expected_curvature) < 1e-6
-    if raw_predictions:
+    if action_width or w in (0., 1.):
+      expected_curvature = (.01 + delta) / 400 if action_width or w == 1. else 0
+      assert abs(m.modelV2.action.desiredCurvature - expected_curvature) < 1e-6
+    if raw_predictions and w in (0., 1.):
       assert m.modelV2.rawPredictions == raw_output(delta).tobytes(), (name, i, row['source'])
     clipped, _ = clip_curvature(20, 0, m.modelV2.action.desiredCurvature, 0)
     assert abs(clipped) <= 5 / 400 * .01
@@ -635,8 +640,8 @@ def main():
     records, _ = execute('short_gap', ['good'] * 10 + ['absent'] * 2 + ['good'] * 6)
     assert records[12]['source'] == 'phone'
     records, _ = execute('long_gap', ['good'] * 10 + ['absent'] * 3 + ['good'] * 6)
-    assert records[13]['fresh'] == 1 and all(r['source'] == 'local' for r in records[13:18])
-    assert records[18]['source'] == 'phone' and records[13]['sleep_ns'] == 0
+    assert all(r['source'] == 'local' and r['sleep_ns'] > 0 for r in records[10:13]) and records[13]['source'] == 'phone'
+    assert records[12]['w'] == .7 and records[-1]['w'] == 1.
 
     for scenario, reason in (('zero_pair', 'warmup_flags'), ('unpaired', 'need_dual_idr')):
       for count in (1, 2, 3):
@@ -646,10 +651,9 @@ def main():
         assert all(r['source'] == 'local' for r in records[6:11 + count]) and records[-1]['source'] == 'phone', scenario
     records, _ = execute('meta_busy_no_wait', ['good'] * 10 + ['meta_hold'] + ['good'] * 6)
     assert records[10]['source'] == 'local' and records[11]['source'] == 'phone'
-    records, _ = execute('liveness_does_not_preserve_warmup', ['good'] * 6 + ['old_good'] * 4 + ['good'] * 6)
-    assert records[9]['last_seen'] == 9 and records[9]['last_accepted'] == 6 and records[9]['sleep_ns'] > 0
-    assert records[9]['fresh'] == 0 and all(r['source'] == 'local' for r in records[6:15])
-    assert records[-1]['source'] == 'phone'
+    records, _ = execute('liveness_old_replies', ['good'] * 6 + ['old_good'] * 4 + ['good'] * 6)
+    assert records[9]['alive'] and records[9]['sleep_ns'] > 0
+    assert all(r['source'] == 'local' for r in records[6:10]) and records[10]['source'] == 'phone'
 
     # The cold peer never supplies an early first reply; previous-frame traffic must engage it.
     for case, scenarios in (
@@ -674,8 +678,8 @@ def main():
         if case == 'phone35_single_late':
           assert records[10]['source'] == 'local' and records[11]['source'] == 'phone'
       elif case == 'phone75':
-        assert all(r['source'] == 'local' for r in records[10:])
-        assert all(r['sleep_ns'] == 0 for r in records[13:])
+        # Late replies still prove the link alive: the host keeps waiting to the deadline, like dev-sp-npu.
+        assert all(r['source'] == 'local' and r['alive'] for r in records[13:])
       else:
         assert all(r['source'] == 'local' and r['sleep_ns'] == 0 for r in records)
     for case in ('magic', 'version', 'flags', 'session', 'epoch_zero', 'ipc_flags', 'future', 'nan', 'inf', 'zero'):
@@ -683,17 +687,17 @@ def main():
       assert source.locked and all(r['source'] == 'local' and r['sleep_ns'] == 0 for r in records), case
     for case in ('late', 'early', 'far', 'unpaired'):
       records, source = execute('old_' + case, ['old_' + case] + ['absent'] * 4, frame_offset=10)
-      assert not source.locked and all(r['source'] == 'local' and r['sleep_ns'] == 0 for r in records), case
-    records, _ = execute('old_epoch_cannot_engage', [('good', 2)] * 10 + [('old_good', 1)] * 5, frame_offset=10)
-    assert all(r['sleep_ns'] == 0 for r in records[10:])
+      assert not source.locked and all(r['source'] == 'local' for r in records), case
+    records, _ = execute('old_epoch', [('good', 2)] * 10 + [('old_good', 1)] * 5, frame_offset=10)
+    assert all(r['source'] == 'local' for r in records[10:])
     assert records[-1]['reject_reason'] == 'old_epoch'
     records, _ = execute('stock_action_mean_sigma', ['good'] * 15, action_width=4)
     assert records[-1]['source'] == 'phone'
     records, _ = execute('stock_plan_action', ['good'] * 15, action_width=0)
     assert records[-1]['source'] == 'phone'
     records, _ = execute('recovery', ['absent'] * 5 + ['good'] * 10 + ['late'] * 4 + ['good'] * 10)
-    assert records[14]['source'] == records[-1]['source'] == 'phone'
-    assert all(r['source'] == 'local' for r in records[15:24])
+    assert records[14]['source'] == records[19]['source'] == records[-1]['source'] == 'phone'
+    assert all(r['source'] == 'local' for r in records[15:19]) and records[18]['w'] == .1
     for case in ('reset', 'zero_pair', 'unpaired'):
       records, _ = execute(case, [case] + ['good'] * 10)
       assert all(r['source'] == 'local' for r in records[:5])
@@ -863,7 +867,7 @@ class Candidate(Plugin):
                              for case in ('frozen', 'crashed', 'stall_200ms', 'candidate_lock')
                              if (selected := [r['host_publish_ns'] for r in rows if r['case'] == case])},
             'bounded_wait': {
-              'engaged_frames': 3, 'deadline_ms': 60, 'camera_period_ms': 50, 'timed_frame_drops': 0,
+              'alive_s': 2, 'fade_frames': 10, 'deadline_ms': 60, 'camera_period_ms': 50, 'timed_frame_drops': 0,
               'deterministic_max_wait_ms': max(r['pick_clock_ns'] for r in rows if not r['host_publish_ns']) / 1e6,
               'cases': {case: {
                 'frames': len(selected),

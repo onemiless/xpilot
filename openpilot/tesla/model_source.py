@@ -15,6 +15,8 @@ import secrets
 import struct
 import tempfile
 import time
+from collections import deque
+from statistics import median
 
 import numpy as np
 
@@ -23,7 +25,8 @@ ENVELOPE = struct.Struct('<QQQII')
 REPLY = struct.Struct('<4sBBHIIQ')
 OFFSET, SIZE = 256, 16384
 DEADLINE_NS = 60_000_000  # Match upstream modeld BIG_REPLY_DEADLINE_MS.
-ENGAGED_FRAMES = 3  # Tolerate two missed replies at 20 Hz, then stop waiting on a missing peer.
+ALIVE_NS = 2_000_000_000  # Wait for the current reply while any reply arrived this recently (dev-sp-npu BigReplyLatch).
+FADE_FRAMES = 10  # 0.5 s cross-fade between phone and local outputs at 20 Hz (dev-sp-npu SourceBlender).
 HEAD_SHAPES = {
   'plan': (1, 33, 15), 'plan_stds': (1, 33, 15),
   'lane_lines': (1, 4, 33, 2), 'lane_lines_stds': (1, 4, 33, 2), 'lane_lines_prob': (1, 8),
@@ -37,6 +40,17 @@ HEAD_SHAPES = {
 
 def nanos_since_boot():
   return time.clock_gettime_ns(getattr(time, 'CLOCK_BOOTTIME', time.CLOCK_MONOTONIC))
+
+
+class FrameDelayEstimator:
+  """Median EOF->publish of the last 100 waited frames, clipped to [10, 100] ms; replaces the fixed DT_MDL frame delay."""
+  def __init__(self):
+    self.samples = deque(maxlen=100)
+    self.value = 50.
+
+  def update(self, eof_to_publish_ms):
+    self.samples.append(eof_to_publish_ms)
+    self.value = float(min(max(median(self.samples), 10.), 100.))
 
 
 class ModelSource:
@@ -55,10 +69,10 @@ class ModelSource:
       raise
     self.buffer[:] = bytes(SIZE)
     self.session = secrets.randbits(64)
-    self.epoch = self.last_frame = self.fresh = self.arrival_ns = 0
-    self.last_accepted = self.last_seen = -ENGAGED_FRAMES - 1
+    self.epoch = self.last_frame = self.fresh = self.arrival_ns = self.reply_ns = 0
     self.frame = self.eof = 0
-    self.selected = self.locked = self.sent = False
+    self.fade, self.w, self.remote_last = 0, 0., None
+    self.selected = self.locked = self.sent = self.alive = False
     self.reason = 'absent'
 
   def close(self):
@@ -84,7 +98,7 @@ class ModelSource:
   def send_frame(self, main, extra, transforms, inputs, prev_desire):
     if main.frame_id < self.frame:
       self.epoch = self.last_frame = self.fresh = 0
-      self.last_accepted = self.last_seen = -ENGAGED_FRAMES - 1
+      self.fade, self.w, self.remote_last = 0, 0., None
     self.frame, self.eof = main.frame_id, main.timestamp_eof
     pulse = np.where(inputs['desire_pulse'] - prev_desire > .99, inputs['desire_pulse'], 0).copy()
     pulse[0] = 0
@@ -117,6 +131,7 @@ class ModelSource:
       return self._reject('wire_length', True)
     if session != self.session:
       return self._reject('session', True)
+    self.reply_ns = max(self.reply_ns, arrival)
     if not epoch or paired & ~3:
       return self._reject('epoch_flags', True)
     if epoch < self.epoch:
@@ -141,7 +156,6 @@ class ModelSource:
     new_epoch = epoch > self.epoch
     if new_epoch:
       self.epoch, self.fresh, self.last_frame = epoch, 0, 0
-      self.last_accepted = self.last_seen = -ENGAGED_FRAMES - 1
       if paired != 3:
         return self._reject('need_dual_idr')
     if paired != 3:
@@ -157,9 +171,6 @@ class ModelSource:
     if not np.isfinite(raw).all() or not np.any(raw):
       return self._reject('raw_values', True)
     if old_frame:
-      if 0 < self.frame - frame <= ENGAGED_FRAMES and eof < self.eof:
-        # On-time old output proves liveness, never eligibility for the current frame.
-        self.last_seen = max(self.last_seen, frame)
       return self._reject('old_frame')
     try:
       remote = self.decode(raw.copy())
@@ -176,7 +187,7 @@ class ModelSource:
         return self._reject('admission', True)
     except Exception:
       return self._reject('adapter_error', True)
-    self.last_frame = self.last_accepted = frame
+    self.last_frame = frame
     self.fresh += 1
     if self.fresh <= 5:
       self.reason = 'warmup'
@@ -186,15 +197,30 @@ class ModelSource:
     return remote
 
   def pick(self, local):
-    if self.frame - self.last_accepted > ENGAGED_FRAMES:
-      self.fresh = 0
     remote = self._candidate(local)
-    while (not self.locked and 0 < self.frame - max(self.last_accepted, self.last_seen) <= ENGAGED_FRAMES
-           and self.reason in ('absent', 'old_frame', 'ipc_busy')):
+    self.alive = not self.locked and self.reply_ns > 0 and nanos_since_boot() - self.reply_ns < ALIVE_NS
+    while self.alive and self.reason in ('absent', 'old_frame', 'ipc_busy'):
       remaining = self.eof + DEADLINE_NS - nanos_since_boot()
       if remaining <= 0:
         break
       time.sleep(min(.001, remaining / 1e9))
       remote = self._candidate(local)
     self.selected = remote is not None
-    return (remote, True) if self.selected else (local, False)
+    if self.selected:
+      self.remote_last = remote
+    self.fade = min(FADE_FRAMES, self.fade + 1) if self.selected else max(0, self.fade - 1)
+    self.w = self.fade / FADE_FRAMES
+    if self.w >= 1:
+      return remote, True
+    if self.w <= 0:
+      return local, False
+    # Cross-fade every head; a fallback frame fades out against the last accepted phone output.
+    out = dict(local)
+    for k, a in local.items():
+      b = self.remote_last.get(k)
+      if b is not None and b.shape == a.shape:
+        out[k] = a * (1 - self.w) + b * self.w
+      elif k == 'action' and b is not None:
+        out[k] = a.copy()
+        out[k][:, :2] = a[:, :2] * (1 - self.w) + b[:, :2] * self.w
+    return out, self.selected
