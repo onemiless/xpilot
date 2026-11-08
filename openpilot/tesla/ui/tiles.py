@@ -19,7 +19,7 @@ ORIGIN = ((SCREEN[0] - COLS * PITCH + GAP) // 2, (SCREEN[1] - ROWS * PITCH + GAP
 SIZES = {"small": (1, 1), "medium": (2, 2), "wide": (4, 2), "large": (4, 4)}
 THEMES = {"Cobalt": (0, 80, 239), "Teal": (0, 140, 140), "Emerald": (0, 128, 0), "Crimson": (162, 0, 37), "Violet": (106, 0, 255),
           "Graphite": (52, 56, 66), "Black": (0, 0, 0)}  # tile colors (WP accents); every tile uses the chosen one
-ACCENT = THEMES["Cobalt"]
+ACCENT = THEMES["Black"]
 
 DRIVE_CELLS = (1, 0, 6, 3)  # col, row, cols, rows under the mici driving view
 MICI = (536, 240)
