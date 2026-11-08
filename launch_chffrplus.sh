@@ -18,7 +18,8 @@ function agnos_init {
   sudo chmod 660 /dev/adsprpc-smd /dev/ion /dev/kgsl-3d0
 
   # Check if AGNOS update is required
-  if [ "$(< /VERSION)" != "$AGNOS_VERSION" ]; then
+  # Device-local opt-out: never flash AGNOS when this file exists.
+  if [ "$(< /VERSION)" != "$AGNOS_VERSION" ] && [ ! -f /data/skip_agnos_update ]; then
     AGNOS_PY="$DIR/openpilot/common/hardware/comma/agnos.py"
     MANIFEST="$DIR/$AGNOS_MANIFEST_FILE"
     if "$AGNOS_PY" --verify "$MANIFEST"; then
