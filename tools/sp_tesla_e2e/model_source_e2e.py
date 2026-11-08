@@ -641,7 +641,7 @@ def main():
     assert records[12]['source'] == 'phone'
     records, _ = execute('long_gap', ['good'] * 10 + ['absent'] * 3 + ['good'] * 6)
     assert all(r['source'] == 'local' and r['sleep_ns'] > 0 for r in records[10:13]) and records[13]['source'] == 'phone'
-    assert records[12]['w'] == .7 and records[-1]['w'] == 1.
+    assert records[9]['w'] == .5 and records[12]['w'] == .2 and records[13]['w'] == .3  # 5 warm-up replies, then fade
 
     for scenario, reason in (('zero_pair', 'warmup_flags'), ('unpaired', 'need_dual_idr')):
       for count in (1, 2, 3):
