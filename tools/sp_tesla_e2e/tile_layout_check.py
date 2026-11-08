@@ -454,6 +454,12 @@ def check_fit(errors):
   sizes = {n: T.size_rect(0, 0, c)[2:] for n, c in T.SIZES.items()}
   if [T.scale(*sizes[n]) for n in ("small", "medium", "wide", "large")] != [1, 2, 2, 2]:
     errors.append(f"T18 scale {[T.scale(*sizes[n]) for n in sizes]}")
+  # A tall tile onroad spans the drive view's rows beside it; a medium tile that no longer fits shrinks to tall first.
+  tall = T.place([("n", "tall", ("small", "tall"), None)], True)["n"]
+  if tall != (0, 0, "tall") or T.size_rect(0, 0, T.SIZES["tall"])[3] != T.size_rect(*T.DRIVE_CELLS[:2], T.DRIVE_CELLS[2:])[3]:
+    errors.append(f"T18 tall onroad {tall}")
+  if T.place([("n", "medium", ("small", "tall", "medium"), None)], True)["n"][2] != "tall":
+    errors.append("T18 medium onroad does not shrink to tall")
   if T.fit_lines([], 200, 200, 40) != (40, 0):
     errors.append("T18 no lines")
   rng = random.Random(7)

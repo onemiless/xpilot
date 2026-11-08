@@ -16,7 +16,7 @@ COLS, ROWS = 8, 4
 CELL, GAP = 250, 12
 PITCH = CELL + GAP
 ORIGIN = ((SCREEN[0] - COLS * PITCH + GAP) // 2, (SCREEN[1] - ROWS * PITCH + GAP) // 2)
-SIZES = {"small": (1, 1), "medium": (2, 2), "wide": (4, 2), "large": (4, 4)}
+SIZES = {"small": (1, 1), "tall": (1, 3), "medium": (2, 2), "wide": (4, 2), "large": (4, 4)}  # tall: as high as the onroad drive view
 THEMES = {"Cobalt": (0, 80, 239), "Teal": (0, 140, 140), "Emerald": (0, 128, 0), "Crimson": (162, 0, 37), "Violet": (106, 0, 255),
           "Graphite": (52, 56, 66), "Black": (0, 0, 0)}  # tile colors (WP accents); every tile uses the chosen one
 ACCENT = THEMES["Black"]
