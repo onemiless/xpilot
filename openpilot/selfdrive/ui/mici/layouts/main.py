@@ -5,7 +5,6 @@ from openpilot.selfdrive.ui.mici.layouts.settings.settings import SettingsLayout
 from openpilot.selfdrive.ui.mici.layouts.offroad_alerts import MiciOffroadAlerts
 from openpilot.selfdrive.ui.mici.onroad.augmented_road_view import AugmentedRoadView
 from openpilot.selfdrive.ui.ui_state import device, ui_state
-from openpilot.selfdrive.ui.mici.layouts.onboarding import OnboardingWindow
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.scroller import Scroller
 from openpilot.system.ui.lib.application import gui_app
@@ -56,10 +55,6 @@ class MiciMainLayout(Scroller):
     gui_app.add_nav_stack_tick(self._handle_transitions)
     gui_app.push_widget(self)
 
-    # Start onboarding if terms or training not completed, make sure to push after self
-    self._onboarding_window = OnboardingWindow(lambda: gui_app.pop_widgets_to(self))
-    if not self._onboarding_window.completed:
-      gui_app.push_widget(self._onboarding_window)
     if gui_app.host:
       gui_app.host.bind_settings(self, self._settings_layout)
 
@@ -101,10 +96,6 @@ class MiciMainLayout(Scroller):
     super()._render(self._rect)
 
   def _handle_transitions(self):
-    # Don't pop if onboarding
-    if gui_app.widget_in_stack(self._onboarding_window):
-      return
-
     if ui_state.started != self._prev_onroad:
       self._prev_onroad = ui_state.started
 
@@ -127,10 +118,6 @@ class MiciMainLayout(Scroller):
     self._prev_standstill = CS.standstill
 
   def _on_interactive_timeout(self):
-    # Don't pop if onboarding
-    if gui_app.widget_in_stack(self._onboarding_window):
-      return
-
     if ui_state.started:
       # Don't pop if at standstill
       if not ui_state.sm["carState"].standstill:

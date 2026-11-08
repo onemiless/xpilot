@@ -3,8 +3,8 @@ Onroad: drag the mici view; neutral tiles flow around it, then plugin ScreenOver
 Alerts are drawn over the tiles in the gap above or below the view, navigation in the gap left or right of it.
 Offroad: the tile screen (tap opens a tile's page, long press enters edit mode), or a full-screen detail page: back
 button, parent name, title, and a native page (tesla/ui/pages) drawn here in screen pixels. The mici texture is not
-drawn (viewport() -> None) except during onboarding and for mici pages pushed above main (Models, training guide, terms,
-regulatory, cabin camera), which show at 3x in FALLBACK_VIEW. Without a viewport every touch maps far outside the mici
+drawn (viewport() -> None) except for mici pages pushed above main, which show at 3x in FALLBACK_VIEW.
+Without a viewport every touch maps far outside the mici
 screen, so the mici widgets running underneath never react. tici dialogs (ConfirmDialog, Keyboard) the native pages
 push onto the nav stack are hidden in the mici pass and drawn full-screen here."""
 from __future__ import annotations  # pyray types are functions: rl.Rectangle | None fails at import
@@ -30,7 +30,6 @@ from openpilot.tesla.ui import hud_preview, offroad, plugin_ui, tiles
 from openpilot.tesla.ui.offroad import BACK, CONTENT, TITLE_H
 from openpilot.tesla.ui.pages.base import ListPage
 from openpilot.tesla.ui.pages.device import DevicePage
-from openpilot.tesla.ui.pages.onboarding import OnboardingPage
 from openpilot.tesla.ui.plugin_ui import MAX_FAILURES, EnabledPlugins, HudOverlay, Overlays, ScreenOverlay, load
 from openpilot.tesla.ui.tile import Tile, text, text_w
 from openpilot.tesla.ui.tiles import LAYOUT_PARAM, LAYOUT_SPEC, SCREEN, THEME_PARAM, THEMES
@@ -135,7 +134,6 @@ class BigScreenHost:
     self._now, self._faced = time.monotonic(), {}  # set each frame by viewport(): tile faces drawn before the screen frame
     self._mode = "native"
     self._host_pass = False
-    self._onboarding = OnboardingPage(self._onboarding_done)
     self._theme()
 
   def _theme(self) -> None:
@@ -230,9 +228,6 @@ class BigScreenHost:
     elif self._stack:
       self._stack.pop()
 
-  def _onboarding_done(self) -> None:
-    gui_app.pop_widgets_to(self._main, instant=True)  # what mici's OnboardingWindow callback does
-
   def back(self) -> None:
     """Close the open detail page (pages.base.back)."""
     self._back()
@@ -287,9 +282,8 @@ class BigScreenHost:
       self._view = self._drive_view()
       self._zones = _zones(self._view)
     else:
-      onboarding = self._main is None or gui_app.widget_in_stack(self._main._onboarding_window)
       top = gui_app.get_active_widget()
-      self._mode, self._view = offroad.view_mode(onboarding, top is self._main, self._is_modal(top))
+      self._mode, self._view = offroad.view_mode(top is self._main, self._is_modal(top))
     if onroad != started:
       self._theme()
     self._refresh_faces()
@@ -403,12 +397,6 @@ class BigScreenHost:
       self._draw_tiles(self._place("drive"), self._now)
       self._draw_overlays()
       self._draw_onroad_panels()
-    elif self._mode == "onboarding":
-      events = [e._replace(pos=MousePos(*offroad.to_screen(None, e.pos.x, e.pos.y))) for e in gui_app.mouse_events]
-      self._show(self._onboarding if self._main is not None else None)
-      if self._main is not None:
-        with self._native(events):
-          self._onboarding.render(rl.Rectangle(0, 0, *SCREEN))
     else:
       self._draw_offroad()
 
