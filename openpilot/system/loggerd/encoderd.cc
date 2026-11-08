@@ -133,7 +133,7 @@ void encoder_thread(EncoderdState *s, const LogCameraInfo &cam_info) {
       }
 
       // xpilot: let the lean_mici phone encode reach Venus first (bounded, XP_ENCODERD_DEFER_MS)
-      if (defer_ns > 0 && (cam_info.stream_type == VISION_STREAM_ROAD || cam_info.stream_type == VISION_STREAM_WIDE_ROAD)) {
+      if (defer_ns > 0 && (cam_info.stream_type == VISION_STREAM_NARROW_ROAD || cam_info.stream_type == VISION_STREAM_WIDE_ROAD)) {
         const uint64_t target = extra.timestamp_eof + defer_ns;
         const uint64_t now = nanos_since_boot();
         if (now < target) std::this_thread::sleep_for(std::chrono::nanoseconds(std::min(target - now, defer_ns)));
