@@ -186,7 +186,7 @@ def _configure_shader_color(state: ShaderState, color: Optional[rl.Color],  # no
     rl.set_shader_value(state.shader, state.locations['fillColor'], state.fill_color_ptr, UNIFORM_VEC4)
 
 
-def triangulate(pts: np.ndarray) -> list[tuple[float, float]]:
+def triangulate(pts: np.ndarray) -> np.ndarray:
   """Only supports simple polygons with two chains (ribbon)."""
 
   # TODO: consider deduping close screenspace points
@@ -195,12 +195,11 @@ def triangulate(pts: np.ndarray) -> list[tuple[float, float]]:
   if len(pts) % 2 != 0:
     pts = pts[:-1]
 
-  tri_strip = []
-  for i in range(len(pts) // 2):
-    tri_strip.append(pts[i])
-    tri_strip.append(pts[-i - 1])
-
-  return cast(list, np.array(tri_strip).tolist())
+  k = len(pts) // 2
+  tri_strip = np.empty((2 * k, 2), dtype=pts.dtype)
+  tri_strip[0::2] = pts[:k]
+  tri_strip[1::2] = pts[::-1][:k]
+  return tri_strip
 
 
 def draw_polygon(origin_rect: rl.Rectangle, points: np.ndarray,
@@ -229,7 +228,7 @@ def draw_polygon(origin_rect: rl.Rectangle, points: np.ndarray,
 
   # Draw strip, color here doesn't matter
   rl.begin_shader_mode(state.shader)
-  rl.draw_triangle_strip(tri_strip, len(tri_strip), rl.WHITE)
+  rl.draw_triangle_strip(rl.ffi.from_buffer("Vector2[]", tri_strip), len(tri_strip), rl.WHITE)
   rl.end_shader_mode()
 
 
