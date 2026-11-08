@@ -280,7 +280,7 @@ class ModelRenderer(Widget, ModelRendererSP):
     self._path_gradient.stops = gradient_stops
 
   def _get_ll_color(self, prob: float, adjacent: bool, left: bool):
-    alpha = np.clip(prob, 0.0, 0.7)
+    alpha = min(max(prob, 0.0), 0.7)
     if adjacent:
       _base_color = LANE_LINE_COLORS.get(ui_state.status, LANE_LINE_COLORS[UIStatus.DISENGAGED])
       color = rl.Color(_base_color.r, _base_color.g, _base_color.b, int(alpha * 255))
