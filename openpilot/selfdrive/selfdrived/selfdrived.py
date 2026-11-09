@@ -100,7 +100,6 @@ class SelfdriveD:
     self.car_state_sock = messaging.sub_sock('carState', timeout=20)
 
     ignore = self.sensor_packets + self.gps_packets + ['alertDebug', 'lateralManeuverPlan'] + ['modelDataV2SP', 'longitudinalPlanSP']
-    ignore += plugins.services()  # xpilot plugin inputs never gate engagement
     self.dm_enabled = driver_monitoring_enabled(self.params)
     if not self.dm_enabled:
       # C3XL has no cabin camera and does not run visual driver monitoring.
@@ -111,12 +110,12 @@ class SelfdriveD:
     if REPLAY:
       # no vipc in replay will make them ignored anyways
       ignore += ['narrowRoadCameraState', 'wideRoadCameraState']
-    self.sm = messaging.SubMaster(['deviceState', 'pandaStates', 'peripheralState', 'modelV2', 'extrinsicsCalibration',
+    self.sm = plugins.submaster(['deviceState', 'pandaStates', 'peripheralState', 'modelV2', 'extrinsicsCalibration',
                                    'carOutput', 'driverMonitoringState', 'longitudinalPlan', 'deviceMotion', 'lateralDelay',
                                    'managerState', 'vehicleParameters', 'radarState',
                                    'controlsState', 'carControl', 'carControlSP', 'driverAssistance', 'alertDebug', 'userBookmark',
                                    'lateralManeuverPlan', 'modelDataV2SP', 'longitudinalPlanSP'] + \
-                                   self.camera_packets + self.sensor_packets + self.gps_packets + plugins.services(),
+                                   self.camera_packets + self.sensor_packets + self.gps_packets,
                                   ignore_alive=ignore, ignore_avg_freq=ignore,
                                   ignore_valid=ignore, frequency=int(1/DT_CTRL))
 
