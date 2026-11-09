@@ -19,6 +19,7 @@ from openpilot.system.ui.widgets import Widget
 from openpilot.common.filter_simple import BounceFilter, FirstOrderFilter
 from openpilot.common.transformations.camera import DEVICE_CAMERAS, DeviceCameraConfig, view_frame_from_device_frame
 from openpilot.common.transformations.orientation import rot_from_euler
+from openpilot.tesla.ui import tiles
 from enum import IntEnum
 
 if gui_app.sunnypilot_ui():
@@ -346,6 +347,8 @@ class AugmentedRoadView(CameraView):
       zoom = 0.7 * 1.5
     else:
       zoom = np.interp(ui_state.sm['carState'].vEgo, [10, 30], [0.8, 1.0])
+    if gui_app.host is not None:  # xpilot: the big screen draws this 536x240 view ~2.9x larger; keep mici's camera px per screen px
+      zoom /= tiles.VIEW[2] / tiles.MICI[0]
 
     # Calculate transforms for vanishing point
     inf_point = np.array([1000.0, 0.0, 0.0])
