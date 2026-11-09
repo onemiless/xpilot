@@ -7,7 +7,7 @@
 
 inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"AccessToken", {CLEAR_ON_MANAGER_START | DONT_LOG, STRING}},
-    {"AdbEnabled", {PERSISTENT | BACKUP, BOOL}},
+    {"AdbEnabled", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"AlwaysOnDM", {PERSISTENT | BACKUP, BOOL}},
     {"ApiCache_Device", {PERSISTENT, STRING}},
     {"ApiCache_FirehoseStats", {PERSISTENT, JSON}},
@@ -117,7 +117,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ShowDebugInfo", {PERSISTENT, BOOL}},
     {"RouteCount", {PERSISTENT, INT, "0"}},
     {"SnoozeUpdate", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
-    {"SshEnabled", {PERSISTENT | BACKUP, BOOL}},
+    {"SshEnabled", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"TermsVersion", {PERSISTENT, STRING}},
     {"TorqueBar", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"TrainingVersion", {PERSISTENT, STRING}},

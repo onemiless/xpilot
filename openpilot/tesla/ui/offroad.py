@@ -23,11 +23,8 @@ FAR = 100000.0
 NATIVE_VIEW = (FAR, FAR, MICI[0], MICI[1])  # nothing drawn; touches map far outside every mici widget
 
 
-def view_mode(onboarding: bool, top_is_main: bool, top_is_modal: bool) -> tuple[str, tuple | None]:
-  """Offroad (mode, viewport): the mici texture is drawn only for a mici page pushed above main (none of the built-in pages
-  do any more); onboarding is the native pages/onboarding.py."""
-  if onboarding:
-    return "onboarding", None
+def view_mode(top_is_main: bool, top_is_modal: bool) -> tuple[str, tuple | None]:
+  """Draw the mici texture only for a non-modal mici page pushed above main."""
   if top_is_main or top_is_modal:
     return ("modal" if top_is_modal else "native"), None
   return "mici", FALLBACK_VIEW

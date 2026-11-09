@@ -23,8 +23,7 @@ Failure modes (listed before implementation):
    does not save that fixed cell (clamped for size) or persist into onroad.
 10. Device rows open the wrong native sub-page/title or BACK loses Device;
     training leaves its first step, or driver camera BACK leaves driver view on.
-11. A separate, untouched native OnboardingPage cannot render full screen;
-    the real onboarding window is pushed, or any offroad frame draws mici.
+11. Startup opens a page above main, or an offroad frame draws mici.
 12. IsDriverViewEnabled is not restored to its original value on exit.
 13. Real NetworkUI in NEEDS_AUTH under the host clears three typed keys over later modal frames,
     or the modal renders the background page/tile screen.
@@ -112,8 +111,7 @@ def host_check(output):
     def _render(self, rect):
       pass
 
-  for module, name in (('device', 'DevicePage'), ('onboarding', 'OnboardingPage')):
-    sys.modules['openpilot.tesla.ui.pages.' + module] = types.SimpleNamespace(**{name: Page})
+  sys.modules['openpilot.tesla.ui.pages.device'] = types.SimpleNamespace(DevicePage=Page)
   from openpilot.tesla.ui import screen, plugin_ui
   original_preview = screen.hud_preview.draw
   def marked_preview(name, rect):
@@ -163,7 +161,6 @@ def host_check(output):
   pinned, hidden = host._layouts['drive']
   host._layouts['drive'] = ([(tid, size, (0, 3) if tid == '0' else fixed) for tid, size, fixed in pinned], hidden)
   main = Page()
-  main._onboarding_window = object()
   gui_app._nav_stack = [main]
   host.bind_settings(main, None)
   # Production camera shader and HUD with deterministic services, NV12 input and fixture icons.
@@ -927,7 +924,6 @@ from openpilot.tesla.ui import tiles
 from openpilot.tesla.plugins import PLUGINS
 from openpilot.tesla.ui.offroad import BACK, CONTENT
 from openpilot.tesla.ui.pages.plugins import CAT_H, GAP, LEFT_W
-from openpilot.tesla.ui.pages.onboarding import OnboardingPage, onboarding_needed
 from openpilot.tesla.ui.screen import BigScreenHost
 
 parser = argparse.ArgumentParser()
@@ -936,8 +932,8 @@ args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
 assert Params().get_bool('IsOffroad') and not Params().get_bool('IsEngaged')
 gui_app.init_window('xpilot big screen E2E', host=BigScreenHost)
-assert not onboarding_needed(), 'complete onboarding before E2E; never push its real window during this test'
 main = MiciMainLayout()
+assert gui_app.get_active_widget() is main, "startup did not open main"
 host = gui_app.host
 driver_view_before = ui_state.params.get_bool('IsDriverViewEnabled')
 SETTINGS = ('status', 'toggles', 'plugins', 'tesla', 'models', 'network', 'device', 'software', 'developer')
@@ -995,15 +991,11 @@ def screenshot(name):
     try:
       rl.clear_background(rl.BLACK)
       gui_app._mouse_events = []
-      if name == 'onboarding':
-        with host._native([]):
-          OnboardingPage(on_done=lambda: None).render(rl.Rectangle(0, 0, 2160, 1080))
-      else:
-        texture = gui_app._render_texture.texture
-        view = host.viewport()
-        if view is not None:
-          rl.draw_texture_pro(texture, rl.Rectangle(0, 0, texture.width, -texture.height), view, rl.Vector2(0, 0), 0, rl.WHITE)
-        original_render()  # tile textures were refreshed by this frame's on-screen render
+      texture = gui_app._render_texture.texture
+      view = host.viewport()
+      if view is not None:
+        rl.draw_texture_pro(texture, rl.Rectangle(0, 0, texture.width, -texture.height), view, rl.Vector2(0, 0), 0, rl.WHITE)
+      original_render()  # tile textures were refreshed by this frame's on-screen render
     finally:
       rl.end_texture_mode()
     image = rl.load_image_from_texture(target.texture)
@@ -1080,8 +1072,6 @@ def steps():
     check(tid in host._placed, f'offroad settings tile {tid} not placed')
   screenshot('start')
   cases.append({'name': 'offroad', 'viewport': rect(host.viewport()), 'placed': dict(host._placed), 'mici_draws': mici_draws})
-  screenshot('onboarding')
-  cases.append({'name': 'onboarding', 'standalone': True, 'size': [2160, 1080], 'touches': 0})
   before = tile_redraws
   yield 60
   check(tile_redraws - before <= 2, f'60 idle frames redrew {tile_redraws - before} tile faces')

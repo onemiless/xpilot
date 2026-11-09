@@ -29,7 +29,6 @@ from openpilot.system.hardware.power_monitoring import PowerMonitoring
 from openpilot.system.hardware.fan_controller import FanController
 from openpilot.system.hardware.chestnut.monitoring import chestnut_state_thread
 from openpilot.system.hardware.chestnut.status import ChestnutStatus
-from openpilot.common.version import terms_version, training_version, terms_version_sp
 
 ThermalStatus = log.DeviceState.ThermalStatus
 NetworkType = log.DeviceState.NetworkType
@@ -357,12 +356,9 @@ def hardware_thread(end_event, hw_queue) -> None:
 
     startup_conditions["no_excessive_actuation"] = params.get("Offroad_ExcessiveActuation") is None
     startup_conditions["not_uninstalling"] = not params.get_bool("DoUninstall")
-    startup_conditions["accepted_terms"] = params.get("HasAcceptedTerms") == terms_version
-    startup_conditions["accepted_terms_sp"] = params.get("HasAcceptedTermsSP") == terms_version_sp
 
     # with 2% left, we killall, otherwise the phone will take a long time to boot
     startup_conditions["free_space"] = msg.deviceState.freeSpacePercent > 2
-    startup_conditions["completed_training"] = params.get("CompletedTrainingVersion") == training_version
     startup_conditions["not_driver_view"] = not params.get_bool("IsDriverViewEnabled")
 
     # must be at an engageable thermal band to go onroad

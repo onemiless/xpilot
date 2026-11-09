@@ -15,8 +15,8 @@ Failure cases listed before implementation:
      category, or breaks CATEGORIES order
 - O13 the Tesla car model list is empty, names a platform opendbc does not know, or a bundle lacks name/platform
      (card.py fingerprints as CarPlatformBundle["platform"])
-- O6 offroad the mici texture gets a viewport outside mici widgets pushed above main (onboarding and Device sub-pages are
-     native now), or loses it for such a widget
+- O6 offroad the mici texture gets a viewport outside non-modal mici widgets pushed above main, or loses it for such a widget
+- O23 a clean install leaves ADB or SSH off, opens onboarding, or waits for onboarding in hardwared
 - O7 offroad without a viewport a screen touch maps inside the mici logical screen (a hidden mici widget would react)
 - O8 offroad alerts are not most severe first, miss the %1 extra, or show inactive alerts
 - O9 the v2 pieces (PAGES factories, _hide_back) remain in screen.py, or the application.py no-viewport hook is missing
@@ -81,7 +81,7 @@ from openpilot.tesla.ui import offroad
 
 PAGE_MODULES = {"Home": "home", "Toggles": "toggles", "Plugins": "plugins", "Tesla": "tesla", "Network": "network",
                 "Device": "device", "Software": "software", "Developer": "developer", "Training": "training", "Terms": "terms",
-                "Regulatory": "regulatory", "Driver camera": "driver_camera", "Onboarding": "onboarding", "Models": "models"}
+                "Regulatory": "regulatory", "Driver camera": "driver_camera", "Models": "models"}
 PARAM_CALLS = {"get", "get_bool", "put", "put_bool", "remove"}
 
 
@@ -239,13 +239,11 @@ def check_models(errors: list) -> None:
 
 
 def check_view(errors: list) -> None:
-  for onboarding in (False, True):
-    for main in (False, True):
-      for modal in (False, True):
-        mode, view = offroad.view_mode(onboarding, main, modal)
-        drawn = not onboarding and not (main or modal)
-        if (view is not None) != drawn:
-          errors.append(f"O6 view_mode(onboarding={onboarding}, main={main}, modal={modal}) = {mode}, {view}")
+  for main in (False, True):
+    for modal in (False, True):
+      mode, view = offroad.view_mode(main, modal)
+      if (view is not None) != (not (main or modal)):
+        errors.append(f"O6 view_mode(main={main}, modal={modal}) = {mode}, {view}")
   for view in (offroad.FALLBACK_VIEW,):
     x, y = offroad.to_logical(view, *offroad.to_screen(view, 100, 50))
     if abs(x - 100) > 1e-6 or abs(y - 50) > 1e-6:
@@ -255,6 +253,22 @@ def check_view(errors: list) -> None:
       x, y = offroad.to_logical(None, sx, sy)
       if 0 <= x <= offroad.MICI[0] and 0 <= y <= offroad.MICI[1]:
         errors.append(f"O7 screen ({sx}, {sy}) maps inside mici: ({x:.0f}, {y:.0f})")
+
+
+def check_first_boot(errors: list) -> None:
+  defaults = (PKG / 'common/params_keys.h').read_text()
+  for key in ('AdbEnabled', 'SshEnabled'):
+    if not re.search(rf'"{key}",\s*{{PERSISTENT \| BACKUP, BOOL, "1"}}', defaults):
+      errors.append(f"O23 {key} is not enabled by default")
+  for path, obsolete in (
+    ('selfdrive/ui/mici/layouts/main.py', ('OnboardingWindow',)),
+    ('tesla/ui/screen.py', ('OnboardingPage',)),
+    ('system/hardware/hardwared.py', ('accepted_terms', 'completed_training')),
+  ):
+    source = (PKG / path).read_text()
+    for name in obsolete:
+      if name in source:
+        errors.append(f"O23 {path} still references {name}")
 
 
 def check_alerts(errors: list) -> None:
@@ -413,7 +427,7 @@ def check_long_owner(errors):
 
 def main() -> int:
   errors: list[str] = []
-  for check in (check_tiles, check_pages, check_plugins, check_store, check_market, check_models, check_view, check_alerts,
+  for check in (check_tiles, check_pages, check_plugins, check_store, check_market, check_models, check_view, check_first_boot, check_alerts,
                 check_sources, check_text_settings, check_stepper, check_parked_edits, check_categories, check_long_owner):
     try:
       check(errors)

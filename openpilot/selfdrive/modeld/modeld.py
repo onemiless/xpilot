@@ -40,6 +40,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import get_accel_from_plan, 
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
 from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_driving_model_data, fill_pose_msg, PublishState
 from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
+from openpilot.tesla.model_source import FrameDelayEstimator, nanos_since_boot
 from openpilot.selfdrive.modeld.helpers import MODELS_DIR, chestnut_present, chestnut_compiled, modeld_pkl_path, load_oob, wait_for_chestnut
 from openpilot.sunnypilot.livedelay.helpers import get_lat_delay
 from openpilot.sunnypilot.modeld_v2.modeld_base import ModelStateBase
@@ -329,6 +330,7 @@ def main(demo=False, *, local_stock=False, model_source=None):
   frame_id = 0
   last_vipc_frame_id = 0
   run_count = 0
+  frame_delay_estimator = FrameDelayEstimator()
 
   model_transform_main = np.zeros((3, 3), dtype=np.float32)
   model_transform_extra = np.zeros((3, 3), dtype=np.float32)
@@ -424,7 +426,7 @@ def main(demo=False, *, local_stock=False, model_source=None):
 
     bufs = {name: buf_extra if 'big' in name else buf_main for name in model.vision_input_names}
     transforms = {name: model_transform_extra if 'big' in name else model_transform_main for name in model.vision_input_names}
-    frame_delay = DT_MDL # compensate for time passed since the frame was captured: current_time - timestamp_eof is 50ms on average
+    frame_delay = frame_delay_estimator.value / 1e3 if model_source is not None else DT_MDL # compensate for time passed since the frame was captured: current_time - timestamp_eof is 50ms on average
     action_delay = DT_MDL / 2 # middle of the interval between model output (current state) and next frame (expected state)
     lat_action_t = lat_delay + frame_delay + action_delay
     long_action_t = long_delay + frame_delay + action_delay
@@ -500,6 +502,8 @@ def main(demo=False, *, local_stock=False, model_source=None):
       pm.send('drivingModelData', drivingdata_send)
       pm.send('cameraOdometry', posenet_send)
       pm.send('modelDataV2SP', mdv2sp_send)
+      if model_source is not None and model_source.alive:  # only frames that waited for a phone reply
+        frame_delay_estimator.update((nanos_since_boot() - meta_main.timestamp_eof) / 1e6)
     last_vipc_frame_id = meta_main.frame_id
 
 if __name__ == "__main__":

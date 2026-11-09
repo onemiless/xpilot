@@ -186,7 +186,7 @@ def _configure_shader_color(state: ShaderState, color: Optional[rl.Color],  # no
     rl.set_shader_value(state.shader, state.locations['fillColor'], state.fill_color_ptr, UNIFORM_VEC4)
 
 
-def triangulate(pts: np.ndarray) -> list[tuple[float, float]]:
+def triangulate(pts: np.ndarray) -> np.ndarray:
   """Only supports simple polygons with two chains (ribbon)."""
 
   # TODO: consider deduping close screenspace points
@@ -195,12 +195,11 @@ def triangulate(pts: np.ndarray) -> list[tuple[float, float]]:
   if len(pts) % 2 != 0:
     pts = pts[:-1]
 
-  tri_strip = []
-  for i in range(len(pts) // 2):
-    tri_strip.append(pts[i])
-    tri_strip.append(pts[-i - 1])
-
-  return cast(list, np.array(tri_strip).tolist())
+  k = len(pts) // 2
+  tri_strip = np.empty((2 * k, 2), dtype=pts.dtype)
+  tri_strip[0::2] = pts[:k]
+  tri_strip[1::2] = pts[::-1][:k]
+  return tri_strip
 
 
 def draw_polygon(origin_rect: rl.Rectangle, points: np.ndarray,
@@ -213,19 +212,23 @@ def draw_polygon(origin_rect: rl.Rectangle, points: np.ndarray,
   if len(points) < 3:
     return
 
-  # Initialize shader on-demand
-  state = ShaderState.get_instance()
-  state.initialize()
-
   # Ensure (N,2) float32 contiguous array
   pts = np.ascontiguousarray(points, dtype=np.float32)
   assert pts.ndim == 2 and pts.shape[1] == 2, "points must be (N,2)"
-
-  # Configure gradient shader
-  _configure_shader_color(state, color, gradient, origin_rect)
+  assert (color is not None) != (gradient is not None), "Either color or gradient must be provided"
 
   # Triangulate via interleaving
-  tri_strip = triangulate(pts)
+  tri_strip = rl.ffi.from_buffer("Vector2[]", triangulate(pts))
+
+  # Flat fill: default shader, no shader switch (each begin/end_shader_mode flushes the batch)
+  if gradient is None:
+    rl.draw_triangle_strip(tri_strip, len(tri_strip), color)
+    return
+
+  # Initialize shader on-demand
+  state = ShaderState.get_instance()
+  state.initialize()
+  _configure_shader_color(state, None, gradient, origin_rect)
 
   # Draw strip, color here doesn't matter
   rl.begin_shader_mode(state.shader)

@@ -12,7 +12,6 @@ from openpilot.system.ui.widgets.nav_widget import NavWidget
 from openpilot.system.ui.mici_setup import GreyBigButton, BigPillButton
 from openpilot.system.ui.widgets.label import gui_label
 from openpilot.system.ui.lib.multilang import tr
-from openpilot.common.version import terms_version, training_version, terms_version_sp
 from openpilot.selfdrive.ui.ui_state import ui_state, device
 from openpilot.selfdrive.ui.mici.widgets.dialog import BigConfirmationCircleButton
 from openpilot.selfdrive.ui.mici.onroad.driver_state import DriverStateRenderer
@@ -317,71 +316,3 @@ class TermsPage(Scroller):
   def _render(self, _):
     rl.draw_rectangle_rec(self._rect, rl.BLACK)
     super()._render(_)
-
-
-class OnboardingWindow(Widget):
-  def __init__(self, completed_callback: Callable[[], None]):
-    super().__init__()
-    self._completed_callback = completed_callback
-    self._accepted_terms: bool = (ui_state.params.get("HasAcceptedTerms") == terms_version and
-                                  ui_state.params.get("HasAcceptedTermsSP") == terms_version_sp)
-    self._training_done: bool = ui_state.params.get("CompletedTrainingVersion") == training_version
-
-    self.set_rect(rl.Rectangle(0, 0, gui_app.width, gui_app.height))
-
-    # Windows — all pushed onto nav stack, _terms is always rendered as base layer
-    self._terms = TermsPage(on_accept=self._on_terms_accepted, on_decline=self._on_uninstall)
-    self._terms.set_enabled(lambda: self.enabled)  # for nav stack
-
-    self._training_guide = TrainingGuide(completed_callback=self._on_completed_training)
-    self._training_guide.set_enabled(lambda: self.enabled)  # for nav stack
-
-    self._needs_initial_push = False
-
-  def _on_uninstall(self):
-    ui_state.params.put_bool("DoUninstall", True, block=True)
-
-  def show_event(self):
-    super().show_event()
-    device.set_override_interactive_timeout(300)
-    device.set_offroad_brightness(100)
-    self._needs_initial_push = True
-
-  def hide_event(self):
-    super().hide_event()
-    # FIXME: when nav stack sends hide event to widget 2 below on push, this needs to be moved
-    device.set_override_interactive_timeout(None)
-    device.set_offroad_brightness(None)
-
-  @property
-  def completed(self) -> bool:
-    return self._accepted_terms and self._training_done
-
-  def close(self):
-    ui_state.params.put_bool("IsDriverViewEnabled", False)
-    self._completed_callback()
-
-  def _on_terms_accepted(self):
-    ui_state.params.put("HasAcceptedTerms", terms_version, block=True)
-    ui_state.params.put("HasAcceptedTermsSP", terms_version_sp, block=True)
-    self._accepted_terms = True
-    if not self._training_done:
-      gui_app.push_widget(self._training_guide)
-    else:
-      self.close()
-
-  def _on_completed_training(self):
-    ui_state.params.put("CompletedTrainingVersion", training_version, block=True)
-    self._training_done = True
-    self.close()
-
-  def _render(self, _):
-    rl.draw_rectangle_rec(self._rect, rl.BLACK)
-
-    # Deferred from show_event to avoid nested push_widget re-enable bug
-    if self._needs_initial_push:
-      self._needs_initial_push = False
-      if self._accepted_terms and not self._training_done:
-        gui_app.push_widget(self._training_guide)
-
-    self._terms.render(self._rect)
