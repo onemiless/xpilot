@@ -75,6 +75,7 @@ class ModelRenderer(Widget, ModelRendererSP):
     # 3x3 car space -> rect-origin space (draw methods add rect.x/y)
     self._car_space_transform = np.zeros((3, 3), dtype=np.float32)
     self._transform_dirty = True
+    self._lines_stale = True  # lane line/road edge polygons not computed for the current model
     self._clip_region = None
 
     self._counter = -1
@@ -129,7 +130,8 @@ class ModelRenderer(Widget, ModelRendererSP):
 
     # Update model data when needed
     model_updated = sm.updated['modelV2']
-    if model_updated or sm.updated['radarState'] or self._transform_dirty:
+    drawn = ui_state.status != UIStatus.DISENGAGED
+    if model_updated or sm.updated['radarState'] or self._transform_dirty or (drawn and self._lines_stale):
       if model_updated:
         self._update_raw_points(model)
 
@@ -141,7 +143,7 @@ class ModelRenderer(Widget, ModelRendererSP):
       self._transform_dirty = False
 
     # Draw elements (hide when disengaged)
-    if ui_state.status != UIStatus.DISENGAGED:
+    if drawn:
       self._draw_lane_lines()
       self._draw_path()
       self._road_overlays.each(lambda o: (o.update(sm), o.draw(self)))  # xpilot
@@ -212,18 +214,19 @@ class ModelRenderer(Widget, ModelRendererSP):
     max_distance = np.clip(path_x_array[-1], MIN_DRAW_DISTANCE, MAX_DRAW_DISTANCE)
     max_idx = self._lane_max_idx = self._get_path_length_idx(self._lane_lines[0].raw_points[:, 0], max_distance)
 
-    # Update lane lines using raw points
-    line_width_factor = 0.12
-    for i, lane_line in enumerate(self._lane_lines):
-      if i in (1, 2):
-        line_width_factor = 0.16
-      lane_line.projected_points = self._map_line_to_polygon(
-        lane_line.raw_points, line_width_factor * self._lane_line_probs[i], 0.0, max_idx
-      )
+    # Lane lines and road edges are only drawn when engaged
+    self._lines_stale = ui_state.status == UIStatus.DISENGAGED
+    if not self._lines_stale:
+      line_width_factor = 0.12
+      for i, lane_line in enumerate(self._lane_lines):
+        if i in (1, 2):
+          line_width_factor = 0.16
+        lane_line.projected_points = self._map_line_to_polygon(
+          lane_line.raw_points, line_width_factor * self._lane_line_probs[i], 0.0, max_idx
+        )
 
-    # Update road edges using raw points
-    for road_edge in self._road_edges:
-      road_edge.projected_points = self._map_line_to_polygon(road_edge.raw_points, line_width_factor, 0.0, max_idx)
+      for road_edge in self._road_edges:
+        road_edge.projected_points = self._map_line_to_polygon(road_edge.raw_points, line_width_factor, 0.0, max_idx)
     self.blendful.update(self, max_idx)
 
     # Update path using raw points
