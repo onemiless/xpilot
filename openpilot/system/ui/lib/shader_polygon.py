@@ -212,23 +212,27 @@ def draw_polygon(origin_rect: rl.Rectangle, points: np.ndarray,
   if len(points) < 3:
     return
 
-  # Initialize shader on-demand
-  state = ShaderState.get_instance()
-  state.initialize()
-
   # Ensure (N,2) float32 contiguous array
   pts = np.ascontiguousarray(points, dtype=np.float32)
   assert pts.ndim == 2 and pts.shape[1] == 2, "points must be (N,2)"
-
-  # Configure gradient shader
-  _configure_shader_color(state, color, gradient, origin_rect)
+  assert (color is not None) != (gradient is not None), "Either color or gradient must be provided"
 
   # Triangulate via interleaving
-  tri_strip = triangulate(pts)
+  tri_strip = rl.ffi.from_buffer("Vector2[]", triangulate(pts))
+
+  # Flat fill: default shader, no shader switch (each begin/end_shader_mode flushes the batch)
+  if gradient is None:
+    rl.draw_triangle_strip(tri_strip, len(tri_strip), color)
+    return
+
+  # Initialize shader on-demand
+  state = ShaderState.get_instance()
+  state.initialize()
+  _configure_shader_color(state, None, gradient, origin_rect)
 
   # Draw strip, color here doesn't matter
   rl.begin_shader_mode(state.shader)
-  rl.draw_triangle_strip(rl.ffi.from_buffer("Vector2[]", tri_strip), len(tri_strip), rl.WHITE)
+  rl.draw_triangle_strip(tri_strip, len(tri_strip), rl.WHITE)
   rl.end_shader_mode()
 
 
