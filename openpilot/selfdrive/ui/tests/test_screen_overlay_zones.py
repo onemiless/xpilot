@@ -11,10 +11,12 @@ class TestScreenOverlayZones(unittest.TestCase):
     zones = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_zones')
     namespace = {'rl': SimpleNamespace(Rectangle=lambda *r: r), 'SCREEN': (2160, 1080)}
     exec(compile(ast.Module(body=[zones], type_ignores=[]), '<screen>', 'exec'), namespace)
-    for view in ((300, 59, 1560, 699), (0, 0, 2160, 1080)):
+    for view in ((300, 59, 1560, 699), (38, 321, 1560, 699), (0, 0, 2160, 1080)):
       x, y, w, h = view
       result = namespace['_zones'](view)
       self.assertEqual(result['view'], view)
+      self.assertEqual(result['left'][2], result['right'][2])
+      self.assertEqual(result['right'], (x + w - w * 0.1, 0, 2160 - x - w + w * 0.1, 1080))
       self.assertGreater(result['left'][2], x)
       self.assertLess(result['right'][0], x + w)
       self.assertEqual(result['right'][0] + result['right'][2], 2160)
