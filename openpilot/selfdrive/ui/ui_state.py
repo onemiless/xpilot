@@ -229,8 +229,10 @@ class UIState(UIStateSP):
       return
 
     model_seen = self.sm.recv_frame["modelV2"] > self.started_frame
-    if not self.chestnut_present:
-      self.chestnut_state = ChestnutState.DISCONNECTED
+    if not self.chestnut_present:  # xpilot: the phone NPU (tesla/model_source.py) sets modelV2.big while its output drives
+      big = self.sm.alive["modelV2"] and self.sm["modelV2"].big
+      self.chestnut_state = (ChestnutState.ACTIVE if big else ChestnutState.FAILED if self.chestnut_state in (ChestnutState.ACTIVE, ChestnutState.FAILED)
+                             else ChestnutState.DISCONNECTED)
     elif not self.chestnut_compiled:
       self.chestnut_state = ChestnutState.UNCOMPILED
     elif self.chestnut_loading or not model_seen:
