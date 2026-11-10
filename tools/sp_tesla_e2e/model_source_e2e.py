@@ -8,8 +8,8 @@ F3 truncated/oversized/fragmented IPC, bad BGM1 magic/version/type/flags/length.
 F4 NaN/inf/zero raw, decoder error, missing/wrong/nonfinite parsed heads: trip lock.
 F5 wrong session/epoch/frame/EOF, future timestamps, duplicate/out-of-order replies.
 F6 late/burst/200ms-stalled sender: one-slot overwrite, deadline, no catch-up.
-F6b a reply that arrived before EOF+60ms is rejected as late because the host reached pick() or finished admission
-    after EOF+60ms (owner 2026-10-28: device logs showed 43.6 ms arrivals rejected as late).
+F6b a reply that arrived before EOF+DEADLINE_NS is rejected as late because the host reached pick() or finished admission
+    after EOF+DEADLINE_NS (owner 2026-10-28: device logs showed 43.6 ms arrivals rejected as late).
 F7 frozen/crashed child, new epoch without dual IDR, reset/zero-pair, five warmups.
 F8 local load/run failure propagates; phone never conceals a base failure.
 F9 one publisher, four messages selected together, baseline bytes unchanged.
@@ -19,8 +19,8 @@ is frame-only rejection; failed init and SIGKILL leave no mailbox leaks. Candida
 post-pick arrival and 200ms stall occur after Phone active. Burst frames/data are distinct.
 Bounded wait: no peer/lock never sleeps; cold +35ms engages from a recent on-time old reply;
 +75ms falls back without locking; short gaps preserve warm-up, long gaps rewarm.
-Transient absent/old_frame/ipc_busy polls preserve progress; EOF+60ms bounds waiting
-and the timed 50ms camera replay publishes every frame by EOF+60ms (+5ms scheduling) with no frame drops.
+Transient absent/old_frame/ipc_busy polls preserve progress; EOF+DEADLINE_NS (48ms) bounds waiting
+and the timed 50ms camera replay publishes every frame by EOF+DEADLINE_NS (+5ms scheduling) with no frame drops.
 FIX2: flagged/unpaired replies clear warm-up; failed META publication never waits;
 recent old replies enable waiting but cannot preserve warm-up across an accepted-frame gap.
 
@@ -504,7 +504,7 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       pick_end = now()
       pick_clock_ns = pick_end - before
       if not realtime:
-        assert pick_clock_ns <= max(0, camera_eof + 60_000_000 - before)
+        assert pick_clock_ns <= max(0, camera_eof + DEADLINE_NS - before)
       if result[1] and source.w >= 1:
         scenario = scenarios[current - 1]
         delta = .1 + camera_frame * .0001 if scenario == 'burst' else .1
@@ -554,8 +554,7 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
     assert m.modelV2.big == d.drivingModelData.big == (row['source'] == 'phone')
     if realtime:
       assert m.modelV2.frameDropPerc == d.drivingModelData.frameDropPerc == 0
-      # The 60 ms deadline (#47) is longer than the 50 ms camera period: a wait may publish after the next EOF, bounded by
-      # the deadline plus scheduling; frameDropPerc == 0 above is the no-drop check.
+      # Publish is bounded by the deadline plus scheduling; frameDropPerc == 0 above is the no-drop check.
       assert row['publish'] < row['EOF'] + DEADLINE_NS + 5_000_000, (name, row)
     # Cross-fade: every head is local*(1-w) + leg*w, where leg is the accepted phone output (the last one on fallback).
     w = row['w']
@@ -677,7 +676,7 @@ def main():
           assert records[1]['fresh'] == 1 and all(r['source'] == 'local' for r in records[:6])
         if case == 'phone35_single_late':
           assert records[10]['source'] == 'local' and records[11]['source'] == 'phone'
-      elif case == 'phone75':
+      elif case in ('phone75', 'cold_phone75'):
         # Late replies still prove the link alive: the host keeps waiting to the deadline, like dev-sp-npu.
         assert all(r['source'] == 'local' and r['alive'] for r in records[13:])
       else:
@@ -885,7 +884,7 @@ class Candidate(Plugin):
                 if (selected := [r for r in rows if r['case'] == case])}},
             'limits': ['synthetic inference/VisionIPC; deterministic BOOTTIME except timed phone cases',
                        'cold +35ms peer never supplies an early reply; synthetic protocol-valid traffic proves host liveness only',
-                       'OS sleep scheduling can overshoot EOF+60ms; late replies are never adopted',
+                       'OS sleep scheduling can overshoot EOF+DEADLINE_NS; late replies are never adopted',
                        'no phone QNN, TCP/HEVC or device execution',
                        'real modeld postprocessing, Capnp/msgq and selfdrived.update_events; unrelated car/device inputs are healthy fixtures']}
   (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')

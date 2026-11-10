@@ -24,7 +24,7 @@ META = struct.Struct('<4sIQIIQQ30f')
 ENVELOPE = struct.Struct('<QQQII')
 REPLY = struct.Struct('<4sBBHIIQ')
 OFFSET, SIZE = 256, 16384
-DEADLINE_NS = 60_000_000  # Match upstream modeld BIG_REPLY_DEADLINE_MS.
+DEADLINE_NS = 48_000_000  # Below the 50 ms frame period: a longer wait delays the next META and self-sustains.
 ALIVE_NS = 2_000_000_000  # Wait for the current reply while any reply arrived this recently (dev-sp-npu BigReplyLatch).
 FADE_FRAMES = 10  # 0.5 s cross-fade between phone and local outputs at 20 Hz (dev-sp-npu SourceBlender).
 HEAD_SHAPES = {
@@ -149,7 +149,7 @@ class ModelSource:
       return self._reject('frame_eof', True)
     if not old_frame and frame <= self.last_frame and epoch == self.epoch:
       return self._reject('replay')
-    # Late means the phone missed EOF+60ms. A reply that arrived in time stays usable when the host itself runs past the
+    # Late means the phone missed EOF+DEADLINE_NS. A reply that arrived in time stays usable when the host itself runs past the
     # deadline (local model, decode, admission, an overslept poll): the local output would be just as late.
     if arrival > eof + DEADLINE_NS:
       return self._reject('old_frame' if old_frame else 'late')
