@@ -1,6 +1,7 @@
 import numpy as np
 import time
 import threading
+from collections import deque
 from collections.abc import Callable
 from enum import Enum
 from openpilot.cereal import messaging, log
@@ -103,6 +104,8 @@ class UIState(UIStateSP):
     self.usb_connected_ts: float | None = None
     self.usb_disconnected_ts: float | None = None
     self.usb_unknown: bool = False
+    self._phone_big_frames = deque(maxlen=50)
+    self._phone_seen = False
     self.chestnut_state = ChestnutState.DISCONNECTED
     self.started: bool = False
     self.ignition: bool = False
@@ -222,6 +225,8 @@ class UIState(UIStateSP):
   def _update_chestnut_state(self) -> None:
     detected = self.sm["deviceState"].chestnutPresent
     if not self.started:
+      self._phone_big_frames.clear()
+      self._phone_seen = False
       self.chestnut_present = detected
       self.chestnut_state = (ChestnutState.FAILED if self.chestnut_alert else
                              ChestnutState.READY if detected and self.chestnut_compiled else
@@ -230,9 +235,12 @@ class UIState(UIStateSP):
 
     model_seen = self.sm.recv_frame["modelV2"] > self.started_frame
     if not self.chestnut_present:  # xpilot: the phone NPU (tesla/model_source.py) sets modelV2.big while its output drives
-      big = self.sm.alive["modelV2"] and self.sm["modelV2"].big
-      self.chestnut_state = (ChestnutState.ACTIVE if big else ChestnutState.FAILED if self.chestnut_state in (ChestnutState.ACTIVE, ChestnutState.FAILED)
-                             else ChestnutState.DISCONNECTED)
+      if model_seen and self.sm.updated["modelV2"]:
+        big = self.sm["modelV2"].big
+        self._phone_big_frames.append(big)
+        self._phone_seen |= big
+      self.chestnut_state = (ChestnutState.ACTIVE if sum(self._phone_big_frames) >= 45 else
+                             ChestnutState.FAILED if self._phone_seen else ChestnutState.DISCONNECTED)
     elif not self.chestnut_compiled:
       self.chestnut_state = ChestnutState.UNCOMPILED
     elif self.chestnut_loading or not model_seen:
