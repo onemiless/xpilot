@@ -396,8 +396,8 @@ class BigScreenHost:
   def render(self) -> None:
     if self._mode == "onroad":
       self._draw_tiles(self._place("drive"), self._now)
-      self._draw_overlays()
       self._draw_onroad_panels()
+      self._draw_overlays()  # topmost: blind-spot warnings must not hide under navigation or alerts
     else:
       self._draw_offroad()
 
