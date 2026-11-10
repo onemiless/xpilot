@@ -59,9 +59,11 @@ def scaled(s: float):
 
 
 def _zones(view) -> dict:
-  """ScreenOverlay zones: the strips around the current view and the view itself."""
+  """Side zones include the video edges so warnings remain visible with narrow or absent side columns."""
   x, y, w, h = view
-  return {"left": rl.Rectangle(0, 0, x, SCREEN[1]), "right": rl.Rectangle(x + w, 0, SCREEN[0] - x - w, SCREEN[1]),
+  edge = w * 0.1
+  return {"left": rl.Rectangle(0, 0, x + edge, SCREEN[1]),
+          "right": rl.Rectangle(x + w - edge, 0, SCREEN[0] - x - w + edge, SCREEN[1]),
           "top": rl.Rectangle(x, 0, w, y), "bottom": rl.Rectangle(x, y + h, w, SCREEN[1] - y - h), "view": rl.Rectangle(*view)}
 
 
