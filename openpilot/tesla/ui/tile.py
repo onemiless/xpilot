@@ -56,6 +56,7 @@ class Tile:
   MICI: ClassVar[bool] = False
   COLOR: ClassVar[tuple[int, int, int]] = ACCENT  # the chosen tiles.THEMES color, set on Tile by the host
   TRANSLATE_TITLE: ClassVar[bool] = False
+  PARK: ClassVar[bool] = False  # onroad: a tap shows the park screen (settings while driving)
   DOCK: ClassVar[str] = ""  # "view": onroad drawn beside the drive view until dragged into the drive grid; lowest order wins
 
   def docked(self, state) -> bool:

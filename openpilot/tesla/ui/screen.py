@@ -1,5 +1,6 @@
 """Big-screen host (C3/C3X/C3XL, 2160x1080), UI v4: Windows Phone / Win 8 style tiles (XPILOT.md §9, layout in tiles.py).
-Onroad: drag the mici view; neutral tiles flow around it, then plugin ScreenOverlays. Other touches are ignored.
+Onroad: drag the mici view; neutral tiles flow around it, then plugin ScreenOverlays on top.
+A long press outside the view or a tap on a PARK tile (Settings) shows the park screen; other touches are ignored.
 Alerts are drawn over the tiles in the gap above or below the view, navigation in the gap left or right of it.
 Offroad: the tile screen (tap opens a tile's page, long press enters edit mode), or a full-screen detail page: back
 button, parent name, title, and a native page (tesla/ui/pages) drawn here in screen pixels. The mici texture is not
@@ -724,7 +725,7 @@ class BigScreenHost:
           self._save()
         return
       if self._mode == "onroad":
-        if event == "long":
+        if event == "long" or (event == "tap" and (tid := tiles.hit(placed, sx, sy)) is not None and self._entries[tid].tile.PARK):
           self._screen_override = "offroad"
         return
     tid = tiles.hit(placed, sx, sy)

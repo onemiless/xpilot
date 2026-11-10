@@ -6,7 +6,6 @@ from openpilot.system.ui.lib.application import gui_app, MousePos
 from openpilot.system.ui.widgets import DialogResult
 from openpilot.system.ui.widgets.inputbox import InputBox
 from openpilot.system.ui.widgets.keyboard import Keyboard
-from openpilot.tesla.ui.offroad import editable
 
 
 class SettingInput(InputBox):
@@ -46,8 +45,6 @@ class SettingKeyboard(Keyboard):
 
 
 def edit_text_setting(setting, params, refresh) -> None:
-  if not editable():
-    return
   keyboard = SettingKeyboard()
   keyboard._input_box = SettingInput(setting, keyboard)
   keyboard.set_title(tr(setting.label))
@@ -55,7 +52,7 @@ def edit_text_setting(setting, params, refresh) -> None:
     keyboard.set_text(params.get(setting.key, return_default=True) or "")
 
   def finished(result):
-    if result == DialogResult.CONFIRM and editable():
+    if result == DialogResult.CONFIRM:
       error = setting.input_error(keyboard.text)
       if error:
         keyboard.set_title(tr(setting.label), error)
