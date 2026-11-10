@@ -234,23 +234,25 @@ class UIState(UIStateSP):
       return
 
     model_seen = self.sm.recv_frame["modelV2"] > self.started_frame
+    if model_seen and self.sm.updated["modelV2"]:
+      big = self.sm["modelV2"].big
+      self._phone_big_frames.append(big)
+      self._phone_seen |= big
     if not self.chestnut_present:  # xpilot: the phone NPU (tesla/model_source.py) sets modelV2.big while its output drives
-      if model_seen and self.sm.updated["modelV2"]:
-        big = self.sm["modelV2"].big
-        self._phone_big_frames.append(big)
-        self._phone_seen |= big
       self.chestnut_state = (ChestnutState.ACTIVE if sum(self._phone_big_frames) >= 45 else
                              ChestnutState.FAILED if self._phone_seen else ChestnutState.DISCONNECTED)
     elif not self.chestnut_compiled:
       self.chestnut_state = ChestnutState.UNCOMPILED
     elif self.chestnut_loading or not model_seen:
       self.chestnut_state = ChestnutState.LOADING
-    elif self.chestnut_state == ChestnutState.FAILED or not detected or (model_seen and (not self.sm.alive["modelV2"] or not self.sm["modelV2"].big)):
+    elif self.chestnut_alert or not detected or self.chestnut_active is False:
       self.chestnut_state = ChestnutState.FAILED
-    elif self.chestnut_active is False:
+    elif sum(self._phone_big_frames) >= 45:
+      self.chestnut_state = ChestnutState.ACTIVE
+    elif len(self._phone_big_frames) == 50:
       self.chestnut_state = ChestnutState.FAILED
     else:
-      self.chestnut_state = ChestnutState.ACTIVE
+      self.chestnut_state = ChestnutState.LOADING
 
   def update_params(self) -> None:
     # For slower operations

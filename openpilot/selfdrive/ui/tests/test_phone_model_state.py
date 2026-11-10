@@ -1,4 +1,4 @@
-"""Failure cases: 44/50 vs 45/50, duplicate UI ticks, stale pre-drive model, lost source, offroad reset."""
+"""Failure cases: 44/50 vs 45/50, duplicate UI ticks, stale pre-drive model, lost source, offroad reset, Chestnut single miss/recovery and hardware faults."""
 import ast
 from collections import deque
 from enum import Enum
@@ -58,6 +58,44 @@ class TestPhoneModelState(unittest.TestCase):
     sm.recv_frame['modelV2'] = ui.started_frame
     frame(True)
     self.assertEqual(ui.chestnut_state, states.DISCONNECTED)
+
+    ui.chestnut_present = ui.chestnut_compiled = True
+    ui.chestnut_loading = False
+    ui.chestnut_active = None
+    sm['deviceState'].chestnutPresent = True
+    sm.recv_frame['modelV2'] = 1
+    ui._phone_big_frames.clear()
+    for _ in range(50):
+      frame(True)
+    self.assertEqual(ui.chestnut_state, states.ACTIVE)
+    frame(False)
+    self.assertEqual(ui.chestnut_state, states.ACTIVE)
+    for _ in range(4):
+      frame(False)
+    self.assertEqual(ui.chestnut_state, states.ACTIVE)  # 45/50
+    frame(False)
+    self.assertEqual(ui.chestnut_state, states.FAILED)  # 44/50
+    for _ in range(50):
+      frame(True)
+    self.assertEqual(ui.chestnut_state, states.ACTIVE)
+    ui.chestnut_alert = True
+    frame(True)
+    self.assertEqual(ui.chestnut_state, states.FAILED)
+    ui.chestnut_alert = False
+    sm['deviceState'].chestnutPresent = False
+    frame(True)
+    self.assertEqual(ui.chestnut_state, states.FAILED)
+    sm['deviceState'].chestnutPresent = True
+    ui.chestnut_active = False
+    frame(True)
+    self.assertEqual(ui.chestnut_state, states.FAILED)
+    ui.chestnut_active = None
+    ui.chestnut_loading = True
+    frame(True)
+    self.assertEqual(ui.chestnut_state, states.LOADING)
+    ui.chestnut_compiled = False
+    frame(True)
+    self.assertEqual(ui.chestnut_state, states.UNCOMPILED)
 
 
 if __name__ == '__main__':
