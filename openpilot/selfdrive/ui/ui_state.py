@@ -238,14 +238,15 @@ class UIState(UIStateSP):
       big = self.sm["modelV2"].big
       self._phone_big_frames.append(big)
       self._phone_seen |= big
-    if not self.chestnut_present:  # xpilot: the phone NPU (tesla/model_source.py) sets modelV2.big while its output drives
+    if not detected:  # xpilot: the phone NPU (tesla/model_source.py) sets modelV2.big while its output drives
       self.chestnut_state = (ChestnutState.ACTIVE if sum(self._phone_big_frames) >= 45 else
-                             ChestnutState.FAILED if self._phone_seen else ChestnutState.DISCONNECTED)
+                             ChestnutState.DISCONNECTED if not self._phone_seen else
+                             ChestnutState.FAILED if len(self._phone_big_frames) == 50 else ChestnutState.LOADING)
     elif not self.chestnut_compiled:
       self.chestnut_state = ChestnutState.UNCOMPILED
     elif self.chestnut_loading or not model_seen:
       self.chestnut_state = ChestnutState.LOADING
-    elif self.chestnut_alert or not detected or self.chestnut_active is False:
+    elif self.chestnut_alert or self.chestnut_active is False:
       self.chestnut_state = ChestnutState.FAILED
     elif sum(self._phone_big_frames) >= 45:
       self.chestnut_state = ChestnutState.ACTIVE

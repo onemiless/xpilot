@@ -32,7 +32,7 @@ class TestPhoneModelState(unittest.TestCase):
     self.assertEqual(ui.chestnut_state, states.DISCONNECTED)
     for _ in range(44):
       frame(True)
-    self.assertEqual(ui.chestnut_state, states.FAILED)
+    self.assertEqual(ui.chestnut_state, states.LOADING)
     frame(True)
     self.assertEqual(ui.chestnut_state, states.ACTIVE)
     for _ in range(4):
@@ -84,7 +84,9 @@ class TestPhoneModelState(unittest.TestCase):
     ui.chestnut_alert = False
     sm['deviceState'].chestnutPresent = False
     frame(True)
-    self.assertEqual(ui.chestnut_state, states.FAILED)
+    self.assertTrue(ui.chestnut_present)
+    self.assertEqual(sum(ui._phone_big_frames), 50)
+    self.assertEqual(ui.chestnut_state, states.ACTIVE)
     sm['deviceState'].chestnutPresent = True
     ui.chestnut_active = False
     frame(True)
