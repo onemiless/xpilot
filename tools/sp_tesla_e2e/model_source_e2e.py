@@ -19,7 +19,7 @@ is frame-only rejection; failed init and SIGKILL leave no mailbox leaks. Candida
 post-pick arrival and 200ms stall occur after Phone active. Burst frames/data are distinct.
 Bounded wait: no peer/lock never sleeps; cold +35ms engages from a recent on-time old reply;
 +75ms falls back without locking; short gaps preserve warm-up, long gaps rewarm.
-Transient absent/old_frame/ipc_busy polls preserve progress; EOF+DEADLINE_NS (48ms) bounds waiting
+Transient absent/old_frame/ipc_busy polls preserve progress; EOF+DEADLINE_NS (60ms) bounds waiting
 and the timed 50ms camera replay publishes every frame by EOF+DEADLINE_NS (+5ms scheduling) with no frame drops.
 FIX2: flagged/unpaired replies clear warm-up; failed META publication never waits;
 recent old replies enable waiting but cannot preserve warm-up across an accepted-frame gap.
@@ -790,6 +790,13 @@ def main():
     assert len(stale) == 1
     source = ModelSource(directory, decode, admit)
     assert not any(p.exists() for p in stale)
+    source.close()
+    # Decoupled sender: a reply for a frame modeld has not reached yet is dropped without locking.
+    source = ModelSource(directory, decode, admit)
+    source.sent, source.frame, source.eof = True, 100, nanos_since_boot() - 200_000_000
+    ahead = struct.pack('<4sBBHIIQ', b'BGM1', 2, 0x11, 0, 101, 8280, source.eof + 50_000_000) + bytes(8296)
+    source.buffer[256:256 + 32 + len(ahead)] = struct.pack('<QQQII', source.session, 1, source.eof + 60_000_000, 3, len(ahead)) + ahead
+    assert source._candidate({}) is None and source.reason == 'ahead' and not source.locked, source.reason
     source.close()
     for target in ('os.ftruncate', 'mmap.mmap'):
       opened = []

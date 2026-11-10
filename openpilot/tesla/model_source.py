@@ -24,7 +24,7 @@ META = struct.Struct('<4sIQIIQQ30f')
 ENVELOPE = struct.Struct('<QQQII')
 REPLY = struct.Struct('<4sBBHIIQ')
 OFFSET, SIZE = 256, 16384
-DEADLINE_NS = 48_000_000  # Below the 50 ms frame period: a longer wait delays the next META and self-sustains.
+DEADLINE_NS = 60_000_000  # The plugin sends on camera arrival, not on META, so a wait past the next EOF no longer self-sustains.
 ALIVE_NS = 2_000_000_000  # Wait for the current reply while any reply arrived this recently (dev-sp-npu BigReplyLatch).
 FADE_FRAMES = 10  # 0.5 s cross-fade between phone and local outputs at 20 Hz (dev-sp-npu SourceBlender).
 HEAD_SHAPES = {
@@ -145,6 +145,9 @@ class ModelSource:
     if eof > now or arrival > now:
       return self._reject('future_timestamp', True)
     old_frame = frame < self.frame or (frame > self.frame and eof < self.eof)
+    if frame > self.frame and eof > self.eof:
+      # The plugin sends on camera arrival, so a lagging modeld can see a reply for a frame it has not reached yet.
+      return self._reject('ahead')
     if not old_frame and (frame != self.frame or eof != self.eof):
       return self._reject('frame_eof', True)
     if not old_frame and frame <= self.last_frame and epoch == self.epoch:
