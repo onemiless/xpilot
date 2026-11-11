@@ -251,3 +251,35 @@ modeld（lean_modeld 进程）每帧跑本机模型 ──▶ ModelSource.pick �
   第 1 步省 1.1–1.5 ms，`rtt` 和采纳率不变。离目标 5.8 ms 还差约 3 ms，落在 `recv`（比原生多 1.1–1.5）、`encode`（多 0.3–0.7）和 `wake`（0.9）。设备一直在升温，`recv` 和 `encode` 随轮次变大。下一步候选：两条取帧线程分别绑 core 2 / core 6（代码已在分支上，未测）、`XP_ENCODERD_DEFER_MS` 0/10/15、三缓冲去掉 `memcpy`。
 - **台架被内存泄露打断（原有问题，和本方案无关）**：每轮台架（停 manager → 模拟上车 → 恢复 manager）后 `MemAvailable` 永久少约 170 MB（R1 2322 → … → S 1131 MB），S 开始约 45 s 就因低于 400 MB 自动中止，后面 P7.2、P7.3、绑核、encoderd 延后各轮全部同样中止，没有数据。0.8.10–0.8.12 加旧系统的台架（`/data/bench-T-20261110-10`）同样每轮约 −170 MB。`/sys/kernel/debug/dma_buf/bufinfo`：530 个 ion buffer 共 2358 MB，几乎全部挂在 `mdss_mdp`（显示）上：180 × 9.18 MB（约一屏 RGBA）、162 × 4.7 MB。看起来是 UI 每次重启后显示缓冲没有释放。车上如果 manager 或 UI 重启也会累积；V-20261107-08 的意外重启（ramoops 里有 lowmemorykiller）可能是同一原因。需要单开任务查，C3 重启后才能继续台架。
 - 清理：xpilot-plugins PR #47 已关闭；`task/T-20261110-08` 分支已删除（它的超时改动已并入 0.8.13）。
+- 0.8.13 已合并（xpilot-plugins PR #48，squash `b6f5958`）。C3 重启后的 S 轮跑了约 8 分钟就按要求停了；这一轮里 worker VmPeak 488 MB（原来 1013 MB），RSS 58 MB，`M_ARENA_MAX` 有效。
+- P3 第 5 步（取帧线程绑核）：road 取帧线程绑 core 2，wide 绑 core 6。只起一次 manager，各轮之间离车时换插件文件，每轮 120 s，C = 第 1 步版，E = 加绑核：
+
+  | 轮次 | eof_to_send | recv | encode | wake |
+  |---|---|---|---|---|
+  | C1 | 9.1 | 3.1 | 2.6 | 1.0 |
+  | E1 | 8.3 | 2.6 | 2.3 | 1.2 |
+  | C2 | 8.7 | 2.7 | 2.6 | 0.9 |
+  | E2 | 7.5 | 2.1 | 2.1 | 1.1 |
+
+  省 0.8–1.2 ms，取帧和编码两段都下降。这四轮手机 Wi-Fi 很差（`net` 5.8–11.8 ms，C2/E2 采纳率约 65%），只影响采纳率和 `rtt`，不影响这里比较的车端各段。
+- 0.8.14 = P2 + P3 第 1 步 + 绑核，xpilot-plugins PR #49（`task/lean-mici-0.8.14`），`libcamera.so` 是 C3 上编出的 aarch64 产物（sha1 `ffca8f08`）。
+- **设备当前状态（2026-11-11）**：C3 系统在分支 `phone-link`（`d82bf47`，内容等于 dev-sp-npu `xpilot` 的 `09ccbc3`），插件文件就是 0.8.14（和 PR #49 逐个 sha1 一致，`plugin.json` 版本号是手改的），正常 manager。0.8.12 的原文件在 `/data/bench-PL/plugin-0.8.12/`，原分支 `devsp-xpilot` 还在。
+
+## 6. 待办（2026-11-11 停下时）
+
+按优先级排。设备测试一律用"一次 manager 跑多轮"的方式（`/data/bench-PL/fast.sh`：只打一次台架补丁、编一次 pandad，各轮之间离车换插件文件，`ROUNDS`/`DUR` 可调），每轮 120 s 足够看出 0.3 ms 以上的差。每次停 manager 重启会漏约 170 MB（见下面第 4 项），一次开机最多跑 7–8 个"重启式"轮次。
+
+1. **合并 PR #49（0.8.14）**：等 CI 通过。合并后设备从商店重装一次，让 `plugin.json` 也和仓库一致。
+2. **P3 继续追平原生（还差约 2 ms，目标 `eof_to_send` p50 ≤ 5.8 ms）**
+   - **encoderd 争用**（不改代码，先做）：`XP_ENCODERD_DEFER_MS` 取 0 / 10 / 15，要改 manager 环境变量，每档一次 manager。`bench.sh` 已支持 `DEFER=<ms>`。看 `encode` 段（现在 2.1–2.6，原生 2.27）。
+   - **去掉输入 memcpy（2.3 节第 1、2 条，`wake` 段约 1 ms）**：每路 3 个编码输入缓冲轮转，取帧线程直接 warp 进"既不是最新完成帧、也不是 Venus 占用中"的缓冲，配对后直接提交，`collect` 不再等 `released`。失败用例见 P3 第 2 步。
+   - `recv`（2.1–2.6，原生 1.43）在绑核后还高约 0.7–1 ms，查 camerad 到 VisionIPC 的路径和两条线程的调度优先级。
+   - 第 3 步（在取帧线程里提交编码）不做：`pair` 段一直是 0.0–0.1，Python 线程早就在等，没有可省的唤醒时间。
+3. **P7 剩下的两项**
+   - P7.2：60 ms 截止加最新插件的热态台架，和 48 ms 交替各两轮，看采纳率、发布 p50/p95、`eof_to_send`。`bench.sh` 已支持 `DEADLINE=<ms>`，可以并进同一次 manager 吗？不行，截止值在 `model_source.py` 里，要换文件后重启 `lean_modeld`；用 fast.sh 的方式在离车时改文件即可（`lean_modeld` 每次上车重启）。
+   - P7.3：30 分钟浸泡加 20 次断网（`bench.sh` 的 `EVENTS=soak`，分析脚本 `/data/bench-PL/soak.py`），要在刚重启的设备上跑。
+4. **显示缓冲泄露（新开任务，和手机链路无关）**：每次停 manager 再启动（UI 跟着重启）后，`/sys/kernel/debug/dma_buf/bufinfo` 里挂在 `mdss_mdp` 上的 ion buffer 增加约 170 MB（重启前 530 个、2358 MB：180 × 9.18 MB、162 × 4.7 MB），重启设备才释放。0.8.10–0.8.12 加旧系统时同样存在。要分清两种情况：(a) 同一个 manager 里只做上车、下车（车上正常一趟），(b) 离车时只重启 manager。实验脚本已写好：`/data/bench-PL/leak.sh`（每步前后记 buffer 数量、`mdss_mdp` 大小、`MemAvailable`、持有 dmabuf 的 fd 数）。如果 (a) 也漏，就是车上实际会累积的问题，可能就是 V-20261107-08 那次意外重启（ramoops 里有 lowmemorykiller）的原因。
+5. **P5 的设备验证**：上车打一次转向灯，在 `lean_mici.link` 或抓包里看到恰好一个 desire 脉冲。台架没有车，做不了。
+6. **`model_source_e2e.py` 的默认基线过时**：`--baseline 48c8d50` 在当前代码上报 `default modeld output changed`，不在 CI 里。把基线换成一个"不带插件的 modeld"提交，或者把这一步的比较方式改掉，然后加进 CI。
+7. **系统改动同步到 `onemiless/xpilot`**：本方案的系统提交（`97295d9`、`fafa56a`、`a3aec45`、`09ccbc3`、文档）只在 dev-sp-npu 的 `xpilot` 分支上。0.8.13 起插件依赖 META ABI 2 才能发 desire 电平；旧系统加新插件仍能工作（走 ABI 1 的旧行为）。
+
