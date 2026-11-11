@@ -276,7 +276,7 @@ modeld（lean_modeld 进程）每帧跑本机模型 ──▶ ModelSource.pick �
    - `recv`（2.1–2.6，原生 1.43）在绑核后还高约 0.7–1 ms，查 camerad 到 VisionIPC 的路径和两条线程的调度优先级。
    - 第 3 步（在取帧线程里提交编码）不做：`pair` 段一直是 0.0–0.1，Python 线程早就在等，没有可省的唤醒时间。
 3. **P7 剩下的两项**
-   - P7.2：60 ms 截止加最新插件的热态台架，和 48 ms 交替各两轮，看采纳率、发布 p50/p95、`eof_to_send`。`bench.sh` 已支持 `DEADLINE=<ms>`，可以并进同一次 manager 吗？不行，截止值在 `model_source.py` 里，要换文件后重启 `lean_modeld`；用 fast.sh 的方式在离车时改文件即可（`lean_modeld` 每次上车重启）。
+   - P7.2：60 ms 截止加最新插件的热态台架，和 48 ms 交替各两轮，看采纳率、发布 p50/p95、`eof_to_send`。截止值在 `model_source.py` 里，`lean_modeld` 每次上车都会重启，所以可以按 fast.sh 的方式在同一次 manager 里跑：离车时改 `DEADLINE_NS`，再上车（`bench.sh` 的 `DEADLINE=<ms>` 是每轮重启 manager 的旧做法）。
    - P7.3：30 分钟浸泡加 20 次断网（`bench.sh` 的 `EVENTS=soak`，分析脚本 `/data/bench-PL/soak.py`），要在刚重启的设备上跑。
 4. **显示缓冲泄露（新开任务，和手机链路无关）**：每次停 manager 再启动（UI 跟着重启）后，`/sys/kernel/debug/dma_buf/bufinfo` 里挂在 `mdss_mdp` 上的 ion buffer 增加约 170 MB（重启前 530 个、2358 MB：180 × 9.18 MB、162 × 4.7 MB），重启设备才释放。0.8.10–0.8.12 加旧系统时同样存在。要分清两种情况：(a) 同一个 manager 里只做上车、下车（车上正常一趟），(b) 离车时只重启 manager。实验脚本已写好：`/data/bench-PL/leak.sh`（每步前后记 buffer 数量、`mdss_mdp` 大小、`MemAvailable`、持有 dmabuf 的 fd 数）。如果 (a) 也漏，就是车上实际会累积的问题，可能就是 V-20261107-08 那次意外重启（ramoops 里有 lowmemorykiller）的原因。
 5. **P5 的设备验证**：上车打一次转向灯，在 `lean_mici.link` 或抓包里看到恰好一个 desire 脉冲。台架没有车，做不了。
