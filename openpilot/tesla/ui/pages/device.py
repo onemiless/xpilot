@@ -6,13 +6,14 @@ from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.sunnypilot.hardware.profile import has_driver_camera
 from openpilot.system.ui.widgets.list_view import button_item, text_item
 from openpilot.system.ui.lib.multilang import tr, tr_noop
-from openpilot.tesla.ui.pages.base import ListPage, back, confirm
+from openpilot.tesla.ui.pages.base import ListPage, ParamToggle, back, confirm
 from openpilot.tesla.ui.pages.driver_camera import DriverCameraPage
 from openpilot.tesla.ui.pages.regulatory import RegulatoryPage
 from openpilot.tesla.ui.pages.terms import TermsPage
 from openpilot.tesla.ui.pages.training import TrainingGuidePage
 
 CALIB_DESC = tr_noop("openpilot calibrates continuously; resetting is rarely needed. Mount within 4 degrees left/right and 5 up/9 down.")
+SLEEP_DESC = tr_noop("Off by default. Powers off after the parked Tesla is silent for 2 minutes, or 15 minutes after ignition turns off. Comes back on only if the car restores 12V; otherwise press the power button.")
 
 
 def _reset_calibration() -> None:
@@ -31,6 +32,7 @@ class DevicePage(ListPage):
     power_off = button_item(tr("Power off"), tr("POWER OFF"), callback=lambda: confirm(tr("Are you sure you want to power off?"), "power off",
                                                                                lambda: params.put_bool("DoShutdown", True, block=True)))
     power_off.set_visible(lambda: not ui_state.ignition)
+    self.sleep_shutdown = ParamToggle(tr("Shut down when Tesla sleeps"), "TeslaSleepShutdown", tr(SLEEP_DESC))
     camera_row = button_item(tr("Driver camera preview"), tr("PREVIEW"),
                              tr("Preview the cabin camera to check driver monitoring visibility. The vehicle must be off."),
                              callback=lambda: offroad() and self.open(tr("driver camera"), camera), enabled=offroad)
@@ -48,8 +50,10 @@ class DevicePage(ListPage):
                   callback=lambda: confirm(tr("Are you sure you want to reset calibration?"), "reset", _reset_calibration)),
       button_item(tr("Reboot"), tr("REBOOT"), callback=lambda: confirm(tr("Are you sure you want to reboot?"), "reboot",
                                                                lambda: params.put_bool("DoReboot", True, block=True))),
+      self.sleep_shutdown.item,
       power_off,
     )
 
   def show_event(self):
     super().show_event()
+    self.sleep_shutdown.refresh()

@@ -1866,3 +1866,11 @@ msgstr "Longitudinal Control"
 #: openpilot/tesla/ui/offroad.py:61
 msgid "Tiles & Overlays"
 msgstr "Tiles & Overlays"
+
+#: openpilot/tesla/ui/pages/device.py:16
+msgid "Off by default. Powers off after the parked Tesla is silent for 2 minutes, or 15 minutes after ignition turns off. Comes back on only if the car restores 12V; otherwise press the power button."
+msgstr "Off by default. Powers off after the parked Tesla is silent for 2 minutes, or 15 minutes after ignition turns off. Comes back on only if the car restores 12V; otherwise press the power button."
+
+#: openpilot/tesla/ui/pages/device.py:35
+msgid "Shut down when Tesla sleeps"
+msgstr "Shut down when Tesla sleeps"
