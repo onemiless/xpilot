@@ -255,7 +255,11 @@ class ModelState(ModelStateBase):
       else:
         desired_curvature = prev_action.desiredCurvature
 
-    return log.ModelDataV2.Action(desiredCurvature=float(desired_curvature), desiredAcceleration=float(desired_accel), shouldStop=bool(stop))
+    action = log.ModelDataV2.Action()
+    action.desiredCurvature = float(desired_curvature)
+    action.desiredAcceleration = float(desired_accel)
+    action.shouldStop = bool(stop)
+    return action
 
 
 def main(demo=False):
