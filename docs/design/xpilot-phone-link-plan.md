@@ -213,4 +213,41 @@ modeld（lean_modeld 进程）每帧跑本机模型 ──▶ ModelSource.pick �
 
 每个任务包做完在这里加一小节：提交号（本地和设备上生效的分开写）、命令和退出码、关键数字。
 
-- P0：`97295d9`，本地，未推送。pycapnp 2.2.0 下基线 `907d153` 四处都漏（退出码 1），新代码为 0（退出码 0）；2.1.0 下新代码为 0。
+台架统一说明：C3（AGNOS 19.9）连手机热点，无车。模拟点火、`FAKESEND`、`FINGERPRINT=MOCK`，Panda 保持 `noOutput`。脚本和原始数据在设备 `/data/bench-PL/`（`bench.sh`、`an.py`、`<轮次>.jsonl/.events/.mem`）。设备系统是分支 `phone-link` 上的 `d82bf47`，内容等于 dev-sp-npu `xpilot` 的 `09ccbc3`（`e3eea72` 加上 `97295d9`、`fafa56a`、`a3aec45`、`09ccbc3`）。
+
+- P0：`97295d9` 已推送到 dev-sp-npu `xpilot`，CI 通过。pycapnp 2.2.0 下基线 `907d153` 四处都漏（退出码 1），新代码为 0（退出码 0）；2.1.0 下新代码为 0。
+- P7.1：设备 `/usr/local/venv` 的 pycapnp 是 **2.1.0**，没有在漏。P0、P1 是预防性修复。
+- P1：`fafa56a`。`safety_manifest_check.py` 新增 G15（无循环垃圾）、G16（嵌套字段）。pycapnp 2.2.0 下基线失败，报 `G15 CarParamsSP: 32000 cyclic objects/2000 calls`，退出码 1；新代码在 2.1.0 和 2.2.0 下都通过。新旧写法 `to_bytes()` 相同，`static_imports.py` 通过。
+- P5 系统部分：`a3aec45`（META ABI 2，发电平）。`model_source_e2e.py --baseline e3eea72` 通过；基线 `e3eea72` 在 ABI 断言处失败（fake peer stalled）。注意：默认 `--baseline 48c8d50` 在基线上也失败（`default modeld output changed`），这个检查不在 CI 里，早已过时，需要另开任务更新基线。
+- P4、P5 插件部分、P6：lean_mici 0.8.13，xpilot-plugins PR #48（`task/phone-link-p4`）。新增 `tests/link_e2e.py`，S1–S4、R1–R5、D1–D5 全部通过；在 0.8.12 上于 S1 失败。`recovery_e2e` 的 fixture 从 0.8.10 起就会卡死（在 0.8.12 上同样失败），已一并修正。
+  - 设备 R1（0.8.13，`avahi-browse` 不带 `-t`）：稳态采纳 100%；`port 7070` 断 5 s，断开结束后 1.84 s 首次采纳；300 ms 卡顿不断链。
+  - 设备 R2（加 `-t` 和 P2 计时）：`kill -9` worker 后 3.0 s 首次采纳（连续 10 帧 3.44 s）；断 5 s 后 0.94 s 首次采纳（连续 10 帧 1.39 s）；300 ms 卡顿不断链。P4 的完成标准（10 s 内、≤1.5 s、不断链）全部达到。
+  - P6：`srv_recv` 1.2、`srv_prep` 4.1、`srv_htp` **14.3**、`srv_total` 19.6、`net` 4.0 ms（p50），达标（13–15）。
+- P2：`task/phone-link-p2`，`camera.cc` 增加 BOOTTIME 打点。R2 的各段 p50（ms）：
+
+  | 段 | lean_mici（R2） | 原生 bigmodeld（V-20261107-03） |
+  |---|---|---|
+  | recv | 2.1 | 1.43 |
+  | warp | 1.2 | 1.46 |
+  | pair | 0.0 | 0.15 |
+  | wake | 0.8 | — |
+  | encode | 2.2 | 2.27 |
+  | release | 0.1 | — |
+  | py_post | 1.9 | — |
+  | send | 0.6 | 0.53 |
+  | eof_to_send | 8.8 | 5.31 |
+
+  差距主要在 `py_post`（1.9）、`wake`（0.8）和 `recv`（+0.7）。`release` 只有 0.1，2.3 节第 2 条（三缓冲）的收益上限很小。R2 开始时设备最高温区 75 °C，不是冷态；P2 失败用例 (2) 的计时开销没有单独做 A/B。
+- 内存：R2 中 worker VmPeak 1013 MB，离 `RLIMIT_AS`（1 GiB）只剩 3%。RSS 是 59 MB。`/proc/<pid>/maps` 里匿名映射共 726 MB，其中 9 块 ≥60 MB，是每线程 64 MB 的 glibc malloc arena；dmabuf 169 MB；12 个线程。0.8.13 加 `mallopt(M_ARENA_MAX, 2)`（`bf20b60`），效果由 P7.3 验证。
+- P3 第 1 步（`task/phone-link-p3`）：关键帧标志由 C++ 返回、`ctypes.string_at`、`sm.update`/`vehicle()` 挪到编码前、一次 `sendall`。设备 K 轮（60 s，1130 帧）：C++ 关键帧位和 Annex-B NAL 扫描结果全部一致。A/B/A/B 各 300 s（A = P2 版，B = 第 1 步）：
+
+  | 轮次 | eof_to_send | py_post | recv | encode | wake | rtt | 采纳率 |
+  |---|---|---|---|---|---|---|---|
+  | A1 | 9.9 | 1.8 | 2.5 | 2.9 | 0.9 | 23.9 | 100% |
+  | B1 | 8.8 | 0.3 | 2.7 | 3.0 | 0.9 | 23.7 | 100% |
+  | A2 | 10.0 | 1.9 | 2.8 | 2.6 | 0.9 | 23.7 | 99.98% |
+  | B2 | 8.5 | 0.3 | 2.9 | 2.6 | 0.9 | 23.6 | 99.97% |
+
+  第 1 步省 1.1–1.5 ms，`rtt` 和采纳率不变。离目标 5.8 ms 还差约 3 ms，落在 `recv`（比原生多 1.1–1.5）、`encode`（多 0.3–0.7）和 `wake`（0.9）。设备一直在升温，`recv` 和 `encode` 随轮次变大。下一步候选：两条取帧线程分别绑 core 2 / core 6（代码已在分支上，未测）、`XP_ENCODERD_DEFER_MS` 0/10/15、三缓冲去掉 `memcpy`。
+- **台架被内存泄露打断（原有问题，和本方案无关）**：每轮台架（停 manager → 模拟上车 → 恢复 manager）后 `MemAvailable` 永久少约 170 MB（R1 2322 → … → S 1131 MB），S 开始约 45 s 就因低于 400 MB 自动中止，后面 P7.2、P7.3、绑核、encoderd 延后各轮全部同样中止，没有数据。0.8.10–0.8.12 加旧系统的台架（`/data/bench-T-20261110-10`）同样每轮约 −170 MB。`/sys/kernel/debug/dma_buf/bufinfo`：530 个 ion buffer 共 2358 MB，几乎全部挂在 `mdss_mdp`（显示）上：180 × 9.18 MB（约一屏 RGBA）、162 × 4.7 MB。看起来是 UI 每次重启后显示缓冲没有释放。车上如果 manager 或 UI 重启也会累积；V-20261107-08 的意外重启（ramoops 里有 lowmemorykiller）可能是同一原因。需要单开任务查，C3 重启后才能继续台架。
+- 清理：xpilot-plugins PR #47 已关闭；`task/T-20261110-08` 分支已删除（它的超时改动已并入 0.8.13）。
