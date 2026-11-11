@@ -37,6 +37,8 @@ from openpilot.tesla.ui.tiles import LAYOUT_PARAM, LAYOUT_SPEC, SCREEN, THEME_PA
 DIM = rl.Color(150, 152, 162, 255)
 SHADE = rl.Color(0, 0, 0, 120)      # over unselected tiles in edit mode
 PRESSED = rl.Color(0, 0, 0, 60)
+EDGE_SWIPE = 56     # px from a screen edge where an Android-style swipe starts
+SWIPE_MIN = 140     # px of travel before the gesture opens the tile screen
 
 
 def is_big_screen() -> bool:
@@ -130,6 +132,7 @@ class BigScreenHost:
     self._drag: str | None = None
     self._bar_at, self._bar_drag = None, False
     self._back_pressed = False
+    self._edge_swipe: str | None = None
     self._view: tuple | None = None  # set each frame by viewport(); to_logical runs on the touch thread
     self._now, self._faced = time.monotonic(), {}  # set each frame by viewport(): tile faces drawn before the screen frame
     self._mode = "native"
@@ -273,6 +276,7 @@ class BigScreenHost:
     if onroad != started:
       self._gesture = tiles.Gesture()
       self._view_drag = self._nav_drag = False
+      self._edge_swipe = None
     if started:
       self._mode = "onroad"
       self._hud_drag, self._hud_selected, self._bar_drag = None, None, False
@@ -613,6 +617,33 @@ class BigScreenHost:
       at = (at[0] + self._gesture.pos[0] - self._gesture.start[0], at[1] + self._gesture.pos[1] - self._gesture.start[1])
     return tiles.bar_buttons(placed, self._layout == "drive", self._view_position, at=at)
 
+  def _edge_swipe_start(self, sx: float, sy: float, x: float, y: float) -> str | None:
+    """Which Android-style edge gesture this drag starts, if any: up from the bottom edge, or in from a side."""
+    if sy >= SCREEN[1] - EDGE_SWIPE and sy - y > 24 and abs(x - sx) < SCREEN[0] / 3:
+      return "bottom"
+    if sx < EDGE_SWIPE and x - sx > 24 and abs(y - sy) < 80:
+      return "left"
+    if sx > SCREEN[0] - EDGE_SWIPE and sx - x > 24 and abs(y - sy) < 80:
+      return "right"
+    return None
+
+  def _bar_shortcut(self, bar, sx, sy, event) -> bool:
+    """Started: the bar stays visible onroad but used to be inert; a tap now switches the screen.
+
+    "Park" opens the offroad tile screen while driving, "Drive" returns to the drive layout. Parked behaviour is
+    unchanged (switching layouts still needs edit mode) and the long-press shortcut keeps working.
+    """
+    if event != "tap" or self._edit or not ui_state.started:
+      return False
+    name = next((n for n, (x0, y0, w, h) in bar.items() if x0 <= sx < x0 + w and y0 <= sy < y0 + h), None)
+    if name is None:
+      return False
+    if self._mode == "onroad" and name == "park":
+      self._screen_override = "offroad"
+    elif self._mode != "onroad" and name == "drive":
+      self._screen_override = "onroad"
+    return True
+
   def _draw_bar(self, placed) -> None:
     medium = gui_app.font(FontWeight.MEDIUM)
     for name, (x, y, w, h) in self._bar_buttons(placed).items():
@@ -643,8 +674,19 @@ class BigScreenHost:
     if event is None or start is None:
       return
     sx, sy = start[:2]
+    if ui_state.started and not self._stack and self._mode in ("onroad", "native"):
+      if self._edge_swipe is None and event == "drag":
+        self._edge_swipe = self._edge_swipe_start(sx, sy, x, y)
+      if self._edge_swipe is not None:
+        if event == "drop":
+          if abs(x - sx) + abs(y - sy) >= SWIPE_MIN:
+            self._screen_override = "onroad" if self._mode != "onroad" else "offroad"
+          self._edge_swipe = None
+        return
     bar = self._bar_buttons(placed)
     on_bar = any(x0 <= sx < x0 + w and y0 <= sy < y0 + h for x0, y0, w, h in bar.values())
+    if on_bar and self._bar_shortcut(bar, sx, sy, event):
+      return
     if self._edit and (self._bar_drag or on_bar):
       if event == "tap" and not self._bar_drag:
         self._bar_tap(sx, sy, bar)
