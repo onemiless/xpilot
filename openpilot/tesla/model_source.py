@@ -1,6 +1,6 @@
 """Optional model candidate boundary. The plugin owns codec/profile qualification.
 
-IPC v1: private 0600 file, 16384 bytes, two latest-only slots. Metadata at 0
+IPC v2: private 0600 file, 16384 bytes, two latest-only slots. Metadata at 0
 is META; reply at 256 is ENVELOPE followed by exactly one BGM1 v2 REPLY.
 Each writer/reader takes a nonblocking POSIX byte-range lock over its slot.
 The child clears the envelope, writes the body/header, then commits length last;
@@ -21,6 +21,7 @@ from statistics import median
 import numpy as np
 
 META = struct.Struct('<4sIQIIQQ30f')
+META_ABI = 2
 ENVELOPE = struct.Struct('<QQQII')
 REPLY = struct.Struct('<4sBBHIIQ')
 OFFSET, SIZE = 256, 16384
@@ -95,16 +96,18 @@ class ModelSource:
     finally:
       fcntl.lockf(self.fd, fcntl.LOCK_UN, size, offset)
 
-  def send_frame(self, main, extra, transforms, inputs, prev_desire):
+  def send_frame(self, main, extra, transforms, inputs):
     if main.frame_id < self.frame:
       self.epoch = self.last_frame = self.fresh = 0
       self.fade, self.w, self.remote_last = 0, 0., None
     self.frame, self.eof = main.frame_id, main.timestamp_eof
-    pulse = np.where(inputs['desire_pulse'] - prev_desire > .99, inputs['desire_pulse'], 0).copy()
-    pulse[0] = 0
+    # ABI 2: desire level, not the rising edge. The child finds the edge on frames it actually sends (dev-sp-npu
+    # frame_meta), so a skipped frame cannot lose a lane change. ABI 1 children ignore v2 META and send nothing.
+    level = inputs['desire_pulse'].copy()
+    level[0] = 0
     values = np.concatenate([transforms['img'].ravel(), transforms['big_img'].ravel(),
-                             pulse, inputs['traffic_convention'], inputs['action_t']])
-    data = META.pack(b'XMS1', 1, self.session, self.frame, extra.frame_id, self.eof, extra.timestamp_eof, *values)
+                             level, inputs['traffic_convention'], inputs['action_t']])
+    data = META.pack(b'XMS1', META_ABI, self.session, self.frame, extra.frame_id, self.eof, extra.timestamp_eof, *values)
     self.sent = bool(self._slot(0, OFFSET, data))
 
   def _reject(self, reason, lock=False):

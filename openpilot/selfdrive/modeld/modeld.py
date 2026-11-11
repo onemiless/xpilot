@@ -439,7 +439,7 @@ def main(demo=False, *, local_stock=False, model_source=None):
     }
 
     if model_source is not None:
-      model_source.send_frame(meta_main, meta_extra, transforms, inputs, model.prev_desire)
+      model_source.send_frame(meta_main, meta_extra, transforms, inputs)
     mt1 = time.perf_counter()
     try:
       send_chestnut = (chestnut_state is not None and

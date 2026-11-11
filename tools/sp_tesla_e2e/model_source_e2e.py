@@ -14,6 +14,10 @@ F7 frozen/crashed child, new epoch without dual IDR, reset/zero-pair, five warmu
 F8 local load/run failure propagates; phone never conceals a base failure.
 F9 one publisher, four messages selected together, baseline bytes unchanged.
 F13 trajectory/lead/pose/action jumps fail admission; whole-frame source, including raw predictions.
+D1 META carries only the desire rising edge, so a frame the child skips loses the lane change (dev-sp-npu sends the
+   level and edge-detects in the uplink).
+D2 META keeps ABI 1 while the desire field means a level: an old child would send a pulse every frame. ABI 2 makes it
+   ignore META and stay local.
 Round 1: adapter mutation cannot alter fallback; camera regression rewarms; early arrival
 is frame-only rejection; failed init and SIGKILL leave no mailbox leaks. Candidate lock,
 post-pick arrival and 200ms stall occur after Phone active. Burst frames/data are distinct.
@@ -191,7 +195,7 @@ def peer(path, conn):
     if old:
       scenario = scenario.removeprefix('old_')
     meta = META.unpack(os.pread(fd, META.size, 0))
-    assert meta[:2] == (b'XMS1', 1)
+    assert meta[:2] == (b'XMS1', 2)
     session, frame, eof = meta[2], meta[3], meta[5]
     assert meta[4] == frame and meta[6] == eof
     if old:
@@ -399,9 +403,9 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       frame_epoch = epoch
       if isinstance(scenario, tuple):
         scenario, frame_epoch = scenario
-      pulse = np.where(inputs['desire_pulse'] - self.prev_desire > .99, inputs['desire_pulse'], 0).copy()
-      pulse[0] = 0
-      expected = np.concatenate([pulse, inputs['traffic_convention'], inputs['action_t']])
+      level = inputs['desire_pulse'].copy()
+      level[0] = 0
+      expected = np.concatenate([level, inputs['traffic_convention'], inputs['action_t']])
       if conn is not None and scenario not in ('absent', 'after_pick', 'queued', 'meta_hold'):
         conn.send((scenario, frame_epoch, now(), expected))
         while True:
@@ -790,6 +794,19 @@ def main():
     assert len(stale) == 1
     source = ModelSource(directory, decode, admit)
     assert not any(p.exists() for p in stale)
+    source.close()
+    # D1/D2: a held desire stays in META on every frame, under ABI 2.
+    source = ModelSource(directory, decode, admit)
+    frame = types.SimpleNamespace(frame_id=0, timestamp_eof=0)
+    eye = {'img': np.eye(3, dtype=np.float32), 'big_img': np.eye(3, dtype=np.float32)}
+    level = np.zeros(8, dtype=np.float32)
+    level[3] = 1
+    for i in (1, 2, 3):
+      frame.frame_id = i
+      source.send_frame(frame, frame, eye, {'desire_pulse': level, 'traffic_convention': np.ones(2), 'action_t': np.ones(2)})
+      meta = META.unpack(source.buffer[:META.size])
+      assert meta[:2] == (b'XMS1', 2), f'D2 {meta[:2]}'
+      assert meta[25:33] == (0., 0., 0., 1., 0., 0., 0., 0.), f'D1 frame {i}: {meta[25:33]}'
     source.close()
     # Decoupled sender: a reply for a frame modeld has not reached yet is dropped without locking.
     source = ModelSource(directory, decode, admit)
