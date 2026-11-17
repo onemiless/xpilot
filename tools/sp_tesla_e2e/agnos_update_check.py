@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Actual shell -> staged OTA function -> manifest -> partition-IO boundary.
 
-Failures: wrong19.9 system, stock C3 boot chain, lost C3XL profile, stale inherited
+Failures: wrong 20.1 target, stock C3 boot chain, lost C3XL profile, stale inherited
 version, divergent launcher/OTA paths, unsafe fallback, boot tampering reaching IO.
 The updater function is executed from its source AST; native Params/overlay setup
 are outside this test. No device/partition access or native build is performed.
@@ -27,6 +27,7 @@ from openpilot.common.hardware.comma import agnos
 from openpilot.sunnypilot.hardware.agnos import UnsafeBootChainManifest
 
 DIRECTORY = 'openpilot/common/hardware/comma/'
+TARGET = '20.1'  # version string only; manifests keep the 19.9 images (dev-sp-npu 2f42cf665)
 MR_ONE = {
   'xbl': 'e8acf2a9cc7f0ce84cb803bfea9477f765c0d7b4daf26048e59651b9e6a7bfbb',
   'xbl_config': '758552ecf92b5569677197783bf0ccb73d7f961685308e45d3276ac9dd974f85',
@@ -63,16 +64,16 @@ def run(output):
 
     for physical, profile, manifest in [('tici', 'standard', 'agnos-c3.json'), ('tici', 'c3xl', 'agnos-c3xl.json'),
                                         ('tizi', 'standard', 'agnos.json'), ('mici', 'standard', 'agnos.json')]:
-      for inherited in ('', '19.7', '19.9'):
+      for inherited in ('', '19.7', '19.9', '20.1'):
         def selected(p=physical, h=profile, m=manifest, old=inherited):
           actual = shell(env(p, h) | {'AGNOS_VERSION': old})
-          assert actual == ['19.9', DIRECTORY + m], actual
+          assert actual == [TARGET, DIRECTORY + m], actual
           return actual
         check(f'shell_{physical}_{profile}_{inherited or "unset"}', selected)
 
     def persistent():
       actual = shell(env('tici', '') | {'SUNNYPILOT_HARDWARE_PROFILE_FILE': str(profile_file)})
-      assert actual == ['19.9', DIRECTORY + 'agnos-c3xl.json'], actual
+      assert actual == [TARGET, DIRECTORY + 'agnos-c3xl.json'], actual
     check('persistent_c3xl_precedes_generic_tici', persistent)
     for value in ('unknown-profile', ''):
       def rejected(v=value):
@@ -128,7 +129,7 @@ def run(output):
 
     for physical, profile, manifest in [('tici', 'standard', 'agnos-c3.json'), ('tici', 'c3xl', 'agnos-c3xl.json'),
                                         ('mici', 'standard', 'agnos.json')]:
-      for installed in ('19.7', '19.9'):
+      for installed in ('19.7', '19.9', '20.1'):
         def update(p=physical, h=profile, m=manifest, old=installed, missing=False):
           stage = temp / ('stage_' + h + '_' + p + '_' + old + str(missing))
           stage.mkdir()
@@ -152,8 +153,8 @@ def run(output):
               except FileNotFoundError: pass
               else: raise AssertionError('missing hardware manifest fell back to stock')
             else: namespace['handle_agnos_update']()
-          assert writes == ([] if old == '19.9' or missing else [{'manifest': DIRECTORY + m, 'slot': 1}]), writes
-          if old == '19.9': assert not consistent
+          assert writes == ([] if old == TARGET or missing else [{'manifest': DIRECTORY + m, 'slot': 1}]), writes
+          if old == TARGET: assert not consistent
           return {'installed': old, 'writes_at_stubbed_boundary': writes}
         check(f'actual_OTA_{physical}_{profile}_{installed}', update)
       if profile == 'c3xl' or physical == 'tici':

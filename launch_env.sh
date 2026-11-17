@@ -15,7 +15,7 @@ export VECLIB_MAXIMUM_THREADS=1
 # headroom for this until ui is moved to the CPU.
 export QCOM_PRIORITY=12
 
-export AGNOS_VERSION="19.9"
+export AGNOS_VERSION="20.1"
 
 export STAGING_ROOT="/data/safe_staging"
 

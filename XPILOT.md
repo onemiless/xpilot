@@ -15,9 +15,9 @@
 
 ## 系统版本与硬件镜像
 
-目标系统统一为 **AGNOS 19.9**。`launch_env.sh` 与后台更新器使用同一个硬件清单：C3/tici 的 standard 配置选 `agnos-c3.json`，显式 c3xl 配置优先选 `agnos-c3xl.json`，C3X/tizi 和 C4/mici 选官方 `agnos.json`。三者的 system 条目相同。
+目标系统统一为 **AGNOS 20.1**（跟随 dev-sp-npu `2f42cf665`：只改版本号，三份清单仍是 19.9 的镜像）。`launch_env.sh` 与后台更新器使用同一个硬件清单：C3/tici 的 standard 配置选 `agnos-c3.json`，显式 c3xl 配置优先选 `agnos-c3xl.json`，C3X/tizi 和 C4/mici 选官方 `agnos.json`。三者的 system 条目相同。
 
-C3/C3XL 保留各自锁定的 mr-one 引导链和写前白名单校验，禁止缺少专用清单时回退官方引导镜像。C3XL 的 Panda、驾驶员监控和音频能力策略不变。系统已为19.9时后台更新跳过刷写。本机检查只证明选择与写前保护；xpilot 的设备构建/运行验证须单独记录。
+C3/C3XL 保留各自锁定的 mr-one 引导链和写前白名单校验，禁止缺少专用清单时回退官方引导镜像。C3XL 的 Panda、驾驶员监控和音频能力策略不变。系统已为 20.1 时启动和后台更新都跳过刷写。**仍在 19.9 的设备会因版本号不符反复按 19.9 清单刷写并重启**，上这个版本前必须已经是 20.1，或者放 `/data/skip_agnos_update`。本机检查只证明选择与写前保护；xpilot 的设备构建/运行验证须单独记录。
 
 ## 1b. 核心理念
 
@@ -619,7 +619,7 @@ X-50 自动速度策略和 G3 横向均未实现；刷写和实车接合测试�
 ## 11. 本机可以跑的检查
 
 ```
-python3 tools/sp_tesla_e2e/agnos_update_check.py                     # 实际启动/OTA19.9选择和写前保护；分区IO模拟
+python3 tools/sp_tesla_e2e/agnos_update_check.py                     # 实际启动/OTA 20.1选择和写前保护；分区IO模拟
 python3 tools/sp_tesla_e2e/static_imports.py                         # 有没有断掉的 import
 python3 tools/sp_tesla_e2e/tile_layout_check.py                       # 大屏磁贴：网格、排布、行驶避让、编辑操作、手势、重画判断、ASCII 文字、文字适配磁贴
 python3 tools/sp_tesla_e2e/plugin_host_check.py                       # 插件宿主：出错隔离、总开关、元数据、参数、目标车速、雷达/地图、旧接口移除、pluginMsg
