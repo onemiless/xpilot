@@ -1,16 +1,31 @@
-"""Toggles page (native): the params of mici TogglesLayoutMici with the same enable/visibility conditions."""
+"""Toggles page (native): the params of mici TogglesLayoutMici with the same enable/visibility conditions, then one row per
+sunnypilot settings group (settings_meta.SP_SETTINGS) that opens its rows as a native sub-page."""
 from openpilot.selfdrive.ui.mici.layouts.settings.common import restart_needed_callback
 from openpilot.selfdrive.ui.mici.layouts.settings.initial_cruise_speed import get_speed_options, set_initial_cruise_speed
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.widgets.list_view import ButtonAction, ListItem, multiple_button_item
 from openpilot.system.ui.lib.multilang import tr, tr_noop
 from openpilot.tesla.plugin_params import ParamsView
-from openpilot.tesla.ui.pages.base import ListPage, ParamToggle
+from openpilot.tesla.ui.pages.base import Header, ListPage, ParamToggle, SettingRow
+from openpilot.tesla.ui.settings_meta import SP_SETTINGS
 from openpilot.tesla.ui.tiles import LAYOUT_SPEC, THEME_PARAM, THEMES
 
 PERSONALITY_DESC = tr_noop("Standard is recommended. Aggressive follows closer with firmer gas and braking; relaxed leaves more space.")
 
 PERSONALITIES = ["aggressive", "standard", "relaxed"]
+
+
+class SettingsGroupPage(ListPage):
+  """One SP_SETTINGS group: a row per Setting, reloaded from params on show."""
+
+  def __init__(self, settings):
+    super().__init__()
+    self.rows = [SettingRow(s, translate=True) for s in settings]
+    self.add(*(r.item for r in self.rows))
+
+  def refresh(self) -> None:
+    for row in self.rows:
+      row.refresh()
 
 
 class TogglesPage(ListPage):
@@ -40,7 +55,11 @@ class TogglesPage(ListPage):
     theme_names = [tr("Cobalt"), tr("Teal"), tr("Emerald"), tr("Crimson"), tr("Violet"), tr("Graphite"), tr("Black")]
     self.theme = multiple_button_item(tr("Tile color"), tr("Color of every tile on the home screen."), theme_names, 0, button_width=200,
                                       callback=lambda i: self.theme_params.put(THEME_PARAM, list(THEMES)[i]))
-    self.add(self.personality, self.cruise, *(t.item for t in self.toggles), self.theme)
+    self.add(self.personality, self.cruise, *(t.item for t in self.toggles), self.theme, Header("sunnypilot"))
+    for title, description, group in SP_SETTINGS:
+      page = SettingsGroupPage(group)
+      self.add(ListItem(tr(title), description=tr(description), action_item=ButtonAction(tr("OPEN")),
+                        callback=lambda t=title, p=page: self.open(tr(t).lower(), p)))
 
   def _set_personality(self, index: int) -> None:
     ui_state.params.put("LongitudinalPersonality", index, block=True)

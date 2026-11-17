@@ -33,6 +33,14 @@ Failure cases listed before implementation:
      the author's category field still decides it, or a store entry gets a different category than the same plugin loaded
 - O20 a numeric (range) setting has no -/+ stepper on either settings page, a step leaves [min, max] or the step grid,
      or an off-grid/unknown stored value does not snap back into range
+- O24 a sunnypilot setting row (settings_meta.SP_SETTINGS, core plugin settings) names a key the compiled Params does not know,
+     an OSM download key, a key twice, or a row kind its Params type cannot store (toggle needs BOOL/INT, range INT/FLOAT,
+     choices INT with int values): Params.put would raise on the device
+- O25 a FLOAT range row does not step in 1/divisor units (LagdToggleDelay 0.2 is 20 at divisor 100, label "0.20 s", + writes the
+     float 0.21), a toggle on an INT key writes a bool, or a divisor 1/10 label changes
+- O26 sp_engagement lacks the three MADS rows or sp_models the live delay / lane turn rows
+- O27 the Toggles page or the mici Tesla settings do not offer every SP_SETTINGS group, or a settings row path reads/writes
+     without stored_value/to_param
 - O19 plugin notifications lose their source, severity clamp or 80-character limit, malformed input leaks through,
      a reader error breaks alerts, or the mici alert list does not include them
 """
@@ -405,6 +413,58 @@ def check_categories(errors: list) -> None:
     errors.append(f"O22 store index categories {got}")
 
 
+def _param_types() -> dict[str, str]:
+  text = "".join((PKG / "common" / f).read_text() for f in ("params_keys.h", "plugin_params.inc"))
+  return {k: t for k, t in re.findall(r'\{"(\w+)", \{[^,}]*,\s*(\w+)', text)}
+
+
+def _core_settings(plugin_id: str) -> list:
+  return list(mf.parse(PKG / "tesla/plugins" / plugin_id / "plugin.json").settings)
+
+
+def check_sp_settings(errors: list) -> None:
+  from openpilot.tesla.ui.settings_meta import SP_SETTINGS, VEHICLE_SETTINGS, setting_label, stored_value, to_param
+  types = _param_types()
+  rows = [s for _, _, group in SP_SETTINGS for s in group] + _core_settings("sp_engagement") + _core_settings("sp_models")
+  keys = [s.key for s in rows] + [s.key for s in VEHICLE_SETTINGS]
+  if len(keys) != len(set(keys)):
+    errors.append("O24 duplicate setting keys")
+  for s in rows:
+    kind, t = offroad.setting_kind(s), types.get(s.key)
+    ok = (t is not None and not s.key.lower().startswith("osm") and
+          (kind == "toggle" and t in ("BOOL", "INT") or kind == "stepper" and t in ("INT", "FLOAT") or
+           kind in ("buttons", "cycle") and t == "INT" and all(type(v) is int for _, v in s.choices)))
+    if not ok:
+      errors.append(f"O24 {s.key}: {kind} row on {t}")
+
+  delay = next(s for s in rows if s.key == "LagdToggleDelay")
+  if stored_value(delay, 0.2) != 20 or setting_label(delay, 20) != "0.20 s":
+    errors.append(f"O25 FLOAT range units: {stored_value(delay, 0.2)} {setting_label(delay, 20)!r}")
+  new = to_param(delay, 0.2, offroad.step_value(delay, stored_value(delay, 0.2), 1))
+  if type(new) is not float or abs(new - 0.21) > 1e-9:
+    errors.append(f"O25 + on LagdToggleDelay writes {new!r}")
+  pause = next(s for s in rows if s.key == "BlinkerPauseLateralControl")
+  if to_param(pause, 0, True) != 1 or type(to_param(pause, 0, True)) is not int:
+    errors.append("O25 INT toggle writes a bool")
+  if to_param(mf.Setting("b", "Bool"), False, True) is not True or stored_value(mf.Setting("r", "R", (0, 10, 1, "%", 1)), 5) != 5:
+    errors.append("O25 BOOL/INT rows changed")
+  if setting_label(mf.Setting("e", "E", (0, 50, 5, "s", 10)), 5) != "0.5 s":
+    errors.append("O25 divisor 10 label changed")
+
+  if {s.key for s in _core_settings("sp_engagement")} != {"MadsMainCruiseAllowed", "MadsUnifiedEngagementMode", "MadsSteeringMode"}:
+    errors.append("O26 sp_engagement MADS rows")
+  if not {"LagdToggle", "LagdToggleDelay", "LaneTurnDesire", "LaneTurnValue"} <= {s.key for s in _core_settings("sp_models")}:
+    errors.append("O26 sp_models live delay / lane turn rows")
+
+  for name in ("tesla/ui/pages/toggles.py", "tesla/ui/settings_page.py"):
+    if "SP_SETTINGS" not in (PKG / name).read_text():
+      errors.append("O27 SP_SETTINGS groups missing in " + name)
+  for name in ("tesla/ui/settings_page.py", "tesla/ui/pages/base.py"):
+    text = (PKG / name).read_text()
+    if "stored_value(" not in text or "to_param(" not in text:
+      errors.append("O27 settings rows without stored_value/to_param in " + name)
+
+
 def check_long_owner(errors):
   """O18: the manual long-owner toggle moved to tesla_dynamic_acc (owner 2026-10-28); no core key or settings row remains."""
   from openpilot.tesla.ui.settings_meta import VEHICLE_SETTINGS
@@ -415,7 +475,7 @@ def check_long_owner(errors):
 def main() -> int:
   errors: list[str] = []
   for check in (check_tiles, check_pages, check_plugins, check_store, check_market, check_models, check_view, check_first_boot, check_alerts,
-                check_sources, check_text_settings, check_stepper, check_categories, check_long_owner):
+                check_sources, check_text_settings, check_stepper, check_categories, check_long_owner, check_sp_settings):
     try:
       check(errors)
     except Exception as e:

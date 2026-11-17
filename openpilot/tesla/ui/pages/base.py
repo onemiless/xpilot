@@ -13,7 +13,7 @@ from openpilot.system.ui.widgets.list_view import ListItem, MultipleButtonAction
 from openpilot.system.ui.widgets.scroller_tici import Scroller
 from openpilot.tesla.plugins import view
 from openpilot.tesla.ui.offroad import next_choice, setting_kind, step_value
-from openpilot.tesla.ui.settings_meta import setting_choices, setting_label
+from openpilot.tesla.ui.settings_meta import setting_choices, setting_label, stored_value, to_param
 from openpilot.tesla.ui.setting_keyboard import edit_text_setting
 
 HEADER_COLOR = rl.Color(140, 144, 156, 255)
@@ -154,10 +154,10 @@ class SettingRow:
     self.refresh()
 
   def _value(self):
-    return params().get(self.setting.key, return_default=True)
+    return stored_value(self.setting, params().get(self.setting.key, return_default=True))
 
   def _set(self, value) -> None:
-    set_param(self.setting.key, value)
+    set_param(self.setting.key, to_param(self.setting, params().get(self.setting.key, return_default=True), value))
     self.refresh()
 
   def refresh(self) -> None:
