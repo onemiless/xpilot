@@ -384,6 +384,12 @@ class Device(DeviceSP):
 
       clipped_brightness = float(np.interp(clipped_brightness, [0, 1], [min_brightness, 100]))
 
+    # Fixed brightness (dev-sp-npu d5a50e25d, a75eb6095, 36e67a852): Brightness 0 keeps auto; 10-100 pins it offroad and onroad.
+    # The backlight is linear and eyes are not, so a 10% step is 1% backlight; applied at once, without the fade.
+    if gui_app.sunnypilot_ui() and ui_state.screen_brightness:
+      clipped_brightness = ui_state.screen_brightness ** 2 / 100
+      self._brightness_filter.x = clipped_brightness
+
     brightness = round(self._brightness_filter.update(clipped_brightness))
 
     if gui_app.sunnypilot_ui():
