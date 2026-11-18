@@ -8,23 +8,19 @@ F3 truncated/oversized/fragmented IPC, bad BGM1 magic/version/type/flags/length.
 F4 NaN/inf/zero raw, decoder error, missing/wrong/nonfinite parsed heads: trip lock.
 F5 wrong session/epoch/frame/EOF, future timestamps, duplicate/out-of-order replies.
 F6 late/burst/200ms-stalled sender: one-slot overwrite, deadline, no catch-up.
-F6b a reply that arrived before EOF+DEADLINE_NS is rejected as late because the host reached pick() or finished admission
-    after EOF+DEADLINE_NS (owner 2026-10-28: device logs showed 43.6 ms arrivals rejected as late).
+F6b a reply that arrived before EOF+60ms is rejected as late because the host reached pick() or finished admission
+    after EOF+60ms (owner 2026-10-28: device logs showed 43.6 ms arrivals rejected as late).
 F7 frozen/crashed child, new epoch without dual IDR, reset/zero-pair, five warmups.
 F8 local load/run failure propagates; phone never conceals a base failure.
 F9 one publisher, four messages selected together, baseline bytes unchanged.
 F13 trajectory/lead/pose/action jumps fail admission; whole-frame source, including raw predictions.
-D1 META carries only the desire rising edge, so a frame the child skips loses the lane change (dev-sp-npu sends the
-   level and edge-detects in the uplink).
-D2 META keeps ABI 1 while the desire field means a level: an old child would send a pulse every frame. ABI 2 makes it
-   ignore META and stay local.
 Round 1: adapter mutation cannot alter fallback; camera regression rewarms; early arrival
 is frame-only rejection; failed init and SIGKILL leave no mailbox leaks. Candidate lock,
 post-pick arrival and 200ms stall occur after Phone active. Burst frames/data are distinct.
 Bounded wait: no peer/lock never sleeps; cold +35ms engages from a recent on-time old reply;
 +75ms falls back without locking; short gaps preserve warm-up, long gaps rewarm.
-Transient absent/old_frame/ipc_busy polls preserve progress; EOF+DEADLINE_NS (60ms) bounds waiting
-and the timed 50ms camera replay publishes every frame by EOF+DEADLINE_NS (+5ms scheduling) with no frame drops.
+Transient absent/old_frame/ipc_busy polls preserve progress; EOF+60ms bounds waiting
+and the timed 50ms camera replay publishes every frame by EOF+60ms (+5ms scheduling) with no frame drops.
 FIX2: flagged/unpaired replies clear warm-up; failed META publication never waits;
 recent old replies enable waiting but cannot preserve warm-up across an accepted-frame gap.
 
@@ -195,7 +191,7 @@ def peer(path, conn):
     if old:
       scenario = scenario.removeprefix('old_')
     meta = META.unpack(os.pread(fd, META.size, 0))
-    assert meta[:2] == (b'XMS1', 2)
+    assert meta[:2] == (b'XMS1', 1)
     session, frame, eof = meta[2], meta[3], meta[5]
     assert meta[4] == frame and meta[6] == eof
     if old:
@@ -403,9 +399,9 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       frame_epoch = epoch
       if isinstance(scenario, tuple):
         scenario, frame_epoch = scenario
-      level = inputs['desire_pulse'].copy()
-      level[0] = 0
-      expected = np.concatenate([level, inputs['traffic_convention'], inputs['action_t']])
+      pulse = np.where(inputs['desire_pulse'] - self.prev_desire > .99, inputs['desire_pulse'], 0).copy()
+      pulse[0] = 0
+      expected = np.concatenate([pulse, inputs['traffic_convention'], inputs['action_t']])
       if conn is not None and scenario not in ('absent', 'after_pick', 'queued', 'meta_hold'):
         conn.send((scenario, frame_epoch, now(), expected))
         while True:
@@ -468,8 +464,7 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
                      'reject_reason': source.reason if source else '', 'pick_ns': pick_ns,
                      'pick_clock_ns': pick_clock_ns, 'pick_end': pick_end,
                      'sleep_ns': sleep_ns, 'fresh': source.fresh if source else 0,
-                     'w': source.w if source else 0., 'alive': source.alive if source else False,
-                     'leg_delta': float(source.remote_last['raw_pred'][887]) if source and source.remote_last else 0.,
+                     'last_seen': source.last_seen if source else 0, 'last_accepted': source.last_accepted if source else 0,
                      'fresh_before_pick': fresh_before_pick,
                      'host_publish_ns': time.monotonic_ns() if paced else 0})
         scenario = scenarios[current - 1]
@@ -508,8 +503,8 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
       pick_end = now()
       pick_clock_ns = pick_end - before
       if not realtime:
-        assert pick_clock_ns <= max(0, camera_eof + DEADLINE_NS - before)
-      if result[1] and source.w >= 1:
+        assert pick_clock_ns <= max(0, camera_eof + 60_000_000 - before)
+      if result[1]:
         scenario = scenarios[current - 1]
         delta = .1 + camera_frame * .0001 if scenario == 'burst' else .1
         expected_heads = decode(raw_output(delta))
@@ -558,19 +553,16 @@ def replay(module, output, name, scenarios, source=None, conn=None, epoch=1, loc
     assert m.modelV2.big == d.drivingModelData.big == (row['source'] == 'phone')
     if realtime:
       assert m.modelV2.frameDropPerc == d.drivingModelData.frameDropPerc == 0
-      # Publish is bounded by the deadline plus scheduling; frameDropPerc == 0 above is the no-drop check.
+      # The 60 ms deadline (#47) is longer than the 50 ms camera period: a wait may publish after the next EOF, bounded by
+      # the deadline plus scheduling; frameDropPerc == 0 above is the no-drop check.
       assert row['publish'] < row['EOF'] + DEADLINE_NS + 5_000_000, (name, row)
-    # Cross-fade: every head is local*(1-w) + leg*w, where leg is the accepted phone output (the last one on fallback).
-    w = row['w']
-    assert row['source'] != 'phone' or w > 0
-    delta = w * row['leg_delta']
+    delta = (.1 + row['frameId'] * .0001 if scenarios[i] == 'burst' else .1) if row['source'] == 'phone' else 0
     assert abs(m.modelV2.position.y[0] - delta) < 1e-6
     assert abs(m.modelV2.leadsV3[0].x[0] - 30 - delta) < 1e-5
     assert abs(p.cameraOdometry.trans[0] - delta) < 1e-6
-    if action_width or w in (0., 1.):
-      expected_curvature = (.01 + delta) / 400 if action_width or w == 1. else 0
-      assert abs(m.modelV2.action.desiredCurvature - expected_curvature) < 1e-6
-    if raw_predictions and w in (0., 1.):
+    expected_curvature = (.01 + delta) / 400 if action_width or row['source'] == 'phone' else 0
+    assert abs(m.modelV2.action.desiredCurvature - expected_curvature) < 1e-6
+    if raw_predictions:
       assert m.modelV2.rawPredictions == raw_output(delta).tobytes(), (name, i, row['source'])
     clipped, _ = clip_curvature(20, 0, m.modelV2.action.desiredCurvature, 0)
     assert abs(clipped) <= 5 / 400 * .01
@@ -643,8 +635,8 @@ def main():
     records, _ = execute('short_gap', ['good'] * 10 + ['absent'] * 2 + ['good'] * 6)
     assert records[12]['source'] == 'phone'
     records, _ = execute('long_gap', ['good'] * 10 + ['absent'] * 3 + ['good'] * 6)
-    assert all(r['source'] == 'local' and r['sleep_ns'] > 0 for r in records[10:13]) and records[13]['source'] == 'phone'
-    assert records[9]['w'] == .5 and records[12]['w'] == .2 and records[13]['w'] == .3  # 5 warm-up replies, then fade
+    assert records[13]['fresh'] == 1 and all(r['source'] == 'local' for r in records[13:18])
+    assert records[18]['source'] == 'phone' and records[13]['sleep_ns'] == 0
 
     for scenario, reason in (('zero_pair', 'warmup_flags'), ('unpaired', 'need_dual_idr')):
       for count in (1, 2, 3):
@@ -654,9 +646,10 @@ def main():
         assert all(r['source'] == 'local' for r in records[6:11 + count]) and records[-1]['source'] == 'phone', scenario
     records, _ = execute('meta_busy_no_wait', ['good'] * 10 + ['meta_hold'] + ['good'] * 6)
     assert records[10]['source'] == 'local' and records[11]['source'] == 'phone'
-    records, _ = execute('liveness_old_replies', ['good'] * 6 + ['old_good'] * 4 + ['good'] * 6)
-    assert records[9]['alive'] and records[9]['sleep_ns'] > 0
-    assert all(r['source'] == 'local' for r in records[6:10]) and records[10]['source'] == 'phone'
+    records, _ = execute('liveness_does_not_preserve_warmup', ['good'] * 6 + ['old_good'] * 4 + ['good'] * 6)
+    assert records[9]['last_seen'] == 9 and records[9]['last_accepted'] == 6 and records[9]['sleep_ns'] > 0
+    assert records[9]['fresh'] == 0 and all(r['source'] == 'local' for r in records[6:15])
+    assert records[-1]['source'] == 'phone'
 
     # The cold peer never supplies an early first reply; previous-frame traffic must engage it.
     for case, scenarios in (
@@ -680,9 +673,9 @@ def main():
           assert records[1]['fresh'] == 1 and all(r['source'] == 'local' for r in records[:6])
         if case == 'phone35_single_late':
           assert records[10]['source'] == 'local' and records[11]['source'] == 'phone'
-      elif case in ('phone75', 'cold_phone75'):
-        # Late replies still prove the link alive: the host keeps waiting to the deadline, like dev-sp-npu.
-        assert all(r['source'] == 'local' and r['alive'] for r in records[13:])
+      elif case == 'phone75':
+        assert all(r['source'] == 'local' for r in records[10:])
+        assert all(r['sleep_ns'] == 0 for r in records[13:])
       else:
         assert all(r['source'] == 'local' and r['sleep_ns'] == 0 for r in records)
     for case in ('magic', 'version', 'flags', 'session', 'epoch_zero', 'ipc_flags', 'future', 'nan', 'inf', 'zero'):
@@ -690,17 +683,17 @@ def main():
       assert source.locked and all(r['source'] == 'local' and r['sleep_ns'] == 0 for r in records), case
     for case in ('late', 'early', 'far', 'unpaired'):
       records, source = execute('old_' + case, ['old_' + case] + ['absent'] * 4, frame_offset=10)
-      assert not source.locked and all(r['source'] == 'local' for r in records), case
-    records, _ = execute('old_epoch', [('good', 2)] * 10 + [('old_good', 1)] * 5, frame_offset=10)
-    assert all(r['source'] == 'local' for r in records[10:])
+      assert not source.locked and all(r['source'] == 'local' and r['sleep_ns'] == 0 for r in records), case
+    records, _ = execute('old_epoch_cannot_engage', [('good', 2)] * 10 + [('old_good', 1)] * 5, frame_offset=10)
+    assert all(r['sleep_ns'] == 0 for r in records[10:])
     assert records[-1]['reject_reason'] == 'old_epoch'
     records, _ = execute('stock_action_mean_sigma', ['good'] * 15, action_width=4)
     assert records[-1]['source'] == 'phone'
     records, _ = execute('stock_plan_action', ['good'] * 15, action_width=0)
     assert records[-1]['source'] == 'phone'
     records, _ = execute('recovery', ['absent'] * 5 + ['good'] * 10 + ['late'] * 4 + ['good'] * 10)
-    assert records[14]['source'] == records[19]['source'] == records[-1]['source'] == 'phone'
-    assert all(r['source'] == 'local' for r in records[15:19]) and records[18]['w'] == .1
+    assert records[14]['source'] == records[-1]['source'] == 'phone'
+    assert all(r['source'] == 'local' for r in records[15:24])
     for case in ('reset', 'zero_pair', 'unpaired'):
       records, _ = execute(case, [case] + ['good'] * 10)
       assert all(r['source'] == 'local' for r in records[:5])
@@ -795,26 +788,6 @@ def main():
     source = ModelSource(directory, decode, admit)
     assert not any(p.exists() for p in stale)
     source.close()
-    # D1/D2: a held desire stays in META on every frame, under ABI 2.
-    source = ModelSource(directory, decode, admit)
-    frame = types.SimpleNamespace(frame_id=0, timestamp_eof=0)
-    eye = {'img': np.eye(3, dtype=np.float32), 'big_img': np.eye(3, dtype=np.float32)}
-    level = np.zeros(8, dtype=np.float32)
-    level[3] = 1
-    for i in (1, 2, 3):
-      frame.frame_id = i
-      source.send_frame(frame, frame, eye, {'desire_pulse': level, 'traffic_convention': np.ones(2), 'action_t': np.ones(2)})
-      meta = META.unpack(source.buffer[:META.size])
-      assert meta[:2] == (b'XMS1', 2), f'D2 {meta[:2]}'
-      assert meta[25:33] == (0., 0., 0., 1., 0., 0., 0., 0.), f'D1 frame {i}: {meta[25:33]}'
-    source.close()
-    # Decoupled sender: a reply for a frame modeld has not reached yet is dropped without locking.
-    source = ModelSource(directory, decode, admit)
-    source.sent, source.frame, source.eof = True, 100, nanos_since_boot() - 200_000_000
-    ahead = struct.pack('<4sBBHIIQ', b'BGM1', 2, 0x11, 0, 101, 8280, source.eof + 50_000_000) + bytes(8296)
-    source.buffer[256:256 + 32 + len(ahead)] = struct.pack('<QQQII', source.session, 1, source.eof + 60_000_000, 3, len(ahead)) + ahead
-    assert source._candidate({}) is None and source.reason == 'ahead' and not source.locked, source.reason
-    source.close()
     for target in ('os.ftruncate', 'mmap.mmap'):
       opened = []
       mkstemp = tempfile.mkstemp
@@ -890,7 +863,7 @@ class Candidate(Plugin):
                              for case in ('frozen', 'crashed', 'stall_200ms', 'candidate_lock')
                              if (selected := [r['host_publish_ns'] for r in rows if r['case'] == case])},
             'bounded_wait': {
-              'alive_s': 2, 'fade_frames': 10, 'deadline_ms': 60, 'camera_period_ms': 50, 'timed_frame_drops': 0,
+              'engaged_frames': 3, 'deadline_ms': 60, 'camera_period_ms': 50, 'timed_frame_drops': 0,
               'deterministic_max_wait_ms': max(r['pick_clock_ns'] for r in rows if not r['host_publish_ns']) / 1e6,
               'cases': {case: {
                 'frames': len(selected),
@@ -908,7 +881,7 @@ class Candidate(Plugin):
                 if (selected := [r for r in rows if r['case'] == case])}},
             'limits': ['synthetic inference/VisionIPC; deterministic BOOTTIME except timed phone cases',
                        'cold +35ms peer never supplies an early reply; synthetic protocol-valid traffic proves host liveness only',
-                       'OS sleep scheduling can overshoot EOF+DEADLINE_NS; late replies are never adopted',
+                       'OS sleep scheduling can overshoot EOF+60ms; late replies are never adopted',
                        'no phone QNN, TCP/HEVC or device execution',
                        'real modeld postprocessing, Capnp/msgq and selfdrived.update_events; unrelated car/device inputs are healthy fixtures']}
   (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')

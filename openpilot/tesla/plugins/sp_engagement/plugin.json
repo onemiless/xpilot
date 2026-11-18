@@ -13,33 +13,5 @@
   "claims": [
     "role:engagement.state"
   ],
-  "params": {},
-  "settings": [
-    {
-      "key": "MadsMainCruiseAllowed",
-      "label": "Toggle with Main Cruise"
-    },
-    {
-      "key": "MadsUnifiedEngagementMode",
-      "label": "Unified Engagement Mode (UEM)"
-    },
-    {
-      "key": "MadsSteeringMode",
-      "label": "Steering Mode on Brake Pedal",
-      "choices": [
-        [
-          "Remain Active",
-          0
-        ],
-        [
-          "Pause",
-          1
-        ],
-        [
-          "Disengage",
-          2
-        ]
-      ]
-    }
-  ]
+  "params": {}
 }

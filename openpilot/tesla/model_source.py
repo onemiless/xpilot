@@ -1,6 +1,6 @@
 """Optional model candidate boundary. The plugin owns codec/profile qualification.
 
-IPC v2: private 0600 file, 16384 bytes, two latest-only slots. Metadata at 0
+IPC v1: private 0600 file, 16384 bytes, two latest-only slots. Metadata at 0
 is META; reply at 256 is ENVELOPE followed by exactly one BGM1 v2 REPLY.
 Each writer/reader takes a nonblocking POSIX byte-range lock over its slot.
 The child clears the envelope, writes the body/header, then commits length last;
@@ -19,13 +19,11 @@ import time
 import numpy as np
 
 META = struct.Struct('<4sIQIIQQ30f')
-META_ABI = 2
 ENVELOPE = struct.Struct('<QQQII')
 REPLY = struct.Struct('<4sBBHIIQ')
 OFFSET, SIZE = 256, 16384
-DEADLINE_NS = 60_000_000  # The plugin sends on camera arrival, not on META, so a wait past the next EOF no longer self-sustains.
-ALIVE_NS = 2_000_000_000  # Wait for the current reply while any reply arrived this recently (dev-sp-npu BigReplyLatch).
-FADE_FRAMES = 10  # 0.5 s cross-fade between phone and local outputs at 20 Hz (dev-sp-npu SourceBlender).
+DEADLINE_NS = 60_000_000  # Match upstream modeld BIG_REPLY_DEADLINE_MS.
+ENGAGED_FRAMES = 3  # Tolerate two missed replies at 20 Hz, then stop waiting on a missing peer.
 HEAD_SHAPES = {
   'plan': (1, 33, 15), 'plan_stds': (1, 33, 15),
   'lane_lines': (1, 4, 33, 2), 'lane_lines_stds': (1, 4, 33, 2), 'lane_lines_prob': (1, 8),
@@ -57,10 +55,10 @@ class ModelSource:
       raise
     self.buffer[:] = bytes(SIZE)
     self.session = secrets.randbits(64)
-    self.epoch = self.last_frame = self.fresh = self.arrival_ns = self.reply_ns = 0
+    self.epoch = self.last_frame = self.fresh = self.arrival_ns = 0
+    self.last_accepted = self.last_seen = -ENGAGED_FRAMES - 1
     self.frame = self.eof = 0
-    self.fade, self.w, self.remote_last = 0, 0., None
-    self.selected = self.locked = self.sent = self.alive = False
+    self.selected = self.locked = self.sent = False
     self.reason = 'absent'
 
   def close(self):
@@ -83,18 +81,16 @@ class ModelSource:
     finally:
       fcntl.lockf(self.fd, fcntl.LOCK_UN, size, offset)
 
-  def send_frame(self, main, extra, transforms, inputs):
+  def send_frame(self, main, extra, transforms, inputs, prev_desire):
     if main.frame_id < self.frame:
       self.epoch = self.last_frame = self.fresh = 0
-      self.fade, self.w, self.remote_last = 0, 0., None
+      self.last_accepted = self.last_seen = -ENGAGED_FRAMES - 1
     self.frame, self.eof = main.frame_id, main.timestamp_eof
-    # ABI 2: desire level, not the rising edge. The child finds the edge on frames it actually sends (dev-sp-npu
-    # frame_meta), so a skipped frame cannot lose a lane change. ABI 1 children ignore v2 META and send nothing.
-    level = inputs['desire_pulse'].copy()
-    level[0] = 0
+    pulse = np.where(inputs['desire_pulse'] - prev_desire > .99, inputs['desire_pulse'], 0).copy()
+    pulse[0] = 0
     values = np.concatenate([transforms['img'].ravel(), transforms['big_img'].ravel(),
-                             level, inputs['traffic_convention'], inputs['action_t']])
-    data = META.pack(b'XMS1', META_ABI, self.session, self.frame, extra.frame_id, self.eof, extra.timestamp_eof, *values)
+                             pulse, inputs['traffic_convention'], inputs['action_t']])
+    data = META.pack(b'XMS1', 1, self.session, self.frame, extra.frame_id, self.eof, extra.timestamp_eof, *values)
     self.sent = bool(self._slot(0, OFFSET, data))
 
   def _reject(self, reason, lock=False):
@@ -121,7 +117,6 @@ class ModelSource:
       return self._reject('wire_length', True)
     if session != self.session:
       return self._reject('session', True)
-    self.reply_ns = max(self.reply_ns, arrival)
     if not epoch or paired & ~3:
       return self._reject('epoch_flags', True)
     if epoch < self.epoch:
@@ -135,20 +130,18 @@ class ModelSource:
     if eof > now or arrival > now:
       return self._reject('future_timestamp', True)
     old_frame = frame < self.frame or (frame > self.frame and eof < self.eof)
-    if frame > self.frame and eof > self.eof:
-      # The plugin sends on camera arrival, so a lagging modeld can see a reply for a frame it has not reached yet.
-      return self._reject('ahead')
     if not old_frame and (frame != self.frame or eof != self.eof):
       return self._reject('frame_eof', True)
     if not old_frame and frame <= self.last_frame and epoch == self.epoch:
       return self._reject('replay')
-    # Late means the phone missed EOF+DEADLINE_NS. A reply that arrived in time stays usable when the host itself runs past the
+    # Late means the phone missed EOF+60ms. A reply that arrived in time stays usable when the host itself runs past the
     # deadline (local model, decode, admission, an overslept poll): the local output would be just as late.
     if arrival > eof + DEADLINE_NS:
       return self._reject('old_frame' if old_frame else 'late')
     new_epoch = epoch > self.epoch
     if new_epoch:
       self.epoch, self.fresh, self.last_frame = epoch, 0, 0
+      self.last_accepted = self.last_seen = -ENGAGED_FRAMES - 1
       if paired != 3:
         return self._reject('need_dual_idr')
     if paired != 3:
@@ -164,6 +157,9 @@ class ModelSource:
     if not np.isfinite(raw).all() or not np.any(raw):
       return self._reject('raw_values', True)
     if old_frame:
+      if 0 < self.frame - frame <= ENGAGED_FRAMES and eof < self.eof:
+        # On-time old output proves liveness, never eligibility for the current frame.
+        self.last_seen = max(self.last_seen, frame)
       return self._reject('old_frame')
     try:
       remote = self.decode(raw.copy())
@@ -180,7 +176,7 @@ class ModelSource:
         return self._reject('admission', True)
     except Exception:
       return self._reject('adapter_error', True)
-    self.last_frame = frame
+    self.last_frame = self.last_accepted = frame
     self.fresh += 1
     if self.fresh <= 5:
       self.reason = 'warmup'
@@ -190,30 +186,15 @@ class ModelSource:
     return remote
 
   def pick(self, local):
+    if self.frame - self.last_accepted > ENGAGED_FRAMES:
+      self.fresh = 0
     remote = self._candidate(local)
-    self.alive = not self.locked and self.reply_ns > 0 and nanos_since_boot() - self.reply_ns < ALIVE_NS
-    while self.alive and self.reason in ('absent', 'old_frame', 'ipc_busy'):
+    while (not self.locked and 0 < self.frame - max(self.last_accepted, self.last_seen) <= ENGAGED_FRAMES
+           and self.reason in ('absent', 'old_frame', 'ipc_busy')):
       remaining = self.eof + DEADLINE_NS - nanos_since_boot()
       if remaining <= 0:
         break
       time.sleep(min(.001, remaining / 1e9))
       remote = self._candidate(local)
     self.selected = remote is not None
-    if self.selected:
-      self.remote_last = remote
-    self.fade = min(FADE_FRAMES, self.fade + 1) if self.selected else max(0, self.fade - 1)
-    self.w = self.fade / FADE_FRAMES
-    if self.w >= 1:
-      return remote, True
-    if self.w <= 0:
-      return local, False
-    # Cross-fade every head; a fallback frame fades out against the last accepted phone output.
-    out = dict(local)
-    for k, a in local.items():
-      b = self.remote_last.get(k)
-      if b is not None and b.shape == a.shape:
-        out[k] = a * (1 - self.w) + b * self.w
-      elif k == 'action' and b is not None:
-        out[k] = a.copy()
-        out[k][:, :2] = a[:, :2] * (1 - self.w) + b[:, :2] * self.w
-    return out, self.selected
+    return (remote, True) if self.selected else (local, False)

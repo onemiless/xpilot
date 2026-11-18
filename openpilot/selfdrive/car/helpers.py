@@ -35,16 +35,6 @@ def asdictref(obj) -> dict[str, Any]:
   return _asdictref_inner(obj)
 
 
-def _set_fields(builder, d: dict[str, Any]) -> None:
-  # Field by field, not new_message(**d): pycapnp 2.2.0/2.2.1 leave reference cycles for kwargs,
-  # and card runs with gc disabled.
-  for k, v in d.items():
-    if isinstance(v, dict):
-      _set_fields(getattr(builder, k), v)
-    else:
-      setattr(builder, k, v)
-
-
 def convert_to_capnp(struct: structs.CarParamsSP | structs.CarStateSP) -> capnp.lib.capnp._DynamicStructBuilder:
   struct_dict = asdictref(struct)
 
@@ -52,13 +42,12 @@ def convert_to_capnp(struct: structs.CarParamsSP | structs.CarStateSP) -> capnp.
     if not 0 <= struct.safetyParam <= 0xFFFF:
       raise ValueError(f"CarParamsSP.safetyParam must be in 0..0xFFFF, got {struct.safetyParam}")
     struct_dict['safetyParam'] = struct.safetyParam if struct.safetyParam < 0x8000 else struct.safetyParam - 0x10000
-    struct_capnp = custom.CarParamsSP.new_message()
+    struct_capnp = custom.CarParamsSP.new_message(**struct_dict)
   elif isinstance(struct, structs.CarStateSP):
-    struct_capnp = custom.CarStateSP.new_message()
+    struct_capnp = custom.CarStateSP.new_message(**struct_dict)
   else:
     raise ValueError(f"Unsupported struct type: {type(struct)}")
 
-  _set_fields(struct_capnp, struct_dict)
   return struct_capnp
 
 

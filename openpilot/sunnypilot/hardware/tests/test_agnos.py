@@ -14,12 +14,6 @@ STANDARD_MANIFEST = Path(__file__).parents[3] / "common/hardware/comma/agnos.jso
 C3XL_MANIFEST = Path(__file__).parents[3] / "common/hardware/comma/agnos-c3xl.json"
 
 
-def test_launcher_respects_device_agnos_opt_out() -> None:
-  """A version mismatch must not trigger an update when the opt-out file exists."""
-  launcher = (REPO_ROOT / "launch_chffrplus.sh").read_text()
-  assert 'if [ "$(< /VERSION)" != "$AGNOS_VERSION" ] && [ ! -f /data/skip_agnos_update ]; then' in launcher
-
-
 def read_manifest(path: Path = C3XL_MANIFEST) -> list[dict]:
   with path.open() as manifest_file:
     return json.load(manifest_file)

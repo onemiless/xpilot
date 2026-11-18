@@ -10,40 +10,6 @@
   "description": "Default driving model: selects SP's model manager (download, select, cache) and modeld runners through role_processes. Always on; runs only while it owns role:perception.model.",
   "priority": 10000,
   "enable_param": null,
-  "claims": [
-    "role:perception.model"
-  ],
-  "params": {},
-  "settings": [
-    {
-      "key": "LagdToggle",
-      "label": "Live Learning Steer Delay"
-    },
-    {
-      "key": "LagdToggleDelay",
-      "label": "Software Delay (Live Learning off)",
-      "range": [
-        5,
-        50,
-        1,
-        "s",
-        100
-      ]
-    },
-    {
-      "key": "LaneTurnDesire",
-      "label": "Use Lane Turn Desires"
-    },
-    {
-      "key": "LaneTurnValue",
-      "label": "Lane Turn Max Speed",
-      "range": [
-        5,
-        20,
-        1,
-        "mph",
-        1
-      ]
-    }
-  ]
+  "claims": ["role:perception.model"],
+  "params": {}
 }

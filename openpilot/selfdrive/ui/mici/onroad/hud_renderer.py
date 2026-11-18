@@ -207,8 +207,7 @@ class HudRenderer(Widget):
     if icon is not self._chestnut_icon:
       self._chestnut_fade_time = rl.get_time()
       self._chestnut_icon = icon
-    visible = (loading or (ui_state.started and ui_state.chestnut_state in (ChestnutState.ACTIVE, ChestnutState.FAILED))
-               or rl.get_time() - self._chestnut_fade_time < SET_SPEED_PERSISTENCE)
+    visible = loading or rl.get_time() - self._chestnut_fade_time < SET_SPEED_PERSISTENCE
     alpha = self._chestnut_alpha_filter.update(visible)
     if alpha < 1e-2:
       return

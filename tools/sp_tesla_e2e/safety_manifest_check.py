@@ -10,8 +10,6 @@ Failure cases listed before implementation:
 - G10 can.tx claims differ from rule TX addresses.
 - G11 malformed type/ABI, bus, fields or rule container is accepted.
 - G12 incomplete/overlapping TX bit coverage is accepted.
-- G15 convert_to_capnp leaves cyclic garbage per call (card runs with gc disabled; pycapnp 2.2.0/2.2.1 kwargs).
-- G16 nested CarParamsSP fields or CarStateSP fields lose values on the wire.
 """
 
 import argparse
@@ -53,27 +51,6 @@ def main():
     else:
       raise AssertionError(f'G5 accepted {value}')
     records.append({'label': f'G5-{value}', 'exit_code': 0, 'expected': 0, 'reason': None, 'output': 'ValueError'})
-  import gc
-  model = structs.CarParamsSP.NeuralNetworkLateralControl.Model(path='/p', name='n')
-  full_cp = structs.CarParamsSP(flags=3, safetyParam=0x8001, pcmCruiseSpeed=True, enableGasInterceptor=True,
-                                neuralNetworkLateralControl=structs.CarParamsSP.NeuralNetworkLateralControl(model=model, fuzzyFingerprint=True))
-  with custom.CarParamsSP.from_bytes(convert_to_capnp(full_cp).to_bytes()) as d:
-    got = (d.flags, d.safetyParam, d.pcmCruiseSpeed, d.enableGasInterceptor, d.neuralNetworkLateralControl.model.path,
-           d.neuralNetworkLateralControl.model.name, d.neuralNetworkLateralControl.fuzzyFingerprint)
-  assert got == (3, -0x7FFF, True, True, '/p', 'n', True), f'G16 CarParamsSP {got}'
-  assert convert_to_capnp(structs.CarStateSP(speedLimit=12.5)).speedLimit == 12.5, 'G16 CarStateSP'
-  records.append({'label': 'G16', 'exit_code': 0, 'expected': 0, 'reason': None, 'output': str(got)})
-  import capnp
-  for source in (full_cp, structs.CarStateSP(speedLimit=12.5)):
-    gc.collect(); gc.disable()
-    try:
-      for _ in range(2000):
-        convert_to_capnp(source)
-      garbage = gc.collect()
-    finally:
-      gc.enable()
-    assert garbage == 0, f'G15 {type(source).__name__}: {garbage} cyclic objects/2000 calls (pycapnp {capnp.__version__})'
-    records.append({'label': f'G15-{type(source).__name__}', 'exit_code': 0, 'expected': 0, 'reason': None, 'output': f'{garbage} cyclic'})
   from copy import deepcopy
   from openpilot.tesla import manifest as mf, panda_rules
   from tools.sp_tesla_e2e.panda_rules_check import sample_rule

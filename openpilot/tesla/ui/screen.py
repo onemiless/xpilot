@@ -1,6 +1,5 @@
 """Big-screen host (C3/C3X/C3XL, 2160x1080), UI v4: Windows Phone / Win 8 style tiles (XPILOT.md §9, layout in tiles.py).
-Onroad: drag the mici view; neutral tiles flow around it, then plugin ScreenOverlays on top.
-A long press outside the view or a tap on a PARK tile (Settings) shows the park screen; other touches are ignored.
+Onroad: drag the mici view; neutral tiles flow around it, then plugin ScreenOverlays. Other touches are ignored.
 Alerts are drawn over the tiles in the gap above or below the view, navigation in the gap left or right of it.
 Offroad: the tile screen (tap opens a tile's page, long press enters edit mode), or a full-screen detail page: back
 button, parent name, title, and a native page (tesla/ui/pages) drawn here in screen pixels. The mici texture is not
@@ -59,11 +58,9 @@ def scaled(s: float):
 
 
 def _zones(view) -> dict:
-  """Side zones include the video edges so warnings remain visible with narrow or absent side columns."""
+  """ScreenOverlay zones: the strips around the current view and the view itself."""
   x, y, w, h = view
-  edge = w * 0.1
-  return {"left": rl.Rectangle(0, 0, SCREEN[0] - x - w + edge, SCREEN[1]),
-          "right": rl.Rectangle(x + w - edge, 0, SCREEN[0] - x - w + edge, SCREEN[1]),
+  return {"left": rl.Rectangle(0, 0, x, SCREEN[1]), "right": rl.Rectangle(x + w, 0, SCREEN[0] - x - w, SCREEN[1]),
           "top": rl.Rectangle(x, 0, w, y), "bottom": rl.Rectangle(x, y + h, w, SCREEN[1] - y - h), "view": rl.Rectangle(*view)}
 
 
@@ -398,8 +395,8 @@ class BigScreenHost:
   def render(self) -> None:
     if self._mode == "onroad":
       self._draw_tiles(self._place("drive"), self._now)
+      self._draw_overlays()
       self._draw_onroad_panels()
-      self._draw_overlays()  # topmost: blind-spot warnings must not hide under navigation or alerts
     else:
       self._draw_offroad()
 
@@ -727,7 +724,7 @@ class BigScreenHost:
           self._save()
         return
       if self._mode == "onroad":
-        if event == "long" or (event == "tap" and (tid := tiles.hit(placed, sx, sy)) is not None and self._entries[tid].tile.PARK):
+        if event == "long":
           self._screen_override = "offroad"
         return
     tid = tiles.hit(placed, sx, sy)

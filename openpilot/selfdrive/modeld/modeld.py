@@ -80,11 +80,9 @@ def get_action_from_model(model_output: dict[str, np.ndarray], prev_action: log.
   else:
     desired_curvature = prev_action.desiredCurvature
 
-  action = log.ModelDataV2.Action()
-  action.desiredCurvature = float(desired_curvature)
-  action.desiredAcceleration = float(desired_accel)
-  action.shouldStop = bool(stop)
-  return action
+  return log.ModelDataV2.Action(desiredCurvature=float(desired_curvature),
+                                desiredAcceleration=float(desired_accel),
+                                shouldStop=bool(stop))
 
 
 class ChestnutGpuState:
@@ -437,7 +435,7 @@ def main(demo=False, *, local_stock=False, model_source=None):
     }
 
     if model_source is not None:
-      model_source.send_frame(meta_main, meta_extra, transforms, inputs)
+      model_source.send_frame(meta_main, meta_extra, transforms, inputs, model.prev_desire)
     mt1 = time.perf_counter()
     try:
       send_chestnut = (chestnut_state is not None and

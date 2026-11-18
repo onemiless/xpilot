@@ -1,7 +1,6 @@
 import numpy as np
 import time
 import threading
-from collections import deque
 from collections.abc import Callable
 from enum import Enum
 from openpilot.cereal import messaging, log
@@ -104,8 +103,6 @@ class UIState(UIStateSP):
     self.usb_connected_ts: float | None = None
     self.usb_disconnected_ts: float | None = None
     self.usb_unknown: bool = False
-    self._phone_big_frames = deque(maxlen=50)
-    self._phone_seen = False
     self.chestnut_state = ChestnutState.DISCONNECTED
     self.started: bool = False
     self.ignition: bool = False
@@ -225,8 +222,6 @@ class UIState(UIStateSP):
   def _update_chestnut_state(self) -> None:
     detected = self.sm["deviceState"].chestnutPresent
     if not self.started:
-      self._phone_big_frames.clear()
-      self._phone_seen = False
       self.chestnut_present = detected
       self.chestnut_state = (ChestnutState.FAILED if self.chestnut_alert else
                              ChestnutState.READY if detected and self.chestnut_compiled else
@@ -234,26 +229,18 @@ class UIState(UIStateSP):
       return
 
     model_seen = self.sm.recv_frame["modelV2"] > self.started_frame
-    if model_seen and self.sm.updated["modelV2"]:
-      big = self.sm["modelV2"].big
-      self._phone_big_frames.append(big)
-      self._phone_seen |= big
-    if not detected:  # xpilot: the phone NPU (tesla/model_source.py) sets modelV2.big while its output drives
-      self.chestnut_state = (ChestnutState.ACTIVE if sum(self._phone_big_frames) >= 45 else
-                             ChestnutState.DISCONNECTED if not self._phone_seen else
-                             ChestnutState.FAILED if len(self._phone_big_frames) == 50 else ChestnutState.LOADING)
+    if not self.chestnut_present:
+      self.chestnut_state = ChestnutState.DISCONNECTED
     elif not self.chestnut_compiled:
       self.chestnut_state = ChestnutState.UNCOMPILED
     elif self.chestnut_loading or not model_seen:
       self.chestnut_state = ChestnutState.LOADING
-    elif self.chestnut_alert or self.chestnut_active is False:
+    elif self.chestnut_state == ChestnutState.FAILED or not detected or (model_seen and (not self.sm.alive["modelV2"] or not self.sm["modelV2"].big)):
       self.chestnut_state = ChestnutState.FAILED
-    elif sum(self._phone_big_frames) >= 45:
-      self.chestnut_state = ChestnutState.ACTIVE
-    elif len(self._phone_big_frames) == 50:
+    elif self.chestnut_active is False:
       self.chestnut_state = ChestnutState.FAILED
     else:
-      self.chestnut_state = ChestnutState.LOADING
+      self.chestnut_state = ChestnutState.ACTIVE
 
   def update_params(self) -> None:
     # For slower operations
@@ -383,12 +370,6 @@ class Device(DeviceSP):
         min_brightness = DeviceSP.set_min_onroad_brightness(ui_state, min_brightness)
 
       clipped_brightness = float(np.interp(clipped_brightness, [0, 1], [min_brightness, 100]))
-
-    # Fixed brightness (dev-sp-npu d5a50e25d, a75eb6095, 36e67a852): Brightness 0 keeps auto; 10-100 pins it offroad and onroad.
-    # The backlight is linear and eyes are not, so a 10% step is 1% backlight; applied at once, without the fade.
-    if gui_app.sunnypilot_ui() and ui_state.screen_brightness:
-      clipped_brightness = ui_state.screen_brightness ** 2 / 100
-      self._brightness_filter.x = clipped_brightness
 
     brightness = round(self._brightness_filter.update(clipped_brightness))
 
