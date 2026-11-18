@@ -15,8 +15,6 @@ import secrets
 import struct
 import tempfile
 import time
-from collections import deque
-from statistics import median
 
 import numpy as np
 
@@ -41,17 +39,6 @@ HEAD_SHAPES = {
 
 def nanos_since_boot():
   return time.clock_gettime_ns(getattr(time, 'CLOCK_BOOTTIME', time.CLOCK_MONOTONIC))
-
-
-class FrameDelayEstimator:
-  """Median EOF->publish of the last 100 waited frames, clipped to [10, 100] ms; replaces the fixed DT_MDL frame delay."""
-  def __init__(self):
-    self.samples = deque(maxlen=100)
-    self.value = 50.
-
-  def update(self, eof_to_publish_ms):
-    self.samples.append(eof_to_publish_ms)
-    self.value = float(min(max(median(self.samples), 10.), 100.))
 
 
 class ModelSource:
