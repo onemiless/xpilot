@@ -26,6 +26,7 @@ from openpilot.system.loggerd.config import get_available_percent
 from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.system.statsd import statlog
 from openpilot.system.hardware.power_monitoring import PowerMonitoring
+from openpilot.system.hardware.tesla_sleep_shutdown import TeslaSleepShutdown, panda_can_rx
 from openpilot.system.hardware.fan_controller import FanController
 from openpilot.system.hardware.chestnut.monitoring import chestnut_state_thread
 from openpilot.system.hardware.chestnut.status import ChestnutStatus
@@ -243,6 +244,7 @@ def hardware_thread(end_event, hw_queue) -> None:
 
   params = Params()
   power_monitor = PowerMonitoring()
+  tesla_sleep = TeslaSleepShutdown()
 
   uptime_offroad: float = params.get("UptimeOffroad", return_default=True)
   uptime_onroad: float = params.get("UptimeOnroad", return_default=True)
@@ -453,9 +455,22 @@ def hardware_thread(end_event, hw_queue) -> None:
     statlog.sample("som_power_draw", som_power_draw)
     msg.deviceState.somPowerDrawW = som_power_draw
 
-    # Check if we need to shut down
-    if power_monitor.should_shutdown(onroad_conditions["ignition"], in_car, off_ts, started_seen):
-      cloudlog.warning(f"shutting device down, offroad since {off_ts}")
+    # Check if we need to shut down. Tesla sleep is opt-in and uses this same write.
+    panda_alive = bool(sm.alive["pandaStates"]) and len(pandaStates) > 0
+    sleep_reason = tesla_sleep.update(
+      enabled=params.get_bool("TeslaSleepShutdown"),
+      ignition=bool(onroad_conditions["ignition"]),
+      started=started_ts is not None,
+      in_car=in_car,
+      panda_alive=panda_alive,
+      can_rx=panda_can_rx(pandaStates) if panda_alive else None,
+      now=time.monotonic(),
+    )
+    if sleep_reason is not None or power_monitor.should_shutdown(onroad_conditions["ignition"], in_car, off_ts, started_seen):
+      if sleep_reason is not None:
+        cloudlog.warning(f"shutting device down after Tesla sleep ({sleep_reason}), offroad since {off_ts}")
+      else:
+        cloudlog.warning(f"shutting device down, offroad since {off_ts}")
       params.put_bool("DoShutdown", True, block=True)
 
     msg.deviceState.started = started_ts is not None and not offroad_mode
